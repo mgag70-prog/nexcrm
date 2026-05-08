@@ -92,6 +92,83 @@ const DEMO = {
   invoiceCounter:1,
 };
 
+const DEMO_FULL = {
+  entities:[
+    {id:"e1",name:"Apex Ventures LLC",type:"LLC",color:"#3B82F6",industry:"Technology"},
+    {id:"e2",name:"GreenPath Foundation",type:"Non-Profit",color:"#10B981",industry:"Education"},
+  ],
+  contacts:[
+    {id:"c1",entityId:"e1",name:"Sarah Johnson",email:"sarah@techcorp.com",phone:"+1 555-0101",companyName:"TechCorp",source:"LinkedIn",title:"VP of Engineering",createdAt:new Date(Date.now()-5*864e5).toISOString()},
+    {id:"c2",entityId:"e1",name:"Marcus Rivera",email:"marcus@startup.io",phone:"+1 555-0102",companyName:"Startup.io",source:"Referral",title:"CEO",createdAt:new Date(Date.now()-3*864e5).toISOString()},
+    {id:"c3",entityId:"e1",name:"Lisa Chen",email:"lisa@enterprise.co",phone:"+1 555-0103",companyName:"Enterprise Co",source:"Website",title:"CTO",createdAt:new Date(Date.now()-864e5).toISOString()},
+    {id:"c4",entityId:"e2",name:"David Park",email:"david@greenfund.org",phone:"+1 555-0104",companyName:"Green Fund",source:"Event",title:"Director",createdAt:new Date().toISOString()},
+  ],
+  companies:[
+    {id:"co1",entityId:"e1",name:"TechCorp",industry:"Technology",website:"techcorp.com",phone:"+1 555-1001",email:"info@techcorp.com",employees:200,createdAt:new Date().toISOString()},
+    {id:"co2",entityId:"e1",name:"Startup.io",industry:"SaaS",website:"startup.io",phone:"+1 555-1002",email:"hello@startup.io",employees:25,createdAt:new Date().toISOString()},
+    {id:"co3",entityId:"e1",name:"Enterprise Co",industry:"Finance",website:"enterprise.co",phone:"+1 555-1003",email:"info@enterprise.co",employees:1500,createdAt:new Date().toISOString()},
+  ],
+  deals:[
+    {id:"d1",entityId:"e1",contactId:"c1",companyId:"co1",title:"TechCorp Enterprise License",value:45000,stage:"Proposal Sent",closeDate:"2026-06-15",probability:70,createdAt:new Date(Date.now()-4*864e5).toISOString()},
+    {id:"d2",entityId:"e1",contactId:"c2",companyId:"co2",title:"Startup.io Starter Package",value:8500,stage:"Contacted",closeDate:"2026-05-30",probability:40,createdAt:new Date(Date.now()-2*864e5).toISOString()},
+    {id:"d3",entityId:"e1",contactId:"c3",companyId:"co3",title:"Enterprise Annual Contract",value:120000,stage:"New Lead",closeDate:"2026-07-01",probability:20,createdAt:new Date(Date.now()-864e5).toISOString()},
+    {id:"d4",entityId:"e1",contactId:"c1",companyId:"co1",title:"Professional Services Q2",value:15000,stage:"Won",closeDate:"2026-04-15",probability:100,createdAt:new Date(Date.now()-7*864e5).toISOString()},
+    {id:"d5",entityId:"e1",contactId:"c2",companyId:"co2",title:"Add-on Module",value:3000,stage:"Lost",closeDate:"2026-04-01",probability:0,createdAt:new Date(Date.now()-10*864e5).toISOString()},
+    {id:"d6",entityId:"e1",contactId:"c3",companyId:"co3",title:"Implementation Support",value:22000,stage:"Contacted",closeDate:"2026-06-30",probability:50,createdAt:new Date(Date.now()-3*864e5).toISOString()},
+  ],
+  tasks:[
+    {id:"t1",entityId:"e1",contactId:"c1",title:"Follow up on proposal",dueDate:"2026-05-10",completed:false,priority:"high",reminder:true,createdAt:new Date().toISOString()},
+    {id:"t2",entityId:"e1",contactId:"c2",title:"Schedule demo call",dueDate:"2026-05-08",completed:false,priority:"medium",reminder:false,createdAt:new Date().toISOString()},
+    {id:"t3",entityId:"e1",contactId:"c3",title:"Send intro email",dueDate:"2026-05-09",completed:true,priority:"low",reminder:false,createdAt:new Date().toISOString()},
+    {id:"t4",entityId:"e1",contactId:"c1",title:"Review contract terms",dueDate:"2026-05-12",completed:false,priority:"high",reminder:true,createdAt:new Date().toISOString()},
+    {id:"t5",entityId:"e2",contactId:"c4",title:"Review grant application",dueDate:"2026-05-15",completed:false,priority:"medium",reminder:true,createdAt:new Date().toISOString()},
+  ],
+  notes:[
+    {id:"n1",entityId:"e1",contactId:"c1",content:"Great intro call. Very interested in enterprise tier. Budget confirmed ~$50k.",createdAt:new Date(Date.now()-2*864e5).toISOString(),type:"note"},
+    {id:"n2",entityId:"e1",contactId:"c1",content:"Proposal sent via email. Following up next Tuesday. Legal review required.",createdAt:new Date(Date.now()-864e5).toISOString(),type:"note"},
+    {id:"n3",entityId:"e1",contactId:"c2",content:"Referral from John at HQ. Needs starter package within 30 days. Budget ~$10k.",createdAt:new Date(Date.now()-3*864e5).toISOString(),type:"note"},
+    {id:"n4",entityId:"e1",contactId:"c3",content:"Initial contact via website form. Large enterprise, 1500 employees. High potential.",createdAt:new Date(Date.now()-864e5).toISOString(),type:"note"},
+    {id:"n5",entityId:"e2",contactId:"c4",content:"Interested in our Q3 grant program. Mission-aligned, strong leadership.",createdAt:new Date(Date.now()-864e5).toISOString(),type:"note"},
+  ],
+  emailIntegrations:[],
+  products:[
+    {id:"p1",entityId:"e1",name:"Starter Package",price:8500,category:"Software",description:"Entry-level SaaS subscription, up to 5 users"},
+    {id:"p2",entityId:"e1",name:"Enterprise License",price:45000,category:"Software",description:"Full enterprise tier, unlimited users, SSO"},
+    {id:"p3",entityId:"e1",name:"Professional Services",price:15000,category:"Services",description:"Implementation and onboarding support"},
+    {id:"p4",entityId:"e1",name:"Annual Support",price:12000,category:"Support",description:"Priority support, 4hr SLA, dedicated CSM"},
+  ],
+  sequences:[
+    {id:"sq1",entityId:"e1",name:"New Lead Nurture",steps:[{id:"s1",delay:0,subject:"Thanks for your interest",body:"Hi {{name}},\n\nThanks for reaching out!\n\nBest,\n{{sender}}"},{id:"s2",delay:3,subject:"Quick follow-up",body:"Hi {{name}},\n\nJust checking in.\n\nBest,\n{{sender}}"}],active:true,enrolledCount:0},
+    {id:"sq2",entityId:"e1",name:"Post-Proposal Follow-up",steps:[{id:"s4",delay:0,subject:"Proposal — any questions?",body:"Hi {{name}},\n\nFollowing up on the proposal.\n\nBest,\n{{sender}}"}],active:true,enrolledCount:0},
+  ],
+  templates:[
+    {id:"tm1",entityId:"e1",name:"Introduction Email",subject:"Quick introduction",body:"Hi {{name}},\n\nMy name is {{sender}} and I wanted to reach out...",tags:["outreach","intro"]},
+    {id:"tm2",entityId:"e1",name:"Proposal Follow-up",subject:"Following up on our proposal",body:"Hi {{name}},\n\nFollowing up on our proposal.",tags:["follow-up","proposal"]},
+  ],
+  forms:[
+    {id:"f1",entityId:"e1",name:"Contact Us Form",fields:[{name:"name",label:"Full Name",type:"text",required:true},{name:"email",label:"Email Address",type:"email",required:true},{name:"phone",label:"Phone Number",type:"text",required:false},{name:"company",label:"Company",type:"text",required:false},{name:"message",label:"Message",type:"textarea",required:false}],submissions:[],active:true,createdAt:new Date().toISOString()},
+  ],
+  automations:[
+    {id:"a1",entityId:"e1",name:"Welcome new leads",trigger:"new_contact",condition:"",action:"create_task",actionData:{title:"Send welcome email",priority:"high",daysOut:1},active:true},
+    {id:"a2",entityId:"e1",name:"Follow up won deals",trigger:"deal_won",condition:"",action:"create_task",actionData:{title:"Send thank you & onboarding info",priority:"high",daysOut:0},active:true},
+  ],
+  docs:[],
+  quotes:[],
+  customFields:[
+    {id:"cf1",entityId:"e1",entity:"contact",name:"LinkedIn URL",type:"text",placeholder:"https://linkedin.com/in/..."},
+    {id:"cf2",entityId:"e1",entity:"deal",name:"Contract Type",type:"select",options:["Monthly","Annual","Multi-Year","One-time"]},
+  ],
+  enrollments:[],
+  timeEntries:[],
+  invoices:[],
+  meetings:[],
+  webhooks:[],
+  portalTokens:[],
+  emailThreads:[],
+  availability:{},
+  invoiceCounter:1,
+};
+
 // ─── ICONS ────────────────────────────────────────────────────────────────────
 const Ic = ({d,size=16,c=""}) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,color:c||"currentColor"}}>
@@ -2068,33 +2145,34 @@ This proposal is valid for 30 days.`;
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
-export default function App({session,onLogout}={}){
-  const [entities,setEntities]=useState(DEMO.entities);
-  const [activeEntityId,setActiveEntityId]=useState("e3");
-  const [contacts,setContacts]=useState(DEMO.contacts);
-  const [companies,setCompanies]=useState(DEMO.companies);
-  const [deals,setDeals]=useState(DEMO.deals);
-  const [tasks,setTasks]=useState(DEMO.tasks);
-  const [notes,setNotes]=useState(DEMO.notes);
-  const [emailInts,setEmailInts]=useState(DEMO.emailIntegrations);
-  const [products,setProducts]=useState(DEMO.products);
-  const [sequences,setSequences]=useState(DEMO.sequences);
-  const [templates,setTemplates]=useState(DEMO.templates);
-  const [forms,setForms]=useState(DEMO.forms);
-  const [automations,setAutomations]=useState(DEMO.automations);
-  const [docs,setDocs]=useState(DEMO.docs);
-  const [quotes,setQuotes]=useState(DEMO.quotes);
-  const [customFields,setCustomFields]=useState(DEMO.customFields);
-  const [enrollments,setEnrollments]=useState(DEMO.enrollments);
+export default function App({session,onLogout,demoMode=false}={}){
+  const D = demoMode ? DEMO_FULL : DEMO;
+  const [entities,setEntities]=useState(D.entities);
+  const [activeEntityId,setActiveEntityId]=useState(demoMode?"e1":"e3");
+  const [contacts,setContacts]=useState(D.contacts);
+  const [companies,setCompanies]=useState(D.companies);
+  const [deals,setDeals]=useState(D.deals);
+  const [tasks,setTasks]=useState(D.tasks);
+  const [notes,setNotes]=useState(D.notes);
+  const [emailInts,setEmailInts]=useState(D.emailIntegrations);
+  const [products,setProducts]=useState(D.products);
+  const [sequences,setSequences]=useState(D.sequences);
+  const [templates,setTemplates]=useState(D.templates);
+  const [forms,setForms]=useState(D.forms);
+  const [automations,setAutomations]=useState(D.automations);
+  const [docs,setDocs]=useState(D.docs);
+  const [quotes,setQuotes]=useState(D.quotes);
+  const [customFields,setCustomFields]=useState(D.customFields);
+  const [enrollments,setEnrollments]=useState(D.enrollments);
   // New state
-  const [timeEntries,setTimeEntries]=useState(DEMO.timeEntries);
-  const [invoices,setInvoices]=useState(DEMO.invoices);
-  const [meetings,setMeetings]=useState(DEMO.meetings);
-  const [webhooks,setWebhooks]=useState(DEMO.webhooks);
-  const [portalTokens,setPortalTokens]=useState(DEMO.portalTokens);
-  const [emailThreads,setEmailThreads]=useState(DEMO.emailThreads);
-  const [availability,setAvailability]=useState(DEMO.availability);
-  const [invoiceCounter,setInvoiceCounter]=useState(DEMO.invoiceCounter);
+  const [timeEntries,setTimeEntries]=useState(D.timeEntries);
+  const [invoices,setInvoices]=useState(D.invoices);
+  const [meetings,setMeetings]=useState(D.meetings);
+  const [webhooks,setWebhooks]=useState(D.webhooks);
+  const [portalTokens,setPortalTokens]=useState(D.portalTokens);
+  const [emailThreads,setEmailThreads]=useState(D.emailThreads);
+  const [availability,setAvailability]=useState(D.availability);
+  const [invoiceCounter,setInvoiceCounter]=useState(D.invoiceCounter);
   const [signatures,setSignatures]=useState([]);
   // UI state
   const [view,setView]=useState("dashboard");
@@ -2114,14 +2192,17 @@ export default function App({session,onLogout}={}){
   const eei=emailInts.filter(i=>i.entityId===activeEntityId);
 
   // ─── PERSISTENCE ──────────────────────────────────────────────────────────
-  useEffect(()=>{(async()=>{
-    const load=async(key,setter)=>{try{const r=await window.storage?.get(key);if(r?.value)setter(JSON.parse(r.value));}catch(e){}};
-    const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures]];
-    for(const [k,s] of keys)await load(k,s);
-    try{const r=await window.storage?.get("crm:activeEntityId");if(r?.value)setActiveEntityId(JSON.parse(r.value));}catch(e){}
-  })();},[]);
+  useEffect(()=>{
+    if(demoMode)return;
+    (async()=>{
+      const load=async(key,setter)=>{try{const r=await window.storage?.get(key);if(r?.value)setter(JSON.parse(r.value));}catch(e){}};
+      const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures]];
+      for(const [k,s] of keys)await load(k,s);
+      try{const r=await window.storage?.get("crm:activeEntityId");if(r?.value)setActiveEntityId(JSON.parse(r.value));}catch(e){}
+    })();
+  },[demoMode]);
 
-  const save=async(key,val)=>{try{await window.storage?.set(key,JSON.stringify(val));}catch(e){}};
+  const save=async(key,val)=>{if(demoMode)return;try{await window.storage?.set(key,JSON.stringify(val));}catch(e){}};
   useEffect(()=>{save("crm:entities",entities);},[entities]);
   useEffect(()=>{save("crm:contacts",contacts);},[contacts]);
   useEffect(()=>{save("crm:companies",companies);},[companies]);
@@ -2298,7 +2379,15 @@ export default function App({session,onLogout}={}){
   ];
 
   return(
-    <div style={{display:"flex",height:"100vh",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif",background:"#F1F5F9",overflow:"hidden"}}>
+    <div style={{display:"flex",flexDirection:"column",height:"100vh",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif",background:"#F1F5F9",overflow:"hidden"}}>
+      {demoMode&&(
+        <div style={{flexShrink:0,background:"linear-gradient(90deg,#F59E0B 0%,#F97316 100%)",color:"#FFFFFF",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"center",gap:14,fontSize:13,fontWeight:600,boxShadow:"0 1px 3px rgba(0,0,0,0.1)"}}>
+          <span style={{background:"rgba(0,0,0,0.18)",padding:"2px 9px",borderRadius:4,fontSize:11,fontWeight:800,letterSpacing:1}}>DEMO MODE</span>
+          <span style={{fontWeight:500}}>Sample data — your changes are session-only and won't be saved.</span>
+          <a href="/" style={{marginLeft:8,background:"#FFFFFF",color:"#0B1E3F",padding:"5px 12px",borderRadius:6,textDecoration:"none",fontSize:12,fontWeight:700}}>Sign up to save your work</a>
+        </div>
+      )}
+      <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&display=swap" rel="stylesheet"/>
 
       {/* ─── SIDEBAR ─────────────────────────────────── */}
@@ -2395,6 +2484,7 @@ export default function App({session,onLogout}={}){
           {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} showToast={showToast}/>}
           {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook}/>}
         </div>
+      </div>
       </div>
 
       {/* ─── MODALS ────────────────────────────────────── */}

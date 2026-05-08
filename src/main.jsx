@@ -4,7 +4,9 @@ import { getSession, onAuthChange, signOut } from './lib/supabase.js'
 import App from './App.jsx'
 import Auth from './Auth.jsx'
 
-function Root() {
+const isDemoRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo')
+
+function AuthGate() {
   const [status, setStatus] = useState('loading')
   const [session, setSession] = useState(null)
 
@@ -39,6 +41,11 @@ function Root() {
   if (!session) return <Auth />
 
   return <App key={session.user.id} session={session} onLogout={() => signOut()} />
+}
+
+function Root() {
+  if (isDemoRoute) return <App demoMode={true} />
+  return <AuthGate />
 }
 
 createRoot(document.getElementById('root')).render(
