@@ -1,0 +1,2442 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend, LineChart, Line, AreaChart, Area } from "recharts";
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const STAGES = ["New Lead","Contacted","Proposal Sent","Won","Lost"];
+const SC = {"New Lead":"#8B5CF6","Contacted":"#F59E0B","Proposal Sent":"#3B82F6","Won":"#10B981","Lost":"#EF4444"};
+const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","HubSpot Import","Zoho Import","Other"];
+const ETYPES = ["LLC","Corporation","Non-Profit","Partnership","Sole Proprietor","S-Corp","Trust"];
+const PRIORITIES = ["low","medium","high"];
+const INDUSTRIES = ["Technology","SaaS","Finance","Healthcare","Retail","Manufacturing","Real Estate","Legal","Education","Other"];
+const EMAIL_PROVIDERS = [{id:"gmail",label:"Gmail",color:"#EA4335",logo:"G"},{id:"outlook",label:"Outlook",color:"#0078D4",logo:"O"},{id:"smtp",label:"SMTP/Other",color:"#64748B",logo:"@"}];
+const SOURCE_SCORE = {"LinkedIn":20,"Referral":20,"Website":15,"Event":12,"Partner":18,"Cold Outreach":8,"Other":5,"HubSpot Import":10,"Zoho Import":10};
+const TRIGGER_LABELS = {"new_contact":"New Contact Created","stage_change":"Deal Stage Changes","task_overdue":"Task Becomes Overdue","deal_created":"New Deal Created","deal_won":"Deal Marked Won"};
+const ACTION_LABELS = {"create_task":"Create a Task","add_note":"Log a Note","enroll_sequence":"Enroll in Sequence","update_score":"Update Lead Score"};
+
+const fmt$ = v => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:0}).format(v||0);
+const fmtDate = d => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
+const fmtTime = d => d ? new Date(d).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "—";
+const uid = () => `id_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+const initials = n => n?.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase()||"?";
+const ACOLORS = ["#3B82F6","#8B5CF6","#EC4899","#10B981","#F59E0B","#EF4444","#06B6D4","#F97316"];
+const avColor = n => ACOLORS[((n?.charCodeAt(0)||0)+(n?.charCodeAt(1)||0))%ACOLORS.length];
+const scoreColor = s => s>=75?"#10B981":s>=50?"#F59E0B":s>=25?"#F97316":"#EF4444";
+
+
+const INVOICE_STATUSES = ["Draft","Sent","Viewed","Paid","Overdue","Cancelled"];
+const INV_COLORS = {"Draft":"#64748B","Sent":"#3B82F6","Viewed":"#8B5CF6","Paid":"#10B981","Overdue":"#EF4444","Cancelled":"#94A3B8"};
+const WEBHOOK_EVENTS = ["contact.created","contact.updated","deal.created","deal.won","deal.lost","invoice.sent","invoice.paid","meeting.booked","form.submitted","time.logged"];
+const DURATIONS = [15,30,45,60,90,120];
+const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const fmtHours = h => h===1?"1 hr":`${h} hrs`;
+const fmtInvNum = n => `INV-${String(n).padStart(4,"0")}`;
+const genToken = () => Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,10);
+
+// ─── LEAD SCORING ─────────────────────────────────────────────────────────────
+function calcLeadScore(contact, deals, notes, tasks) {
+  let score = 0;
+  const cDeals = deals.filter(d=>d.contactId===contact.id);
+  const cNotes = notes.filter(n=>n.contactId===contact.id);
+  const cTasks = tasks.filter(t=>t.contactId===contact.id);
+  // Deal presence & value
+  if(cDeals.length>0) score+=15;
+  if(cDeals.some(d=>d.stage==="Proposal Sent"||d.stage==="Contacted")) score+=15;
+  if(cDeals.some(d=>d.stage==="Won")) score+=25;
+  const maxVal = Math.max(...cDeals.map(d=>d.value||0),0);
+  if(maxVal>50000) score+=15; else if(maxVal>10000) score+=10; else if(maxVal>1000) score+=5;
+  // Activity
+  if(cNotes.length>=3) score+=10; else if(cNotes.length>=1) score+=5;
+  if(cTasks.filter(t=>t.completed).length>0) score+=5;
+  // Source quality
+  score += Math.min(SOURCE_SCORE[contact.source]||5, 15);
+  return Math.min(score, 100);
+}
+
+// ─── DEMO DATA ────────────────────────────────────────────────────────────────
+const DEMO = {
+  entities:[
+    {id:"e1",name:"Apex Ventures LLC",type:"LLC",color:"#3B82F6",industry:"Technology"},
+    {id:"e2",name:"GreenPath Foundation",type:"Non-Profit",color:"#10B981",industry:"Education"},
+    {id:"e3",name:"Fairway Circuit LLC",type:"LLC",color:"#F59E0B",industry:"Other",website:"fairwaycircuit.com"},
+    {id:"e4",name:"Crestfolio LLC",type:"LLC",color:"#8B5CF6",industry:"Other",website:"crestfolio.io"},
+  ],
+  contacts:[
+    {id:"c1",entityId:"e1",name:"Sarah Johnson",email:"sarah@techcorp.com",phone:"+1 555-0101",companyName:"TechCorp",source:"LinkedIn",title:"VP of Engineering",createdAt:new Date(Date.now()-5*864e5).toISOString()},
+    {id:"c2",entityId:"e1",name:"Marcus Rivera",email:"marcus@startup.io",phone:"+1 555-0102",companyName:"Startup.io",source:"Referral",title:"CEO",createdAt:new Date(Date.now()-3*864e5).toISOString()},
+    {id:"c3",entityId:"e1",name:"Lisa Chen",email:"lisa@enterprise.co",phone:"+1 555-0103",companyName:"Enterprise Co",source:"Website",title:"CTO",createdAt:new Date(Date.now()-864e5).toISOString()},
+    {id:"c4",entityId:"e2",name:"David Park",email:"david@greenfund.org",phone:"+1 555-0104",companyName:"Green Fund",source:"Event",title:"Director",createdAt:new Date().toISOString()},
+  ],
+  companies:[
+    {id:"co1",entityId:"e1",name:"TechCorp",industry:"Technology",website:"techcorp.com",phone:"+1 555-1001",email:"info@techcorp.com",employees:200,createdAt:new Date().toISOString()},
+    {id:"co2",entityId:"e1",name:"Startup.io",industry:"SaaS",website:"startup.io",phone:"+1 555-1002",email:"hello@startup.io",employees:25,createdAt:new Date().toISOString()},
+    {id:"co3",entityId:"e1",name:"Enterprise Co",industry:"Finance",website:"enterprise.co",phone:"+1 555-1003",email:"info@enterprise.co",employees:1500,createdAt:new Date().toISOString()},
+  ],
+  deals:[
+    {id:"d1",entityId:"e1",contactId:"c1",companyId:"co1",title:"TechCorp Enterprise License",value:45000,stage:"Proposal Sent",closeDate:"2026-06-15",probability:70,createdAt:new Date(Date.now()-4*864e5).toISOString()},
+    {id:"d2",entityId:"e1",contactId:"c2",companyId:"co2",title:"Startup.io Starter Package",value:8500,stage:"Contacted",closeDate:"2026-05-30",probability:40,createdAt:new Date(Date.now()-2*864e5).toISOString()},
+    {id:"d3",entityId:"e1",contactId:"c3",companyId:"co3",title:"Enterprise Annual Contract",value:120000,stage:"New Lead",closeDate:"2026-07-01",probability:20,createdAt:new Date(Date.now()-864e5).toISOString()},
+    {id:"d4",entityId:"e1",contactId:"c1",companyId:"co1",title:"Professional Services Q2",value:15000,stage:"Won",closeDate:"2026-04-15",probability:100,createdAt:new Date(Date.now()-7*864e5).toISOString()},
+    {id:"d5",entityId:"e1",contactId:"c2",companyId:"co2",title:"Add-on Module",value:3000,stage:"Lost",closeDate:"2026-04-01",probability:0,createdAt:new Date(Date.now()-10*864e5).toISOString()},
+    {id:"d6",entityId:"e1",contactId:"c3",companyId:"co3",title:"Implementation Support",value:22000,stage:"Contacted",closeDate:"2026-06-30",probability:50,createdAt:new Date(Date.now()-3*864e5).toISOString()},
+  ],
+  tasks:[
+    {id:"t1",entityId:"e1",contactId:"c1",title:"Follow up on proposal",dueDate:"2026-05-10",completed:false,priority:"high",reminder:true,createdAt:new Date().toISOString()},
+    {id:"t2",entityId:"e1",contactId:"c2",title:"Schedule demo call",dueDate:"2026-05-08",completed:false,priority:"medium",reminder:false,createdAt:new Date().toISOString()},
+    {id:"t3",entityId:"e1",contactId:"c3",title:"Send intro email",dueDate:"2026-05-09",completed:true,priority:"low",reminder:false,createdAt:new Date().toISOString()},
+    {id:"t4",entityId:"e1",contactId:"c1",title:"Review contract terms",dueDate:"2026-05-12",completed:false,priority:"high",reminder:true,createdAt:new Date().toISOString()},
+  ],
+  notes:[
+    {id:"n1",entityId:"e1",contactId:"c1",content:"Great intro call. Very interested in enterprise tier. Budget confirmed ~$50k.",createdAt:new Date(Date.now()-2*864e5).toISOString(),type:"note"},
+    {id:"n2",entityId:"e1",contactId:"c1",content:"Proposal sent via email. Following up next Tuesday. Legal review required.",createdAt:new Date(Date.now()-864e5).toISOString(),type:"note"},
+    {id:"n3",entityId:"e1",contactId:"c2",content:"Referral from John at HQ. Needs starter package within 30 days. Budget ~$10k.",createdAt:new Date(Date.now()-3*864e5).toISOString(),type:"note"},
+    {id:"n4",entityId:"e1",contactId:"c3",content:"Initial contact via website form. Large enterprise, 1500 employees. High potential.",createdAt:new Date(Date.now()-864e5).toISOString(),type:"note"},
+  ],
+  emailIntegrations:[],
+  products:[
+    {id:"p1",entityId:"e1",name:"Starter Package",price:8500,category:"Software",description:"Entry-level SaaS subscription, up to 5 users"},
+    {id:"p2",entityId:"e1",name:"Enterprise License",price:45000,category:"Software",description:"Full enterprise tier, unlimited users, SSO"},
+    {id:"p3",entityId:"e1",name:"Professional Services",price:15000,category:"Services",description:"Implementation and onboarding support"},
+    {id:"p4",entityId:"e1",name:"Annual Support",price:12000,category:"Support",description:"Priority support, 4hr SLA, dedicated CSM"},
+  ],
+  sequences:[
+    {id:"sq1",entityId:"e1",name:"New Lead Nurture",steps:[{id:"s1",delay:0,subject:"Thanks for your interest",body:"Hi {{name}},\n\nThanks for reaching out! I'd love to learn more about what you're looking for.\n\nBest,\n{{sender}}"},{id:"s2",delay:3,subject:"Quick follow-up",body:"Hi {{name}},\n\nJust checking in — do you have 20 minutes this week for a quick call?\n\nBest,\n{{sender}}"},{id:"s3",delay:7,subject:"Resources that might help",body:"Hi {{name}},\n\nHere are a few resources that might be useful as you evaluate your options...\n\nBest,\n{{sender}}"}],active:true,enrolledCount:0},
+    {id:"sq2",entityId:"e1",name:"Post-Proposal Follow-up",steps:[{id:"s4",delay:0,subject:"Proposal — any questions?",body:"Hi {{name}},\n\nFollowing up on the proposal I sent. Happy to walk through any questions!\n\nBest,\n{{sender}}"},{id:"s5",delay:5,subject:"Still interested?",body:"Hi {{name}},\n\nWanted to check in one more time. Let me know if timing isn't right — no pressure.\n\nBest,\n{{sender}}"}],active:true,enrolledCount:0},
+  ],
+  templates:[
+    {id:"tm1",entityId:"e1",name:"Introduction Email",subject:"Quick introduction",body:"Hi {{name}},\n\nMy name is {{sender}} and I wanted to reach out because...\n\nWould you be open to a 15-minute call this week?\n\nBest regards,\n{{sender}}",tags:["outreach","intro"]},
+    {id:"tm2",entityId:"e1",name:"Proposal Follow-up",subject:"Following up on our proposal",body:"Hi {{name}},\n\nI wanted to follow up on the proposal we sent over. Have you had a chance to review it?\n\nHappy to answer any questions or jump on a call.\n\nBest,\n{{sender}}",tags:["follow-up","proposal"]},
+    {id:"tm3",entityId:"e1",name:"Meeting Confirmation",subject:"Confirmed: our call {{date}}",body:"Hi {{name}},\n\nJust confirming our call on {{date}}. Looking forward to connecting!\n\nTalk soon,\n{{sender}}",tags:["meeting","confirmation"]},
+  ],
+  forms:[
+    {id:"f1",entityId:"e1",name:"Contact Us Form",fields:[{name:"name",label:"Full Name",type:"text",required:true},{name:"email",label:"Email Address",type:"email",required:true},{name:"phone",label:"Phone Number",type:"text",required:false},{name:"company",label:"Company",type:"text",required:false},{name:"message",label:"Message",type:"textarea",required:false}],submissions:[],active:true,createdAt:new Date().toISOString()},
+  ],
+  automations:[
+    {id:"a1",entityId:"e1",name:"Welcome new leads",trigger:"new_contact",condition:"",action:"create_task",actionData:{title:"Send welcome email",priority:"high",daysOut:1},active:true},
+    {id:"a2",entityId:"e1",name:"Follow up won deals",trigger:"deal_won",condition:"",action:"create_task",actionData:{title:"Send thank you & onboarding info",priority:"high",daysOut:0},active:true},
+  ],
+  docs:[],
+  quotes:[],
+  customFields:[
+    {id:"cf1",entityId:"e1",entity:"contact",name:"LinkedIn URL",type:"text",placeholder:"https://linkedin.com/in/..."},
+    {id:"cf2",entityId:"e1",entity:"deal",name:"Contract Type",type:"select",options:["Monthly","Annual","Multi-Year","One-time"]},
+  ],
+  enrollments:[],
+};
+
+// ─── ICONS ────────────────────────────────────────────────────────────────────
+const Ic = ({d,size=16,c=""}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,color:c||"currentColor"}}>
+    {Array.isArray(d)?d.map((p,i)=><path key={i} d={p}/>):<path d={d}/>}
+  </svg>
+);
+const I = {
+  home:"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  users:["M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2","M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8","M23 21v-2a4 4 0 0 0-3-3.87","M16 3.13a4 4 0 0 1 0 7.75"],
+  building:"M3 21h18 M9 21V7l6-4v18 M9 12h6",
+  layers:["M12 2L2 7l10 5 10-5-10-5","M2 17l10 5 10-5","M2 12l10 5 10-5"],
+  check:"M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+  bar:"M18 20V10 M12 20V4 M6 20v-6",
+  gear:"M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+  plus:"M12 5v14 M5 12h14",
+  search:"M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0",
+  mail:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6",
+  phone:"M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z",
+  x:"M18 6 6 18 M6 6l12 12",
+  edit:"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
+  trash:"M3 6h18 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+  down:"M6 9l6 6 6-6",
+  link:"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+  cal:"M8 2v4 M16 2v4 M3 10h18 M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z",
+  note:"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
+  send:"M22 2L11 13 M22 2l-7 20-4-9-9-4 20-7z",
+  share:"M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13",
+  dl:"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3",
+  bell:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9 M13.73 21a2 2 0 0 1-3.46 0",
+  ok:"M20 6L9 17l-5-5",
+  dollar:"M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
+  arrow:"M5 12h14 M12 5l7 7-7 7",
+  plug:"M7 12h10 M9 16l-2-4 2-4 M15 8l2 4-2 4",
+  eye:"M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
+  copy:"M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2z M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
+  upload:"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12",
+  brain:"M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-1.98-3 2.5 2.5 0 0 1-1.32-4.24 3 3 0 0 1 .34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2",
+  zap:"M13 2L3 14h9l-1 8 10-12h-9l1-8z",
+  list:"M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01",
+  form:"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8",
+  seq:"M17 1l4 4-4 4 M3 11V9a4 4 0 0 1 4-4h14 M7 23l-4-4 4-4 M21 13v2a4 4 0 0 1-4 4H3",
+  box:"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
+  file:"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6",
+  pdf:"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M10 13h4 M10 17h4 M10 9h1",
+  import:"M8 17l4 4 4-4 M12 12v9 M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29",
+  trending:"M23 6l-9.5 9.5-5-5L1 18 M17 6h6v6",
+  target:"M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
+  quote:"M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z",
+  merge:"M8 8H5a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h3 M16 8h3a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-3 M12 2v4 M12 18v4 M8 12h8",
+  robot:"M12 8V4H8 M16 8V4h-4 M8 8h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z M2 14h2 M20 14h2 M10 13v2 M14 13v2",
+  clock:"M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 6v6l4 2",
+  invoice:"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M12 18v-4 M9 15h6",
+  portal:"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+  sign:"M12 20h9 M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z",
+  hook:"M20 20V10 M12 20V4 M6 20v-6 M22 6l-4-4-4 4",
+  inbox:"M22 12h-6l-2 3h-4l-2-3H2 M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
+  meet:"M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75",
+  pen:"M12 20h9 M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z",
+  globe:"M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z M2 12h20 M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z",
+  refresh:"M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15",
+  play:"M5 3l14 9-14 9V3z",
+  stop:"M21 4H3v16h18V4z",
+  dollar2:"M12 2v20 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
+};
+
+// ─── STYLES ───────────────────────────────────────────────────────────────────
+const S = {
+  card:(extra={})=>({background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:12,...extra}),
+  input:{width:"100%",background:"#FFFFFF",border:"1px solid #CBD5E1",borderRadius:8,padding:"8px 12px",color:"#0F172A",fontSize:13,outline:"none",boxSizing:"border-box"},
+  label:{fontSize:11,color:"#64748B",fontWeight:600,marginBottom:4,display:"block",textTransform:"uppercase",letterSpacing:.5},
+  badge:(c)=>({background:c+"20",color:c,border:`1px solid ${c}40`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600,display:"inline-flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}),
+  btnPrimary:{background:"#1D4ED8",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600,fontSize:13,display:"inline-flex",alignItems:"center",gap:6},
+  btnSecondary:{background:"#F1F5F9",color:"#334155",border:"1px solid #CBD5E1",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:500,fontSize:13,display:"inline-flex",alignItems:"center",gap:6},
+  btnGhost:{background:"transparent",color:"#475569",border:"none",borderRadius:6,padding:"4px 6px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,fontSize:13},
+  btnDanger:{background:"#EF4444",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600,fontSize:13},
+  row:(i)=>({display:"flex",alignItems:"center",gap:8,padding:"11px 16px",borderTop:i?"1px solid #E9EEF6":"none",cursor:"pointer"}),
+  th:{padding:"10px 16px",textAlign:"left",fontSize:11,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,background:"#F8FAFC",whiteSpace:"nowrap"},
+  td:{padding:"12px 16px",fontSize:13,color:"#475569",borderTop:"1px solid #F1F5F9"},
+  overlay:{position:"fixed",inset:0,background:"rgba(15,30,60,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16},
+  modal:{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:16,padding:24,width:"100%",maxWidth:520,maxHeight:"88vh",overflowY:"auto"},
+  grid2:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12},
+  formGroup:{marginBottom:14},
+  select:{width:"100%",background:"#FFFFFF",border:"1px solid #CBD5E1",borderRadius:8,padding:"8px 12px",color:"#0F172A",fontSize:13,outline:"none"},
+  textarea:{width:"100%",background:"#FFFFFF",border:"1px solid #CBD5E1",borderRadius:8,padding:"8px 12px",color:"#0F172A",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"},
+};
+
+// ─── UTILITY COMPONENTS ───────────────────────────────────────────────────────
+const Avatar = ({name,size=32}) => (
+  <div style={{width:size,height:size,borderRadius:"50%",background:avColor(name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*.35,fontWeight:700,color:"#fff",flexShrink:0}}>{initials(name)}</div>
+);
+const Field = ({label,children})=>(
+  <div style={S.formGroup}><label style={S.label}>{label}</label>{children}</div>
+);
+const Modal = ({title,onClose,children,wide})=>(
+  <div style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div style={{...S.modal,maxWidth:wide?720:520}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",margin:0}}>{title}</h2>
+        <button style={S.btnGhost} onClick={onClose}><Ic d={I.x} size={18}/></button>
+      </div>
+      {children}
+    </div>
+  </div>
+);
+const PageHeader = ({title,sub,children})=>(
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:24}}>
+    <div>
+      <h1 style={{fontFamily:"'Sora',sans-serif",fontSize:22,fontWeight:800,color:"#0F172A",margin:0}}>{title}</h1>
+      {sub&&<p style={{color:"#64748B",marginTop:3,fontSize:13,margin:"4px 0 0"}}>{sub}</p>}
+    </div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>{children}</div>
+  </div>
+);
+const StatCard = ({label,value,sub,color,icon})=>(
+  <div style={S.card({padding:20})}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+      <div style={{flex:1}}>
+        <div style={{fontSize:11,color:"#64748B",fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>{label}</div>
+        <div style={{fontFamily:"'Sora',sans-serif",fontSize:26,fontWeight:800,color}}>{value}</div>
+        {sub&&<div style={{fontSize:12,color:"#64748B",marginTop:3}}>{sub}</div>}
+      </div>
+      <div style={{width:38,height:38,background:color+"20",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",color,flexShrink:0}}>
+        <Ic d={icon} size={17}/>
+      </div>
+    </div>
+  </div>
+);
+const ScoreBadge = ({score})=>(
+  <div style={{display:"inline-flex",alignItems:"center",gap:5,background:scoreColor(score)+"18",border:`1px solid ${scoreColor(score)}40`,borderRadius:20,padding:"3px 10px"}}>
+    <div style={{width:7,height:7,borderRadius:"50%",background:scoreColor(score)}}/>
+    <span style={{fontSize:12,fontWeight:700,color:scoreColor(score)}}>{score}</span>
+  </div>
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openModal}){
+  const pipeVal=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
+  const wonVal=ed.filter(d=>d.stage==="Won").reduce((s,d)=>s+(d.value||0),0);
+  const closed=ed.filter(d=>["Won","Lost"].includes(d.stage));
+  const closeRate=closed.length?Math.round((ed.filter(d=>d.stage==="Won").length/closed.length)*100):0;
+  const weightedPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
+  const stageChart=STAGES.map(st=>({name:st.split(" ")[0],deals:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)/1000}));
+  const recentNotes=[...notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,4);
+  const pendingTasks=et.filter(t=>!t.completed).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate)).slice(0,5);
+  const recentDeals=[...ed].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,4);
+  // Forecast: next 3 months
+  const now=new Date(); const months=[];
+  for(let i=0;i<3;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);months.push({month:d.toLocaleString("default",{month:"short"}),won:0,weighted:0});}
+  ed.forEach(d=>{
+    if(!d.closeDate)return; const cd=new Date(d.closeDate); const mi=months.findIndex((m,i)=>{const md=new Date(now.getFullYear(),now.getMonth()+i,1);return cd.getMonth()===md.getMonth()&&cd.getFullYear()===md.getFullYear();});
+    if(mi>=0){if(d.stage==="Won")months[mi].won+=(d.value||0)/1000;else if(!["Lost"].includes(d.stage))months[mi].weighted+=((d.value||0)*(d.probability||50)/100)/1000;}
+  });
+
+  return(
+    <div>
+      <PageHeader title="Dashboard" sub={`${entity?.name} · ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}`}>
+        <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>New Deal</button>
+      </PageHeader>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
+        <StatCard label="Active Pipeline" value={fmt$(pipeVal)} sub={`${ed.filter(d=>!["Won","Lost"].includes(d.stage)).length} open deals`} color="#1D4ED8" icon={I.dollar}/>
+        <StatCard label="Weighted Pipeline" value={fmt$(weightedPipe)} sub="By probability" color="#8B5CF6" icon={I.layers}/>
+        <StatCard label="Won Revenue" value={fmt$(wonVal)} sub={`${ed.filter(d=>d.stage==="Won").length} deals closed`} color="#10B981" icon={I.ok}/>
+        <StatCard label="Close Rate" value={`${closeRate}%`} sub={`${closed.length} deals evaluated`} color="#F59E0B" icon={I.bar}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
+        <StatCard label="Total Contacts" value={ec.length} sub="In this entity" color="#1D4ED8" icon={I.users}/>
+        <StatCard label="Tasks Pending" value={et.filter(t=>!t.completed).length} sub={`${et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length} overdue`} color="#EF4444" icon={I.check}/>
+        <StatCard label="Avg Deal Size" value={fmt$(ed.length?ed.reduce((s,d)=>s+(d.value||0),0)/ed.length:0)} sub="All deals" color="#F97316" icon={I.dollar}/>
+        <StatCard label="Activity Notes" value={notes.length} sub="Total logged" color="#EC4899" icon={I.note}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr",gap:16,marginBottom:20}}>
+        <div style={S.card({padding:20})}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Pipeline by Stage</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={stageChart} barSize={28}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+              <XAxis dataKey="name" tick={{fill:"#64748B",fontSize:11}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+              <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,color:"#0F172A",fontSize:12}} formatter={(v,n)=>[n==="value"?`$${v}k`:v,n==="value"?"Value ($k)":"Deals"]}/>
+              <Legend wrapperStyle={{fontSize:11,color:"#64748B"}}/>
+              <Bar dataKey="deals" fill="#1D4ED8" radius={[4,4,0,0]} name="Deals"/>
+              <Bar dataKey="value" fill="#8B5CF620" radius={[4,4,0,0]} name="value" stroke="#8B5CF6" strokeWidth={1.5}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={S.card({padding:20})}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Stage Breakdown</div>
+          <ResponsiveContainer width="100%" height={120}>
+            <PieChart><Pie data={STAGES.map(st=>({name:st,value:ed.filter(d=>d.stage===st).length}))} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" stroke="none">
+              {STAGES.map((_,i)=><Cell key={i} fill={Object.values(SC)[i]}/>)}
+            </Pie><Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={(v,n)=>[v+" deals",n]}/></PieChart>
+          </ResponsiveContainer>
+          {STAGES.map(st=>(
+            <div key={st} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"2px 0"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:SC[st]}}/><span style={{fontSize:11,color:"#475569"}}>{st}</span></div>
+              <span style={{fontSize:12,fontWeight:700,color:"#0F172A"}}>{ed.filter(d=>d.stage===st).length}</span>
+            </div>
+          ))}
+        </div>
+        <div style={S.card({padding:20})}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>3-Month Forecast</div>
+          <ResponsiveContainer width="100%" height={120}>
+            <BarChart data={months} barSize={20}>
+              <XAxis dataKey="month" tick={{fill:"#64748B",fontSize:11}} axisLine={false} tickLine={false}/>
+              <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={v=>`$${v}k`}/>
+              <Bar dataKey="won" fill="#10B981" radius={[3,3,0,0]} name="Won" stackId="a"/>
+              <Bar dataKey="weighted" fill="#1D4ED820" radius={[3,3,0,0]} name="Weighted" stackId="a" stroke="#1D4ED8" strokeWidth={1}/>
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{display:"flex",gap:12,marginTop:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#475569"}}><div style={{width:8,height:8,borderRadius:2,background:"#10B981"}}/>Won</div>
+            <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#475569"}}><div style={{width:8,height:8,borderRadius:2,background:"#1D4ED840",border:"1px solid #1D4ED8"}}/>Weighted</div>
+          </div>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <div style={S.card({padding:20})}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Recent Deals</div>
+            <button style={{...S.btnGhost,fontSize:11}} onClick={()=>setView("deals")}>View All <Ic d={I.arrow} size={11}/></button>
+          </div>
+          {recentDeals.map(deal=>{
+            const contact=contacts.find(c=>c.id===deal.contactId);
+            return(<div key={deal.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E9EEF6"}}>
+              <Avatar name={contact?.name||"?"} size={28}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{deal.title}</div>
+                <div style={{fontSize:11,color:"#64748B"}}>{contact?.name} · {fmtDate(deal.createdAt)}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:SC[deal.stage]}}>{fmt$(deal.value)}</div>
+                <span style={S.badge(SC[deal.stage])}>{deal.stage}</span>
+              </div>
+            </div>);
+          })}
+        </div>
+        <div style={S.card({padding:20})}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Upcoming Tasks</div>
+            <button style={{...S.btnGhost,fontSize:11}} onClick={()=>setView("tasks")}>View All <Ic d={I.arrow} size={11}/></button>
+          </div>
+          {pendingTasks.length===0?<p style={{color:"#475569",fontSize:13}}>All tasks complete! 🎉</p>:pendingTasks.map(t=>{
+            const contact=contacts.find(c=>c.id===t.contactId);
+            const overdue=new Date(t.dueDate)<new Date();
+            return(<div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #E9EEF6"}}>
+              <div style={{color:{high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority]}}><Ic d={I.bell} size={14}/></div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,color:"#0F172A"}}>{t.title}</div>
+                <div style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)} · {contact?.name}</div>
+              </div>
+              <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority])}>{t.priority}</span>
+            </div>);
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTACTS LIST (with duplicate detection indicator)
+// ═══════════════════════════════════════════════════════════════════════════════
+function ContactsList({ec,search,openModal,setSelContact,deleteContact,deals,notes,tasks}){
+  const [sort,setSort]=useState("name");
+  const filtered=ec.filter(c=>!search||[c.name,c.email,c.companyName,c.phone].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
+  const sorted=[...filtered].sort((a,b)=>sort==="name"?a.name.localeCompare(b.name):sort==="score"?(calcLeadScore(b,deals,notes,tasks)-calcLeadScore(a,deals,notes,tasks)):new Date(b.createdAt)-new Date(a.createdAt));
+  // Find duplicates: same email or very similar name
+  const dupMap={};
+  ec.forEach(c=>{if(c.email)dupMap[c.email.toLowerCase()]=(dupMap[c.email.toLowerCase()]||0)+1;});
+
+  return(
+    <div>
+      <PageHeader title="Contacts" sub={`${ec.length} total contacts`}>
+        <select style={{...S.select,width:"auto"}} value={sort} onChange={e=>setSort(e.target.value)}>
+          <option value="name">Sort: Name</option>
+          <option value="date">Sort: Newest</option>
+          <option value="score">Sort: Lead Score</option>
+        </select>
+        <button style={S.btnPrimary} onClick={()=>openModal("addContact")}><Ic d={I.plus} size={14}/>Add Contact</button>
+      </PageHeader>
+      <div style={S.card({overflow:"hidden"})}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr>{["Contact","Score","Company","Email","Phone","Source","Added",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {sorted.length===0?<tr><td colSpan={8} style={{padding:48,textAlign:"center",color:"#475569"}}>No contacts found. Add your first contact!</td></tr>
+            :sorted.map(c=>{
+              const score=calcLeadScore(c,deals,notes,tasks);
+              const isDup=dupMap[c.email?.toLowerCase()]>1;
+              return(
+                <tr key={c.id} style={{cursor:"pointer"}} onClick={()=>setSelContact(c.id)}
+                  onMouseEnter={e=>e.currentTarget.style.background="#F1F5F9"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <td style={S.td}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{position:"relative"}}>
+                        <Avatar name={c.name} size={32}/>
+                        {isDup&&<div title="Possible duplicate" style={{position:"absolute",top:-2,right:-2,width:10,height:10,background:"#F59E0B",borderRadius:"50%",border:"2px solid #fff"}}/>}
+                      </div>
+                      <div>
+                        <div style={{fontWeight:600,color:"#0F172A"}}>{c.name}</div>
+                        {c.title&&<div style={{fontSize:11,color:"#475569"}}>{c.title}</div>}
+                      </div>
+                    </div>
+                  </td>
+                  <td style={S.td}><ScoreBadge score={score}/></td>
+                  <td style={S.td}>{c.companyName||"—"}</td>
+                  <td style={S.td}><a href={`mailto:${c.email}`} style={{color:"#1D4ED8",textDecoration:"none"}} onClick={e=>e.stopPropagation()}>{c.email||"—"}</a></td>
+                  <td style={S.td}>{c.phone||"—"}</td>
+                  <td style={S.td}><span style={S.badge("#8B5CF6")}>{c.source}</span></td>
+                  <td style={S.td}>{fmtDate(c.createdAt)}</td>
+                  <td style={S.td}>
+                    <div style={{display:"flex",gap:2}} onClick={e=>e.stopPropagation()}>
+                      <button style={S.btnGhost} title="Edit" onClick={()=>openModal("editContact",c)}><Ic d={I.edit} size={14}/></button>
+                      <button style={{...S.btnGhost,color:"#EF4444"}} title="Delete" onClick={()=>{if(confirm(`Delete ${c.name}?`))deleteContact(c.id);}}><Ic d={I.trash} size={14}/></button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTACT DETAIL (Notes, Tasks, Docs, Sequences tabs + Lead Score)
+// ═══════════════════════════════════════════════════════════════════════════════
+function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequences,enrollments,openModal,onBack,addNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,customFields}){
+  const [noteText,setNoteText]=useState("");
+  const [tab,setTab]=useState("notes");
+  const fileRef=useRef();
+  if(!contact)return null;
+
+  const cDeals=allDeals.filter(d=>d.contactId===contact.id);
+  const cNotes=allNotes.filter(n=>n.contactId===contact.id);
+  const cTasks=allTasks.filter(t=>t.contactId===contact.id);
+  const cDocs=allDocs.filter(d=>d.contactId===contact.id);
+  const cEnrollments=enrollments.filter(e=>e.contactId===contact.id);
+  const hasEmail=emailIntegrations.some(e=>e.entityId===activeEntityId);
+  const score=calcLeadScore(contact,allDeals,allNotes,allTasks);
+  const contactCustomFields=customFields.filter(f=>f.entity==="contact");
+
+  const submitNote=()=>{if(!noteText.trim())return;addNote({contactId:contact.id,content:noteText,type:"note"});setNoteText("");};
+
+  const handleFileUpload=(e)=>{
+    const file=e.target.files[0]; if(!file)return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      addDoc({contactId:contact.id,name:file.name,type:file.type,size:file.size,data:ev.target.result,status:"Draft",uploadedAt:new Date().toISOString()});
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const docStatusColors={"Draft":"#64748B","Sent":"#F59E0B","Under Review":"#3B82F6","Signed":"#10B981","Rejected":"#EF4444"};
+  const DOCSTATUSES=["Draft","Sent","Under Review","Signed","Rejected"];
+
+  return(
+    <div>
+      <button style={{...S.btnGhost,marginBottom:16,color:"#475569",fontSize:13}} onClick={onBack}>
+        <Ic d="M15 18l-6-6 6-6" size={14}/> Back to Contacts
+      </button>
+      <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:20,alignItems:"start"}}>
+        {/* Left Panel */}
+        <div>
+          <div style={S.card({padding:24,marginBottom:12})}>
+            <div style={{textAlign:"center",marginBottom:20}}>
+              <div style={{display:"flex",justifyContent:"center",marginBottom:12}}><Avatar name={contact.name} size={72}/></div>
+              <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:800,color:"#0F172A",margin:"0 0 4px"}}>{contact.name}</h2>
+              {contact.title&&<div style={{color:"#64748B",fontSize:13,marginBottom:4}}>{contact.title}</div>}
+              <div style={{color:"#475569",fontSize:13,marginBottom:8}}>{contact.companyName||"—"}</div>
+              <div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap"}}>
+                <span style={S.badge("#8B5CF6")}>{contact.source}</span>
+                <div style={{display:"inline-flex",alignItems:"center",gap:4,background:scoreColor(score)+"18",border:`1px solid ${scoreColor(score)}40`,borderRadius:20,padding:"3px 10px"}}>
+                  <Ic d={I.target} size={11} c={scoreColor(score)}/><span style={{fontSize:12,fontWeight:700,color:scoreColor(score)}}>Score: {score}</span>
+                </div>
+              </div>
+            </div>
+            <div style={{borderTop:"1px solid #E9EEF6",paddingTop:16,display:"flex",flexDirection:"column",gap:10}}>
+              {contact.email&&<a href={`mailto:${contact.email}`} style={{display:"flex",gap:8,alignItems:"center",fontSize:13,color:"#1D4ED8",textDecoration:"none"}}><Ic d={I.mail} size={14} c="#475569"/>{contact.email}</a>}
+              {contact.phone&&<div style={{display:"flex",gap:8,alignItems:"center",fontSize:13,color:"#334155"}}><Ic d={I.phone} size={14} c="#475569"/>{contact.phone}</div>}
+              {contact.companyName&&<div style={{display:"flex",gap:8,alignItems:"center",fontSize:13,color:"#334155"}}><Ic d={I.building} size={14} c="#475569"/>{contact.companyName}</div>}
+              <div style={{display:"flex",gap:8,alignItems:"center",fontSize:12,color:"#475569"}}><Ic d={I.cal} size={13} c="#475569"/>Added {fmtDate(contact.createdAt)}</div>
+              {contactCustomFields.map(cf=>(
+                contact[cf.name]&&<div key={cf.id} style={{display:"flex",gap:8,alignItems:"center",fontSize:12,color:"#475569"}}><Ic d={I.list} size={13} c="#475569"/><span style={{color:"#64748B"}}>{cf.name}:</span> {contact[cf.name]}</div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:16}}>
+              <button style={{...S.btnPrimary,flex:1,justifyContent:"center",padding:"7px"}} onClick={()=>openModal("editContact",contact)}><Ic d={I.edit} size={13}/>Edit</button>
+              {hasEmail
+                ?<button style={{...S.btnSecondary,flex:1,justifyContent:"center",padding:"7px"}} onClick={()=>openModal("composeEmail",{to:contact.email,contactId:contact.id})}><Ic d={I.mail} size={13}/>Email</button>
+                :<button style={{...S.btnSecondary,flex:1,justifyContent:"center",padding:"7px",fontSize:11}} onClick={()=>openModal("connectEmail")}><Ic d={I.plug} size={13}/>Connect Mail</button>
+              }
+            </div>
+          </div>
+          {/* Deals Card */}
+          <div style={S.card({padding:16,marginBottom:12})}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Deals ({cDeals.length})</div>
+              <button style={S.btnGhost} onClick={()=>openModal("addDeal",{contactId:contact.id})}><Ic d={I.plus} size={14}/></button>
+            </div>
+            {cDeals.length===0?<p style={{fontSize:12,color:"#475569",padding:"4px 0"}}>No deals yet.</p>
+            :cDeals.map(d=>(
+              <div key={d.id} style={{background:"#F1F5F9",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#0F172A",marginBottom:4}}>{d.title}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={S.badge(SC[d.stage])}>{d.stage}</span>
+                  <span style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{fmt$(d.value)}</span>
+                </div>
+                <div style={{fontSize:11,color:"#475569",marginTop:4}}>Close: {fmtDate(d.closeDate)}</div>
+              </div>
+            ))}
+          </div>
+          {/* Quick Quote Button */}
+          <button style={{...S.btnSecondary,width:"100%",justifyContent:"center"}} onClick={()=>openModal("buildQuote",{contactId:contact.id})}><Ic d={I.quote} size={13}/>Build Quote / Proposal</button>
+        </div>
+
+        {/* Right: Tabs */}
+        <div style={S.card({overflow:"hidden"})}>
+          <div style={{display:"flex",borderBottom:"1px solid #E9EEF6",padding:"0 16px",gap:2}}>
+            {[["notes",`Notes (${cNotes.length})`],["tasks",`Tasks (${cTasks.length})`],["docs",`Docs (${cDocs.length})`],["sequences",`Sequences (${cEnrollments.length})`]].map(([id,lbl])=>(
+              <button key={id} style={{padding:"13px 12px",background:"transparent",border:"none",borderBottom:tab===id?"2px solid #1D4ED8":"2px solid transparent",color:tab===id?"#1D4ED8":"#64748B",cursor:"pointer",fontWeight:600,fontSize:12,transition:"color .15s",whiteSpace:"nowrap"}} onClick={()=>setTab(id)}>{lbl}</button>
+            ))}
+          </div>
+          <div style={{padding:20}}>
+            {/* NOTES TAB */}
+            {tab==="notes"&&(
+              <div>
+                <div style={{marginBottom:20}}>
+                  <textarea style={{...S.textarea,minHeight:80}} placeholder="Write a note..." value={noteText} onChange={e=>setNoteText(e.target.value)} onKeyDown={e=>{if(e.metaKey&&e.key==="Enter")submitNote();}}/>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                    <span style={{fontSize:11,color:"#475569"}}>⌘+Enter to save</span>
+                    <button style={S.btnPrimary} onClick={submitNote}><Ic d={I.note} size={13}/>Add Note</button>
+                  </div>
+                </div>
+                {[...cNotes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(n=>(
+                  <div key={n.id} style={{background:"#F8FAFC",borderRadius:10,padding:16,marginBottom:10,borderLeft:`3px solid ${n.type==="email"?"#1D4ED8":n.type==="sequence"?"#10B981":"#CBD5E1"}`}}>
+                    {n.type==="email"&&<div style={{fontSize:11,color:"#1D4ED8",fontWeight:600,marginBottom:4}}>📧 EMAIL SENT</div>}
+                    {n.type==="sequence"&&<div style={{fontSize:11,color:"#10B981",fontWeight:600,marginBottom:4}}>⚡ SEQUENCE STEP</div>}
+                    <div style={{fontSize:13,color:"#334155",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{n.content}</div>
+                    <div style={{fontSize:11,color:"#475569",marginTop:8}}>{fmtTime(n.createdAt)}</div>
+                  </div>
+                ))}
+                {cNotes.length===0&&<p style={{color:"#475569",fontSize:13}}>No notes yet.</p>}
+              </div>
+            )}
+            {/* TASKS TAB */}
+            {tab==="tasks"&&(
+              <div>
+                <button style={{...S.btnPrimary,marginBottom:16}} onClick={()=>openModal("addTask",{contactId:contact.id})}><Ic d={I.plus} size={14}/>Add Task</button>
+                {cTasks.length===0?<p style={{color:"#475569",fontSize:13}}>No tasks. Add a follow-up!</p>
+                :cTasks.map(t=>{
+                  const overdue=!t.completed&&new Date(t.dueDate)<new Date();
+                  return(<div key={t.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",background:"#FFFFFF",border:"1px solid #E9EEF6",borderRadius:8,marginBottom:8,opacity:t.completed?.65:1,borderLeft:`3px solid ${{high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority]}`}}>
+                    <input type="checkbox" checked={t.completed} onChange={e=>updateTask(t.id,{completed:e.target.checked})} style={{marginTop:2,cursor:"pointer",accentColor:"#1D4ED8",width:14,height:14}}/>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,color:"#0F172A",textDecoration:t.completed?"line-through":"none"}}>{t.title}</div>
+                      <div style={{display:"flex",gap:8,alignItems:"center",marginTop:3}}>
+                        <span style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)}</span>
+                        <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority])}>{t.priority}</span>
+                      </div>
+                    </div>
+                    <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteTask(t.id)}><Ic d={I.trash} size={12}/></button>
+                  </div>);
+                })}
+              </div>
+            )}
+            {/* DOCS TAB */}
+            {tab==="docs"&&(
+              <div>
+                <div style={{display:"flex",gap:8,marginBottom:20}}>
+                  <button style={S.btnPrimary} onClick={()=>fileRef.current?.click()}><Ic d={I.upload} size={13}/>Upload Document</button>
+                  <input ref={fileRef} type="file" style={{display:"none"}} onChange={handleFileUpload} accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.png,.jpg"/>
+                  <button style={S.btnSecondary} onClick={()=>openModal("buildQuote",{contactId:contact.id})}><Ic d={I.quote} size={13}/>New Quote</button>
+                </div>
+                {cDocs.length===0&&<div style={{border:"2px dashed #CBD5E1",borderRadius:10,padding:32,textAlign:"center",color:"#94A3B8"}}>
+                  <Ic d={I.file} size={28} c="#CBD5E1"/><div style={{marginTop:8,fontSize:13}}>No documents yet. Upload proposals, contracts, or any file.</div>
+                </div>}
+                {cDocs.map(doc=>(
+                  <div key={doc.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"#F8FAFC",borderRadius:8,marginBottom:8,border:"1px solid #E9EEF6"}}>
+                    <div style={{width:36,height:36,background:"#EEF2FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <Ic d={doc.type==="application/pdf"?I.pdf:I.file} size={16} c="#1D4ED8"/>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.name}</div>
+                      <div style={{fontSize:11,color:"#64748B"}}>{fmtDate(doc.uploadedAt)} · {doc.size?(doc.size/1024).toFixed(1)+"KB":""}</div>
+                    </div>
+                    <select value={doc.status||"Draft"} onChange={e=>{const updated={...doc,status:e.target.value};addDoc(updated,true);}} style={{...S.select,width:"auto",fontSize:11,padding:"4px 8px",color:docStatusColors[doc.status||"Draft"],fontWeight:600}}>
+                      {DOCSTATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button style={{...S.btnGhost,color:"#8B5CF6"}} title="Request Signature" onClick={()=>onRequestSign&&onRequestSign(doc,contact)}><Ic d={I.sign} size={14}/></button>
+                    <a href={doc.data} download={doc.name} style={{...S.btnGhost,color:"#1D4ED8"}} title="Download"><Ic d={I.dl} size={14}/></a>
+                    <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteDoc(doc.id)}><Ic d={I.trash} size={14}/></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* SEQUENCES TAB */}
+            {tab==="sequences"&&(
+              <div>
+                <div style={{display:"flex",gap:8,marginBottom:20}}>
+                  <button style={S.btnPrimary} onClick={()=>openModal("enrollSequence",{contactId:contact.id})}><Ic d={I.seq} size={13}/>Enroll in Sequence</button>
+                </div>
+                {cEnrollments.length===0&&<p style={{color:"#475569",fontSize:13}}>Not enrolled in any sequences.</p>}
+                {cEnrollments.map(enr=>{
+                  const seq=sequences.find(s=>s.id===enr.sequenceId);
+                  return seq?(
+                    <div key={enr.id} style={{background:"#F8FAFC",borderRadius:8,padding:"12px 14px",marginBottom:8,border:"1px solid #E9EEF6"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                        <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{seq.name}</div>
+                        <span style={S.badge(enr.status==="active"?"#10B981":enr.status==="completed"?"#1D4ED8":"#64748B")}>{enr.status}</span>
+                      </div>
+                      <div style={{fontSize:12,color:"#64748B"}}>Step {enr.currentStep+1} of {seq.steps.length} · Enrolled {fmtDate(enr.enrolledAt)}</div>
+                      <div style={{display:"flex",gap:4,marginTop:8}}>
+                        {seq.steps.map((_,i)=>(
+                          <div key={i} style={{height:4,flex:1,borderRadius:2,background:i<=enr.currentStep?"#10B981":"#E2E8F0"}}/>
+                        ))}
+                      </div>
+                    </div>
+                  ):null;
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPANIES
+// ═══════════════════════════════════════════════════════════════════════════════
+function CompaniesList({eco,search,openModal,deleteCompany,contacts}){
+  const filtered=eco.filter(c=>!search||[c.name,c.industry,c.email].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
+  return(
+    <div>
+      <PageHeader title="Companies" sub={`${eco.length} companies`}>
+        <button style={S.btnPrimary} onClick={()=>openModal("addCompany")}><Ic d={I.plus} size={14}/>Add Company</button>
+      </PageHeader>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>
+        {filtered.length===0?<div style={{...S.card({padding:48}),gridColumn:"1/-1",textAlign:"center",color:"#475569"}}>No companies yet.</div>
+        :filtered.map(c=>{
+          const cContacts=contacts.filter(ct=>ct.companyName===c.name);
+          return(
+            <div key={c.id} style={S.card({padding:20,position:"relative"})}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:14}}>
+                <div style={{width:44,height:44,background:"#EEF2FF",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:avColor(c.name),border:"1px solid #E2E8F0",flexShrink:0}}>{c.name[0]}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:15,color:"#0F172A",marginBottom:2}}>{c.name}</div>
+                  <span style={S.badge("#06B6D4")}>{c.industry||"Other"}</span>
+                </div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+                {c.email&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.mail} size={12}/><a href={`mailto:${c.email}`} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.email}</a></div>}
+                {c.phone&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.phone} size={12}/>{c.phone}</div>}
+                {c.website&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.link} size={12}/><a href={`https://${c.website}`} target="_blank" rel="noreferrer" style={{color:"#1D4ED8",textDecoration:"none"}}>{c.website}</a></div>}
+                {c.employees&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.users} size={12}/>{c.employees.toLocaleString()} employees</div>}
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderTop:"1px solid #E9EEF6",paddingTop:12}}>
+                <span style={{fontSize:12,color:"#475569"}}>{cContacts.length} contact{cContacts.length!==1?"s":""}</span>
+                <div style={{display:"flex",gap:4}}>
+                  <button style={S.btnGhost} onClick={()=>openModal("editCompany",c)}><Ic d={I.edit} size={13}/></button>
+                  <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm(`Delete ${c.name}?`))deleteCompany(c.id);}}><Ic d={I.trash} size={13}/></button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KANBAN PIPELINE
+// ═══════════════════════════════════════════════════════════════════════════════
+function KanbanBoard({ed,contacts,updateDeal,deleteDeal,openModal,setSelContact,setView,products}){
+  const [dragging,setDragging]=useState(null);
+  const [dragOver,setDragOver]=useState(null);
+  const totalPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
+  return(
+    <div>
+      <PageHeader title="Deal Pipeline" sub={`${ed.length} deals · ${fmt$(totalPipe)} active pipeline`}>
+        <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>Add Deal</button>
+      </PageHeader>
+      <div style={{display:"flex",gap:14,overflowX:"auto",paddingBottom:16,alignItems:"flex-start"}}>
+        {STAGES.map(stage=>{
+          const sDeals=ed.filter(d=>d.stage===stage);
+          const sVal=sDeals.reduce((s,d)=>s+(d.value||0),0);
+          const isOver=dragOver===stage;
+          return(
+            <div key={stage} style={{minWidth:240,flex:"1 0 240px",background:isOver?"#E9EEF6":"#F1F5F9",border:`1px solid ${isOver?SC[stage]+"60":"#E2E8F0"}`,borderRadius:12,padding:14,transition:"all .15s",maxWidth:300}}
+              onDragOver={e=>{e.preventDefault();setDragOver(stage);}} onDragLeave={()=>setDragOver(null)}
+              onDrop={e=>{e.preventDefault();if(dragging)updateDeal(dragging,{stage});setDragging(null);setDragOver(null);}}>
+              <div style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7}}>
+                    <div style={{width:10,height:10,borderRadius:"50%",background:SC[stage]}}/>
+                    <span style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{stage}</span>
+                    <span style={{background:"#E2E8F0",color:"#64748B",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700}}>{sDeals.length}</span>
+                  </div>
+                  <button style={{...S.btnGhost,padding:2}} onClick={()=>openModal("addDeal",{stage})}><Ic d={I.plus} size={14}/></button>
+                </div>
+                <div style={{fontSize:12,color:SC[stage],fontWeight:600}}>{fmt$(sVal)}</div>
+              </div>
+              <div style={{minHeight:80}}>
+                {sDeals.map(deal=>{
+                  const contact=contacts.find(c=>c.id===deal.contactId);
+                  return(
+                    <div key={deal.id} draggable onDragStart={()=>setDragging(deal.id)} onDragEnd={()=>{setDragging(null);setDragOver(null);}}
+                      style={{background:"#FFFFFF",border:`1px solid ${dragging===deal.id?"#1D4ED8":"#E2E8F0"}`,borderRadius:10,padding:14,marginBottom:10,cursor:"grab",opacity:dragging===deal.id?.5:1}}>
+                      <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:6,lineHeight:1.4}}>{deal.title}</div>
+                      <div style={{fontSize:20,fontWeight:800,color:SC[stage],marginBottom:8}}>{fmt$(deal.value)}</div>
+                      {deal.probability!=null&&<div style={{marginBottom:8}}>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginBottom:3}}><span>Probability</span><span style={{color:SC[stage]}}>{deal.probability}%</span></div>
+                        <div style={{height:4,background:"#E9EEF6",borderRadius:2}}><div style={{height:"100%",background:SC[stage],borderRadius:2,width:`${deal.probability}%`,transition:"width .3s"}}/></div>
+                      </div>}
+                      {contact&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}><Avatar name={contact.name} size={20}/><span style={{fontSize:12,color:"#64748B"}}>{contact.name}</span></div>}
+                      <div style={{fontSize:11,color:"#475569",marginBottom:8}}><Ic d={I.cal} size={11} c="#475569"/> {fmtDate(deal.closeDate)}</div>
+                      {deal.contractType&&<span style={{...S.badge("#06B6D4"),fontSize:10,marginBottom:6}}>{deal.contractType}</span>}
+                      <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
+                        <button style={S.btnGhost} title="View Contact" onClick={()=>{setSelContact(deal.contactId);setView("contacts");}}><Ic d={I.link} size={12}/></button>
+                        <button style={S.btnGhost} title="Quote" onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id})}><Ic d={I.quote} size={12}/></button>
+                        <button style={S.btnGhost} title="Edit" onClick={()=>openModal("editDeal",deal)}><Ic d={I.edit} size={12}/></button>
+                        <button style={{...S.btnGhost,color:"#EF4444"}} title="Delete" onClick={()=>{if(confirm("Delete deal?"))deleteDeal(deal.id);}}><Ic d={I.trash} size={12}/></button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {sDeals.length===0&&<div style={{border:"2px dashed #CBD5E1",borderRadius:10,padding:"20px",textAlign:"center",color:"#94A3B8",fontSize:12}}>Drop deals here</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASKS
+// ═══════════════════════════════════════════════════════════════════════════════
+function TasksView({et,contacts,updateTask,deleteTask,openModal}){
+  const [filter,setFilter]=useState("all");
+  const filtered=et.filter(t=>filter==="all"?true:filter==="pending"?!t.completed:t.completed);
+  const sorted=[...filtered].sort((a,b)=>a.completed===b.completed?(new Date(a.dueDate)-new Date(b.dueDate)):a.completed?1:-1);
+  const overdue=et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length;
+  return(
+    <div>
+      <PageHeader title="Tasks" sub={`${et.filter(t=>!t.completed).length} pending · ${overdue} overdue`}>
+        <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
+          {[["all","All"],["pending","Pending"],["done","Done"]].map(([v,l])=>(
+            <button key={v} style={{...S.btnGhost,padding:"5px 12px",background:filter===v?"#1D4ED8":"transparent",color:filter===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>setFilter(v)}>{l}</button>
+          ))}
+        </div>
+        <button style={S.btnPrimary} onClick={()=>openModal("addTask")}><Ic d={I.plus} size={14}/>Add Task</button>
+      </PageHeader>
+      <div style={S.card({overflow:"hidden"})}>
+        {sorted.length===0?<div style={{padding:48,textAlign:"center",color:"#475569"}}>No tasks found!</div>
+        :sorted.map((t,i)=>{
+          const contact=contacts.find(c=>c.id===t.contactId);
+          const ov=!t.completed&&new Date(t.dueDate)<new Date();
+          return(
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderTop:i?"1px solid #E9EEF6":"none",opacity:t.completed?.6:1}}>
+              <input type="checkbox" checked={t.completed} onChange={e=>updateTask(t.id,{completed:e.target.checked})} style={{cursor:"pointer",accentColor:"#1D4ED8",width:16,height:16,flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:14,color:t.completed?"#475569":"#0F172A",textDecoration:t.completed?"line-through":"none",fontWeight:500}}>{t.title}</div>
+                <div style={{display:"flex",gap:10,alignItems:"center",marginTop:3,flexWrap:"wrap"}}>
+                  {contact&&<span style={{fontSize:12,color:"#64748B",display:"flex",alignItems:"center",gap:4}}><Avatar name={contact.name} size={16}/>{contact.name}</span>}
+                  <span style={{fontSize:12,color:ov?"#EF4444":"#64748B",display:"flex",alignItems:"center",gap:3}}><Ic d={I.cal} size={12}/>{fmtDate(t.dueDate)}{ov&&" ⚠"}</span>
+                  {t.reminder&&<span style={S.badge("#8B5CF6")}><Ic d={I.bell} size={10}/>Reminder On</span>}
+                </div>
+              </div>
+              <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority])}>{t.priority}</span>
+              <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteTask(t.id)}><Ic d={I.trash} size={14}/></button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REPORTS (Pipeline, Activity, Forecasting tabs)
+// ═══════════════════════════════════════════════════════════════════════════════
+function ReportsView({ed,ec,et,notes,entity,showToast}){
+  const [reportType,setReportType]=useState("pipeline");
+  const [shared,setShared]=useState(false);
+  const pipeTotal=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
+  const wonTotal=ed.filter(d=>d.stage==="Won").reduce((s,d)=>s+(d.value||0),0);
+  const lostTotal=ed.filter(d=>d.stage==="Lost").reduce((s,d)=>s+(d.value||0),0);
+  const closed=ed.filter(d=>["Won","Lost"].includes(d.stage));
+  const closeRate=closed.length?Math.round((ed.filter(d=>d.stage==="Won").length/closed.length)*100):0;
+  const avgDeal=ed.length?Math.round(ed.reduce((s,d)=>s+(d.value||0),0)/ed.length):0;
+  const weighted=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
+  const stageData=STAGES.map(st=>({stage:st,count:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)}));
+  const sourceData=SOURCES.map(src=>({source:src,count:ec.filter(c=>c.source===src).length})).filter(d=>d.count>0);
+  // Forecast: 6 months
+  const now=new Date();
+  const forecastMonths=Array.from({length:6},(_,i)=>{
+    const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+    const label=d.toLocaleString("default",{month:"short",year:"2-digit"});
+    const won=ed.filter(d=>d.stage==="Won"&&d.closeDate&&new Date(d.closeDate).getMonth()===d.getMonth()&&new Date(d.closeDate).getFullYear()===d.getFullYear()).reduce((s,d)=>s+(d.value||0),0);
+    const pipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)&&d.closeDate&&new Date(d.closeDate).getMonth()===d.getMonth()&&new Date(d.closeDate).getFullYear()===d.getFullYear()).reduce((s,d)=>s+((d.value||0)*(d.probability||50)/100),0);
+    return {month:label,won,weighted:pipe,total:won+pipe};
+  });
+  const handleShare=()=>{const r={entity:entity?.name,type:reportType,data:{pipeTotal,wonTotal,closeRate,avgDeal,deals:ed.length,contacts:ec.length}};navigator.clipboard?.writeText(`${window.location.href}?report=${btoa(JSON.stringify(r))}`).catch(()=>{});showToast("Share link copied!");setShared(true);setTimeout(()=>setShared(false),3000);};
+  const handleExport=()=>{const data=reportType==="pipeline"?{summary:{pipeTotal,wonTotal,lostTotal,closeRate,avgDeal,weighted},byStage:stageData,deals:ed}:reportType==="forecast"?{forecast:forecastMonths,deals:ed}:{contacts:ec,sources:sourceData,tasks:et,notes};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`${entity?.name}_${reportType}_report.json`;a.click();showToast("Report exported!");};
+  return(
+    <div>
+      <PageHeader title="Reports" sub={`${entity?.name} · Generated ${fmtDate(new Date())}`}>
+        <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
+          {[["pipeline","Pipeline"],["activity","Activity"],["forecast","Forecast"]].map(([v,l])=>(
+            <button key={v} style={{...S.btnGhost,padding:"5px 14px",background:reportType===v?"#1D4ED8":"transparent",color:reportType===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>setReportType(v)}>{l}</button>
+          ))}
+        </div>
+        <button style={S.btnSecondary} onClick={handleExport}><Ic d={I.dl} size={14}/>Export</button>
+        <button style={{...S.btnPrimary,background:shared?"#10B981":"#1D4ED8"}} onClick={handleShare}><Ic d={shared?I.ok:I.share} size={14}/>{shared?"Copied!":"Share"}</button>
+      </PageHeader>
+      {reportType==="pipeline"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
+            <StatCard label="Active Pipeline" value={fmt$(pipeTotal)} color="#1D4ED8" icon={I.dollar}/>
+            <StatCard label="Won Revenue" value={fmt$(wonTotal)} color="#10B981" icon={I.ok}/>
+            <StatCard label="Close Rate" value={`${closeRate}%`} color="#F59E0B" icon={I.bar}/>
+            <StatCard label="Avg Deal Size" value={fmt$(avgDeal)} color="#8B5CF6" icon={I.dollar}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:20}}>
+            <StatCard label="Total Deals" value={ed.length} sub="All time" color="#06B6D4" icon={I.layers}/>
+            <StatCard label="Weighted Pipeline" value={fmt$(weighted)} sub="By probability" color="#EC4899" icon={I.bar}/>
+            <StatCard label="Lost Revenue" value={fmt$(lostTotal)} sub="Lost deals" color="#EF4444" icon={I.x}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+            <div style={S.card({padding:20})}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Deal Count by Stage</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={stageData} barSize={30}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+                  <XAxis dataKey="stage" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v.split(" ")[0]}/>
+                  <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
+                  <Bar dataKey="count" radius={[4,4,0,0]}>{stageData.map((_,i)=><Cell key={i} fill={Object.values(SC)[i]}/>)}</Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={S.card({padding:20})}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Value by Stage ($)</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={stageData} barSize={30}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+                  <XAxis dataKey="stage" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v.split(" ")[0]}/>
+                  <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
+                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={v=>fmt$(v)}/>
+                  <Bar dataKey="value" radius={[4,4,0,0]}>{stageData.map((_,i)=><Cell key={i} fill={Object.values(SC)[i]+"80"}/>)}</Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div style={S.card({overflow:"hidden"})}>
+            <div style={{padding:"14px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>All Deals</div>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>{["Deal","Value","Stage","Probability","Close Date"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{ed.map(d=>(
+                <tr key={d.id}>
+                  <td style={S.td}><div style={{fontWeight:600,color:"#0F172A"}}>{d.title}</div></td>
+                  <td style={{...S.td,fontWeight:700,color:SC[d.stage]}}>{fmt$(d.value)}</td>
+                  <td style={S.td}><span style={S.badge(SC[d.stage])}>{d.stage}</span></td>
+                  <td style={S.td}>{d.probability||"—"}%</td>
+                  <td style={S.td}>{fmtDate(d.closeDate)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {reportType==="activity"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
+            <StatCard label="Total Contacts" value={ec.length} color="#1D4ED8" icon={I.users}/>
+            <StatCard label="Notes Logged" value={notes.length} color="#8B5CF6" icon={I.note}/>
+            <StatCard label="Tasks Created" value={et.length} color="#F59E0B" icon={I.check}/>
+            <StatCard label="Tasks Done" value={et.filter(t=>t.completed).length} sub={`${et.length?Math.round(et.filter(t=>t.completed).length/et.length*100):0}% completion`} color="#10B981" icon={I.ok}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+            <div style={S.card({padding:20})}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Contacts by Source</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={sourceData} barSize={28}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+                  <XAxis dataKey="source" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+                  <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
+                  <Bar dataKey="count" fill="#1D4ED8" radius={[4,4,0,0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={S.card({padding:20})}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Task Status</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={[{name:"Done",value:et.filter(t=>t.completed).length},{name:"Pending",value:et.filter(t=>!t.completed).length}]} cx="50%" cy="50%" innerRadius={55} outerRadius={80} dataKey="value" stroke="none">
+                    <Cell fill="#10B981"/><Cell fill="#EF4444"/>
+                  </Pie>
+                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
+                  <Legend wrapperStyle={{fontSize:12,color:"#64748B"}}/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div style={S.card({padding:20})}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Recent Activity Log</div>
+            {[...notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20).map(n=>{
+              const contact=ec.find(c=>c.id===n.contactId);
+              return(<div key={n.id} style={{display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid #E9EEF6",alignItems:"flex-start"}}>
+                <Avatar name={contact?.name||"?"} size={28}/>
+                <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{contact?.name||"Unknown"}</div><div style={{fontSize:13,color:"#64748B",marginTop:2}}>{n.content}</div></div>
+                <div style={{fontSize:11,color:"#475569",flexShrink:0}}>{fmtTime(n.createdAt)}</div>
+              </div>);
+            })}
+          </div>
+        </div>
+      )}
+      {reportType==="forecast"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:20}}>
+            <StatCard label="6-Month Won" value={fmt$(forecastMonths.reduce((s,m)=>s+m.won,0))} color="#10B981" icon={I.ok}/>
+            <StatCard label="6-Month Weighted" value={fmt$(forecastMonths.reduce((s,m)=>s+m.weighted,0))} color="#1D4ED8" icon={I.trending}/>
+            <StatCard label="Total Forecast" value={fmt$(forecastMonths.reduce((s,m)=>s+m.total,0))} color="#8B5CF6" icon={I.dollar}/>
+          </div>
+          <div style={S.card({padding:20,marginBottom:20})}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>6-Month Revenue Forecast</div>
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={forecastMonths}>
+                <defs>
+                  <linearGradient id="wonGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10B981" stopOpacity={0}/></linearGradient>
+                  <linearGradient id="pipeGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#1D4ED8" stopOpacity={0.2}/><stop offset="95%" stopColor="#1D4ED8" stopOpacity={0}/></linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+                <XAxis dataKey="month" tick={{fill:"#64748B",fontSize:11}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
+                <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={v=>fmt$(v)}/>
+                <Legend wrapperStyle={{fontSize:11,color:"#64748B"}}/>
+                <Area type="monotone" dataKey="won" stroke="#10B981" fill="url(#wonGrad)" strokeWidth={2} name="Won"/>
+                <Area type="monotone" dataKey="weighted" stroke="#1D4ED8" fill="url(#pipeGrad)" strokeWidth={2} name="Weighted Pipeline"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={S.card({overflow:"hidden"})}>
+            <div style={{padding:"14px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Monthly Breakdown</div>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>{["Month","Won Revenue","Weighted Pipeline","Total Forecast"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{forecastMonths.map(m=>(
+                <tr key={m.month}>
+                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{m.month}</td>
+                  <td style={{...S.td,color:"#10B981",fontWeight:600}}>{fmt$(m.won)}</td>
+                  <td style={{...S.td,color:"#1D4ED8",fontWeight:600}}>{fmt$(m.weighted)}</td>
+                  <td style={{...S.td,fontWeight:700,color:"#8B5CF6"}}>{fmt$(m.total)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI IMPORT VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+function ImportView({activeEntityId,contacts,companies,addContact,addCompany,addDeal,showToast}){
+  const [tab,setTab]=useState("ai");
+  const [file,setFile]=useState(null);
+  const [fileContent,setFileContent]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [extracted,setExtracted]=useState(null);
+  const [selected,setSelected]=useState({});
+  const [csvRows,setCsvRows]=useState([]);
+  const [csvHeaders,setCsvHeaders]=useState([]);
+  const [csvMapping,setCsvMapping]=useState({});
+  const [importSource,setImportSource]=useState("HubSpot Import");
+  const fileRef=useRef();
+  const csvRef=useRef();
+
+  const CRM_FIELDS=["name","email","phone","title","companyName","source","notes"];
+  const HUBSPOT_DEFAULTS={firstname:"name",email:"email",phone:"phone",jobtitle:"title",company:"companyName","hs_analytics_source":"source"};
+  const ZOHO_DEFAULTS={"First Name":"name",Email:"email",Phone:"phone",Title:"title",Account:"companyName","Lead Source":"source"};
+
+  const readFile=(f,isCSV)=>{
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      const text=e.target.result;
+      if(isCSV){
+        const lines=text.split("\n").filter(l=>l.trim());
+        const headers=lines[0].split(",").map(h=>h.replace(/"/g,"").trim());
+        const rows=lines.slice(1).map(l=>{
+          const vals=l.split(",").map(v=>v.replace(/"/g,"").trim());
+          const obj={};headers.forEach((h,i)=>obj[h]=vals[i]||"");return obj;
+        }).filter(r=>Object.values(r).some(v=>v));
+        setCsvHeaders(headers);setCsvRows(rows);
+        // Auto-detect HubSpot vs Zoho
+        const isHubspot=headers.some(h=>["firstname","hs_analytics_source","hubspot_owner_id"].includes(h.toLowerCase()));
+        const isZoho=headers.some(h=>["lead source","account","salutation"].includes(h.toLowerCase()));
+        const defaults=isHubspot?HUBSPOT_DEFAULTS:isZoho?ZOHO_DEFAULTS:{};
+        const mapping={};
+        headers.forEach(h=>{
+          const lower=h.toLowerCase();
+          const match=Object.keys(defaults).find(k=>k.toLowerCase()===lower);
+          if(match)mapping[h]=defaults[match];
+        });
+        setCsvMapping(mapping);
+        setImportSource(isHubspot?"HubSpot Import":isZoho?"Zoho Import":"Other");
+      } else {
+        setFileContent(text);
+      }
+    };
+    if(isCSV)reader.readAsText(f);else reader.readAsDataURL(f);
+  };
+
+  const handleAIFile=(e)=>{const f=e.target.files[0];if(!f)return;setFile(f);setExtracted(null);readFile(f,false);};
+  const handleCSVFile=(e)=>{const f=e.target.files[0];if(!f)return;setFile(f);setExtracted(null);readFile(f,true);};
+
+  const runAIExtract=async()=>{
+    if(!file&&!fileContent){showToast("Please upload a file first","error");return;}
+    setLoading(true);setExtracted(null);
+    try{
+      const isImage=file?.type?.startsWith("image/")||file?.type==="application/pdf";
+      const messages=isImage?[{role:"user",content:[{type:"image",source:{type:"base64",media_type:file.type,data:fileContent.split(",")[1]}},{type:"text",text:`Extract all contact and company information from this document. Return ONLY valid JSON with this structure: {"contacts":[{"name":"","email":"","phone":"","title":"","companyName":"","notes":""}],"companies":[{"name":"","industry":"","website":"","phone":"","email":""}]}. Extract every person and company you can find.`}]}]:[{role:"user",content:`Extract all contact and company information from this text/data. Return ONLY valid JSON with this structure: {"contacts":[{"name":"","email":"","phone":"","title":"","companyName":"","notes":""}],"companies":[{"name":"","industry":"","website":"","phone":"","email":""}]}. Text to analyze:\n\n${fileContent.slice(0,8000)}`}];
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,messages})});
+      const data=await resp.json();
+      const text=data.content?.find(c=>c.type==="text")?.text||"";
+      const jsonMatch=text.match(/\{[\s\S]*\}/);
+      if(jsonMatch){
+        const parsed=JSON.parse(jsonMatch[0]);
+        setExtracted(parsed);
+        const sel={};
+        (parsed.contacts||[]).forEach((_,i)=>sel[`c_${i}`]=true);
+        (parsed.companies||[]).forEach((_,i)=>sel[`co_${i}`]=true);
+        setSelected(sel);
+      }else{showToast("Could not extract structured data. Try a clearer document.","error");}
+    }catch(e){showToast("AI extraction failed. Check your file and try again.","error");}
+    setLoading(false);
+  };
+
+  const importAIData=()=>{
+    let cc=0;let cco=0;
+    if(extracted?.contacts){
+      extracted.contacts.forEach((c,i)=>{
+        if(!selected[`c_${i}`])return;
+        const dupEmail=c.email&&contacts.some(ex=>ex.email?.toLowerCase()===c.email?.toLowerCase()&&ex.entityId===activeEntityId);
+        if(!dupEmail&&c.name){addContact({...c,source:importSource||"Other"});cc++;}
+      });
+    }
+    if(extracted?.companies){
+      extracted.companies.forEach((co,i)=>{
+        if(!selected[`co_${i}`])return;
+        const dup=co.name&&companies.some(ex=>ex.name?.toLowerCase()===co.name?.toLowerCase()&&ex.entityId===activeEntityId);
+        if(!dup&&co.name){addCompany(co);cco++;}
+      });
+    }
+    showToast(`Imported ${cc} contacts, ${cco} companies`);
+    setExtracted(null);setFile(null);setFileContent("");
+  };
+
+  const importCSVData=()=>{
+    let count=0;
+    csvRows.forEach(row=>{
+      const contact={source:importSource||"Other"};
+      Object.keys(csvMapping).forEach(h=>{if(csvMapping[h]&&row[h])contact[csvMapping[h]]=row[h];});
+      if(!contact.name)return;
+      const dup=contacts.some(c=>c.email&&c.email?.toLowerCase()===contact.email?.toLowerCase()&&c.entityId===activeEntityId);
+      if(!dup){addContact(contact);count++;}
+    });
+    showToast(`Imported ${count} contacts (${csvRows.length-count} skipped as duplicates)`);
+    setCsvRows([]);setCsvHeaders([]);setFile(null);
+  };
+
+  return(
+    <div>
+      <PageHeader title="Import Data" sub="Bring in contacts from any CRM, file, or document">
+        <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
+          {[["ai","AI Extract"],["csv","CSV / HubSpot / Zoho"]].map(([v,l])=>(
+            <button key={v} style={{...S.btnGhost,padding:"5px 14px",background:tab===v?"#1D4ED8":"transparent",color:tab===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>setTab(v)}>{l}</button>
+          ))}
+        </div>
+      </PageHeader>
+
+      {/* AI EXTRACT TAB */}
+      {tab==="ai"&&(
+        <div>
+          <div style={S.card({padding:28,marginBottom:20})}>
+            <div style={{display:"flex",gap:20,alignItems:"flex-start"}}>
+              <div style={{width:48,height:48,background:"#EEF2FF",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic d={I.robot} size={24} c="#1D4ED8"/></div>
+              <div style={{flex:1}}>
+                <h3 style={{fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A",margin:"0 0 6px"}}>AI-Powered Data Extraction</h3>
+                <p style={{fontSize:13,color:"#64748B",margin:"0 0 16px",lineHeight:1.6}}>Drop in a PDF, image, business card scan, email chain, or any document. Claude reads it and extracts contacts and companies automatically — then you review before importing.</p>
+                <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                  <button style={S.btnPrimary} onClick={()=>fileRef.current?.click()}><Ic d={I.upload} size={14}/>
+                    {file?file.name:"Upload File (PDF, Image, Text)"}
+                  </button>
+                  <input ref={fileRef} type="file" style={{display:"none"}} onChange={handleAIFile} accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.json,.eml"/>
+                  <div>
+                    <label style={{...S.label,display:"inline"}}>Source: </label>
+                    <select value={importSource} onChange={e=>setImportSource(e.target.value)} style={{...S.select,width:"auto",display:"inline-block",marginLeft:6}}>
+                      {SOURCES.map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  {file&&<button style={{...S.btnPrimary,background:loading?"#94A3B8":"#7C3AED"}} onClick={runAIExtract} disabled={loading}>
+                    <Ic d={I.brain} size={14}/>{loading?"Analyzing...":"Extract with AI"}
+                  </button>}
+                </div>
+              </div>
+            </div>
+          </div>
+          {loading&&<div style={{...S.card({padding:40}),textAlign:"center"}}><div style={{fontSize:14,color:"#64748B"}}>🤖 Claude is reading your document...</div></div>}
+          {extracted&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                <div style={{fontSize:15,fontWeight:700,color:"#0F172A"}}>Extracted {(extracted.contacts||[]).length} contacts, {(extracted.companies||[]).length} companies</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button style={S.btnSecondary} onClick={()=>{const s={};(extracted.contacts||[]).forEach((_,i)=>s[`c_${i}`]=false);(extracted.companies||[]).forEach((_,i)=>s[`co_${i}`]=false);setSelected(s);}}>Deselect All</button>
+                  <button style={S.btnPrimary} onClick={importAIData}><Ic d={I.import} size={14}/>Import Selected</button>
+                </div>
+              </div>
+              {(extracted.contacts||[]).length>0&&(
+                <div style={S.card({padding:20,marginBottom:16})}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Contacts</div>
+                  {extracted.contacts.map((c,i)=>{
+                    const isDup=c.email&&contacts.some(ex=>ex.email?.toLowerCase()===c.email?.toLowerCase()&&ex.entityId===activeEntityId);
+                    return(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",background:isDup?"#FFF7ED":selected[`c_${i}`]?"#EFF6FF":"#F8FAFC",borderRadius:8,marginBottom:8,border:`1px solid ${isDup?"#FED7AA":selected[`c_${i}`]?"#BFDBFE":"#E9EEF6"}`}}>
+                        <input type="checkbox" checked={!isDup&&!!selected[`c_${i}`]} disabled={isDup} onChange={e=>setSelected(p=>({...p,[`c_${i}`]:e.target.checked}))} style={{cursor:isDup?"not-allowed":"pointer",accentColor:"#1D4ED8",width:16,height:16}}/>
+                        <Avatar name={c.name||"?"} size={32}/>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{c.name||"—"}</div>
+                          <div style={{fontSize:11,color:"#64748B"}}>{c.email} {c.phone&&`· ${c.phone}`} {c.title&&`· ${c.title}`}</div>
+                          {c.companyName&&<div style={{fontSize:11,color:"#64748B"}}>{c.companyName}</div>}
+                        </div>
+                        {isDup&&<span style={S.badge("#F59E0B")}>Duplicate</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {(extracted.companies||[]).length>0&&(
+                <div style={S.card({padding:20})}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Companies</div>
+                  {extracted.companies.map((co,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",background:selected[`co_${i}`]?"#EFF6FF":"#F8FAFC",borderRadius:8,marginBottom:8,border:`1px solid ${selected[`co_${i}`]?"#BFDBFE":"#E9EEF6"}`}}>
+                      <input type="checkbox" checked={!!selected[`co_${i}`]} onChange={e=>setSelected(p=>({...p,[`co_${i}`]:e.target.checked}))} style={{cursor:"pointer",accentColor:"#1D4ED8",width:16,height:16}}/>
+                      <div style={{width:36,height:36,background:"#EEF2FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color:"#1D4ED8"}}>{(co.name||"?")[0]}</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{co.name||"—"}</div>
+                        <div style={{fontSize:11,color:"#64748B"}}>{co.industry} {co.website&&`· ${co.website}`}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CSV TAB */}
+      {tab==="csv"&&(
+        <div>
+          <div style={S.card({padding:28,marginBottom:20})}>
+            <h3 style={{fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A",margin:"0 0 6px"}}>CSV Import — HubSpot, Zoho & Generic</h3>
+            <p style={{fontSize:13,color:"#64748B",margin:"0 0 16px",lineHeight:1.6}}>Export contacts from HubSpot or Zoho as CSV. Column headers are auto-detected — review the mapping below before importing.</p>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <button style={S.btnPrimary} onClick={()=>csvRef.current?.click()}><Ic d={I.upload} size={14}/>{file?file.name:"Upload CSV File"}</button>
+              <input ref={csvRef} type="file" style={{display:"none"}} onChange={handleCSVFile} accept=".csv"/>
+              <div>
+                <label style={{...S.label,display:"inline"}}>Import as source: </label>
+                <select value={importSource} onChange={e=>setImportSource(e.target.value)} style={{...S.select,width:"auto",display:"inline-block",marginLeft:6}}>
+                  {SOURCES.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          {csvHeaders.length>0&&(
+            <div>
+              <div style={S.card({padding:20,marginBottom:20})}>
+                <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:14}}>Column Mapping ({csvRows.length} rows detected)</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  {csvHeaders.slice(0,12).map(h=>(
+                    <div key={h} style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{fontSize:12,color:"#64748B",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={h}>{h}</div>
+                      <Ic d={I.arrow} size={14} c="#CBD5E1"/>
+                      <select value={csvMapping[h]||""} onChange={e=>setCsvMapping(p=>({...p,[h]:e.target.value}))} style={{...S.select,width:130,fontSize:12}}>
+                        <option value="">Skip</option>
+                        {CRM_FIELDS.map(f=><option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={S.card({overflow:"hidden",marginBottom:16})}>
+                <div style={{padding:"12px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",display:"flex",justifyContent:"space-between"}}>
+                  <span>Preview (first 5 rows)</span>
+                  <span>{csvRows.length} total rows</span>
+                </div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>{csvHeaders.slice(0,6).map(h=><th key={h} style={S.th}>{h}{csvMapping[h]&&<span style={{color:"#10B981",marginLeft:4}}>→{csvMapping[h]}</span>}</th>)}</tr></thead>
+                    <tbody>{csvRows.slice(0,5).map((row,i)=>(
+                      <tr key={i}>{csvHeaders.slice(0,6).map(h=><td key={h} style={S.td}>{row[h]||"—"}</td>)}</tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+                <button style={S.btnSecondary} onClick={()=>{setCsvRows([]);setCsvHeaders([]);setFile(null);}}>Cancel</button>
+                <button style={S.btnPrimary} onClick={importCSVData}><Ic d={I.import} size={14}/>Import {csvRows.length} Contacts</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SEQUENCES VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+function SequencesView({sequences,templates,enrollments,contacts,activeEntityId,addSequence,updateSequence,deleteSequence,addTemplate,deleteTemplate,showToast}){
+  const [tab,setTab]=useState("sequences");
+  const [editSeq,setEditSeq]=useState(null);
+  const [newSeq,setNewSeq]=useState({name:"",steps:[]});
+  const [newTmpl,setNewTmpl]=useState({name:"",subject:"",body:"",tags:""});
+  const [showNewSeq,setShowNewSeq]=useState(false);
+  const [showNewTmpl,setShowNewTmpl]=useState(false);
+
+  const eSeq=sequences.filter(s=>s.entityId===activeEntityId);
+  const eTmpl=templates.filter(t=>t.entityId===activeEntityId);
+
+  const addStep=()=>setNewSeq(s=>({...s,steps:[...s.steps,{id:uid(),delay:s.steps.length===0?0:3,subject:"",body:""}]}));
+  const updateStep=(idx,field,val)=>setNewSeq(s=>({...s,steps:s.steps.map((st,i)=>i===idx?{...st,[field]:val}:st)}));
+  const removeStep=(idx)=>setNewSeq(s=>({...s,steps:s.steps.filter((_,i)=>i!==idx)}));
+
+  return(
+    <div>
+      <PageHeader title="Sequences & Templates" sub="Automate multi-step outreach and reuse email content">
+        <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
+          {[["sequences","Sequences"],["templates","Templates"]].map(([v,l])=>(
+            <button key={v} style={{...S.btnGhost,padding:"5px 14px",background:tab===v?"#1D4ED8":"transparent",color:tab===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>setTab(v)}>{l}</button>
+          ))}
+        </div>
+        {tab==="sequences"&&<button style={S.btnPrimary} onClick={()=>setShowNewSeq(true)}><Ic d={I.plus} size={14}/>New Sequence</button>}
+        {tab==="templates"&&<button style={S.btnPrimary} onClick={()=>setShowNewTmpl(true)}><Ic d={I.plus} size={14}/>New Template</button>}
+      </PageHeader>
+
+      {/* SEQUENCES */}
+      {tab==="sequences"&&(
+        <div>
+          {showNewSeq&&(
+            <div style={S.card({padding:24,marginBottom:20,border:"2px solid #BFDBFE"})}>
+              <h3 style={{margin:"0 0 16px",fontSize:15,fontWeight:700,color:"#0F172A"}}>New Sequence</h3>
+              <Field label="Sequence Name"><input style={S.input} value={newSeq.name} onChange={e=>setNewSeq(s=>({...s,name:e.target.value}))} placeholder="e.g. New Lead Nurture"/></Field>
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Steps ({newSeq.steps.length})</div>
+                {newSeq.steps.map((step,i)=>(
+                  <div key={step.id} style={{background:"#F8FAFC",borderRadius:8,padding:14,marginBottom:8,border:"1px solid #E9EEF6"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{width:24,height:24,background:"#1D4ED8",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff"}}>{i+1}</div>
+                        <div style={{fontSize:12,color:"#64748B"}}>
+                          {i===0?"Immediately":"Day "}
+                          {i>0&&<input type="number" value={step.delay} onChange={e=>updateStep(i,"delay",+e.target.value)} style={{...S.input,width:50,display:"inline",padding:"2px 6px",marginLeft:4}} min={1}/>}
+                          {i>0&&" after enrollment"}
+                        </div>
+                      </div>
+                      <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>removeStep(i)}><Ic d={I.x} size={13}/></button>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr",gap:8}}>
+                      <input style={S.input} placeholder="Subject line" value={step.subject} onChange={e=>updateStep(i,"subject",e.target.value)}/>
+                      <textarea style={{...S.textarea,minHeight:70}} placeholder="Email body — use {{name}}, {{sender}}, {{date}}" value={step.body} onChange={e=>updateStep(i,"body",e.target.value)}/>
+                    </div>
+                  </div>
+                ))}
+                <button style={{...S.btnSecondary,marginTop:4}} onClick={addStep}><Ic d={I.plus} size={13}/>Add Step</button>
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+                <button style={S.btnSecondary} onClick={()=>{setShowNewSeq(false);setNewSeq({name:"",steps:[]});}}>Cancel</button>
+                <button style={S.btnPrimary} onClick={()=>{if(!newSeq.name||newSeq.steps.length===0){showToast("Add a name and at least one step","error");return;}addSequence(newSeq);setShowNewSeq(false);setNewSeq({name:"",steps:[]});showToast("Sequence created!");}}>Save Sequence</button>
+              </div>
+            </div>
+          )}
+          {eSeq.length===0&&!showNewSeq&&<div style={{...S.card({padding:48}),textAlign:"center",color:"#475569"}}>No sequences yet. Create your first outreach sequence.</div>}
+          {eSeq.map(seq=>{
+            const enrCount=enrollments.filter(e=>e.sequenceId===seq.id).length;
+            return(
+              <div key={seq.id} style={S.card({padding:20,marginBottom:12})}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:700,color:"#0F172A",marginBottom:4}}>{seq.name}</div>
+                    <div style={{display:"flex",gap:8}}>
+                      <span style={S.badge("#1D4ED8")}>{seq.steps.length} steps</span>
+                      <span style={S.badge("#10B981")}>{enrCount} enrolled</span>
+                      <span style={S.badge(seq.active?"#10B981":"#64748B")}>{seq.active?"Active":"Paused"}</span>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button style={S.btnSecondary} onClick={()=>updateSequence(seq.id,{active:!seq.active})}>{seq.active?"Pause":"Activate"}</button>
+                    <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm("Delete sequence?"))deleteSequence(seq.id);}}><Ic d={I.trash} size={14}/></button>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:0,position:"relative"}}>
+                  {seq.steps.map((step,i)=>(
+                    <div key={step.id} style={{flex:1,position:"relative"}}>
+                      <div style={{background:"#F1F5F9",borderRadius:8,padding:10,marginRight:i<seq.steps.length-1?8:0,border:"1px solid #E9EEF6"}}>
+                        <div style={{fontSize:11,fontWeight:700,color:"#64748B",marginBottom:4}}>Step {i+1} {i>0?`· Day ${step.delay}`:"· Immediately"}</div>
+                        <div style={{fontSize:12,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{step.subject||"(no subject)"}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* TEMPLATES */}
+      {tab==="templates"&&(
+        <div>
+          {showNewTmpl&&(
+            <div style={S.card({padding:24,marginBottom:20,border:"2px solid #BFDBFE"})}>
+              <h3 style={{margin:"0 0 16px",fontSize:15,fontWeight:700,color:"#0F172A"}}>New Template</h3>
+              <Field label="Template Name"><input style={S.input} value={newTmpl.name} onChange={e=>setNewTmpl(t=>({...t,name:e.target.value}))} placeholder="e.g. Introduction Email"/></Field>
+              <Field label="Subject Line"><input style={S.input} value={newTmpl.subject} onChange={e=>setNewTmpl(t=>({...t,subject:e.target.value}))} placeholder="Use {{name}}, {{date}} as variables"/></Field>
+              <Field label="Body"><textarea style={{...S.textarea,minHeight:140}} value={newTmpl.body} onChange={e=>setNewTmpl(t=>({...t,body:e.target.value}))} placeholder="Use {{name}}, {{sender}}, {{company}} as variables"/></Field>
+              <Field label="Tags (comma-separated)"><input style={S.input} value={newTmpl.tags} onChange={e=>setNewTmpl(t=>({...t,tags:e.target.value}))} placeholder="outreach, follow-up, proposal"/></Field>
+              <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:4}}>
+                <button style={S.btnSecondary} onClick={()=>{setShowNewTmpl(false);setNewTmpl({name:"",subject:"",body:"",tags:""});}}>Cancel</button>
+                <button style={S.btnPrimary} onClick={()=>{if(!newTmpl.name){showToast("Template name required","error");return;}addTemplate({...newTmpl,tags:newTmpl.tags.split(",").map(t=>t.trim()).filter(Boolean)});setShowNewTmpl(false);setNewTmpl({name:"",subject:"",body:"",tags:""});showToast("Template saved!");}}>Save Template</button>
+              </div>
+            </div>
+          )}
+          {eTmpl.length===0&&!showNewTmpl&&<div style={{...S.card({padding:48}),textAlign:"center",color:"#475569"}}>No templates yet. Create reusable email templates.</div>}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
+            {eTmpl.map(tmpl=>(
+              <div key={tmpl.id} style={S.card({padding:20})}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                  <div style={{fontSize:14,fontWeight:700,color:"#0F172A"}}>{tmpl.name}</div>
+                  <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteTemplate(tmpl.id)}><Ic d={I.trash} size={13}/></button>
+                </div>
+                <div style={{fontSize:12,fontWeight:600,color:"#1D4ED8",marginBottom:6}}>{tmpl.subject}</div>
+                <div style={{fontSize:12,color:"#475569",lineHeight:1.5,maxHeight:60,overflow:"hidden",borderBottom:"1px solid #E9EEF6",paddingBottom:10,marginBottom:10}}>{tmpl.body.slice(0,120)}{tmpl.body.length>120&&"..."}</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {(tmpl.tags||[]).map(tag=><span key={tag} style={S.badge("#8B5CF6")}>{tag}</span>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FORMS VIEW (Web-to-Lead)
+// ═══════════════════════════════════════════════════════════════════════════════
+function FormsView({forms,activeEntityId,addForm,updateForm,deleteForm,showToast,addContact,addNote}){
+  const [showNew,setShowNew]=useState(false);
+  const [selectedForm,setSelectedForm]=useState(null);
+  const [newForm,setNewForm]=useState({name:"",fields:[{name:"name",label:"Full Name",type:"text",required:true},{name:"email",label:"Email",type:"email",required:true},{name:"phone",label:"Phone",type:"text",required:false},{name:"company",label:"Company",type:"text",required:false},{name:"message",label:"Message",type:"textarea",required:false}]});
+  const eForms=forms.filter(f=>f.entityId===activeEntityId);
+
+  const generateEmbed=(form)=>{
+    return `<!-- NexCRM Web-to-Lead Form: ${form.name} -->
+<form id="nexcrm-form-${form.id}" style="font-family:sans-serif;max-width:480px">
+${form.fields.filter(f=>f.enabled!==false).map(f=>`  <div style="margin-bottom:14px">
+    <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">${f.label}${f.required?' *':''}</label>
+    ${f.type==='textarea'?`<textarea name="${f.name}" style="width:100%;padding:8px;border:1px solid #CBD5E1;border-radius:6px" rows="4"${f.required?' required':''}></textarea>`:`<input type="${f.type}" name="${f.name}" style="width:100%;padding:8px;border:1px solid #CBD5E1;border-radius:6px"${f.required?' required':''}>`}
+  </div>`).join('\n')}
+  <button type="submit" style="background:#1D4ED8;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer">Submit</button>
+</form>
+<script>
+document.getElementById('nexcrm-form-${form.id}').onsubmit=function(e){
+  e.preventDefault();
+  const data=Object.fromEntries(new FormData(e.target));
+  fetch('https://nexcrm.app/api/forms/${form.id}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+};
+</script>`;
+  };
+
+  const copyEmbed=(form)=>{navigator.clipboard?.writeText(generateEmbed(form)).catch(()=>{});showToast("Embed code copied to clipboard!");};
+
+  const simulateSubmission=(form)=>{
+    const testData={name:"Test Lead",email:"test@example.com",phone:"+1 555-0199",company:"Test Corp",message:"Interested in your services"};
+    addContact({name:testData.name,email:testData.email,phone:testData.phone,companyName:testData.company,source:"Website",title:""});
+    showToast("Test submission processed — check Contacts!");
+  };
+
+  return(
+    <div>
+      <PageHeader title="Web-to-Lead Forms" sub="Embed forms on your website to capture leads directly into NexCRM">
+        <button style={S.btnPrimary} onClick={()=>setShowNew(true)}><Ic d={I.plus} size={14}/>New Form</button>
+      </PageHeader>
+      {showNew&&(
+        <div style={S.card({padding:24,marginBottom:20,border:"2px solid #BFDBFE"})}>
+          <h3 style={{margin:"0 0 16px",fontSize:15,fontWeight:700,color:"#0F172A"}}>New Form</h3>
+          <Field label="Form Name"><input style={S.input} value={newForm.name} onChange={e=>setNewForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Contact Us, Get a Demo"/></Field>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Fields</div>
+            {newForm.fields.map((f,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <input type="checkbox" checked={f.enabled!==false} onChange={e=>setNewForm(frm=>({...frm,fields:frm.fields.map((ff,j)=>j===i?{...ff,enabled:e.target.checked}:ff)}))} style={{cursor:"pointer",accentColor:"#1D4ED8",width:16,height:16}}/>
+                <input style={{...S.input,flex:1}} value={f.label} onChange={e=>setNewForm(frm=>({...frm,fields:frm.fields.map((ff,j)=>j===i?{...ff,label:e.target.value}:ff)}))}/>
+                <span style={{fontSize:12,color:"#64748B",whiteSpace:"nowrap"}}>{f.type}</span>
+                <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,color:"#64748B",cursor:"pointer"}}>
+                  <input type="checkbox" checked={f.required} onChange={e=>setNewForm(frm=>({...frm,fields:frm.fields.map((ff,j)=>j===i?{...ff,required:e.target.checked}:ff)}))} style={{cursor:"pointer",accentColor:"#1D4ED8"}}/>Required
+                </label>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+            <button style={S.btnSecondary} onClick={()=>setShowNew(false)}>Cancel</button>
+            <button style={S.btnPrimary} onClick={()=>{if(!newForm.name){showToast("Form name required","error");return;}addForm({...newForm,submissions:[],active:true,createdAt:new Date().toISOString()});setShowNew(false);showToast("Form created!");}}>Create Form</button>
+          </div>
+        </div>
+      )}
+      {eForms.length===0&&!showNew&&<div style={{...S.card({padding:48}),textAlign:"center",color:"#475569"}}>No forms yet. Create your first web-to-lead form.</div>}
+      {eForms.map(form=>(
+        <div key={form.id} style={S.card({padding:20,marginBottom:14})}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:"#0F172A",marginBottom:4}}>{form.name}</div>
+              <div style={{display:"flex",gap:8}}>
+                <span style={S.badge("#1D4ED8")}>{(form.fields||[]).filter(f=>f.enabled!==false).length} fields</span>
+                <span style={S.badge("#10B981")}>{(form.submissions||[]).length} submissions</span>
+                <span style={S.badge(form.active?"#10B981":"#64748B")}>{form.active?"Active":"Inactive"}</span>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <button style={S.btnSecondary} onClick={()=>simulateSubmission(form)}><Ic d={I.zap} size={13}/>Test Submit</button>
+              <button style={S.btnPrimary} onClick={()=>setSelectedForm(selectedForm===form.id?null:form.id)}><Ic d={I.copy} size={13}/>{selectedForm===form.id?"Hide":"Get Embed"}</button>
+              <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm("Delete form?"))deleteForm(form.id);}}><Ic d={I.trash} size={14}/></button>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+            {(form.fields||[]).filter(f=>f.enabled!==false).map((f,i)=><span key={i} style={S.badge(f.required?"#1D4ED8":"#64748B")}>{f.label}{f.required?" *":""}</span>)}
+          </div>
+          {selectedForm===form.id&&(
+            <div style={{marginTop:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Embed Code</div>
+                <button style={S.btnSecondary} onClick={()=>copyEmbed(form)}><Ic d={I.copy} size={13}/>Copy Code</button>
+              </div>
+              <pre style={{background:"#F1F5F9",borderRadius:8,padding:14,fontSize:11,color:"#334155",overflow:"auto",maxHeight:200,border:"1px solid #E9EEF6",lineHeight:1.5}}>{generateEmbed(form)}</pre>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTOMATION VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+function AutomationView({automations,activeEntityId,addAutomation,updateAutomation,deleteAutomation,showToast}){
+  const [showNew,setShowNew]=useState(false);
+  const [form,setForm]=useState({name:"",trigger:"new_contact",action:"create_task",actionData:{title:"",priority:"medium",daysOut:1}});
+  const eAuto=automations.filter(a=>a.entityId===activeEntityId);
+
+  return(
+    <div>
+      <PageHeader title="Workflow Automation" sub="Trigger automatic actions when events happen in your CRM">
+        <button style={S.btnPrimary} onClick={()=>setShowNew(true)}><Ic d={I.plus} size={14}/>New Automation</button>
+      </PageHeader>
+      <div style={{...S.card({padding:16}),marginBottom:20,background:"#EFF6FF",border:"1px solid #BFDBFE"}}>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <Ic d={I.zap} size={18} c="#1D4ED8"/>
+          <div style={{fontSize:13,color:"#1D4ED8"}}>Automations run automatically when the trigger condition is met. They create tasks, log notes, or enroll contacts in sequences — saving you manual work.</div>
+        </div>
+      </div>
+      {showNew&&(
+        <div style={S.card({padding:24,marginBottom:20,border:"2px solid #BFDBFE"})}>
+          <h3 style={{margin:"0 0 16px",fontSize:15,fontWeight:700,color:"#0F172A"}}>New Automation Rule</h3>
+          <Field label="Automation Name"><input style={S.input} value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Welcome new leads"/></Field>
+          <div style={S.grid2}>
+            <Field label="When (Trigger)">
+              <select style={S.select} value={form.trigger} onChange={e=>setForm(f=>({...f,trigger:e.target.value}))}>
+                {Object.entries(TRIGGER_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+              </select>
+            </Field>
+            <Field label="Then (Action)">
+              <select style={S.select} value={form.action} onChange={e=>setForm(f=>({...f,action:e.target.value}))}>
+                {Object.entries(ACTION_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+              </select>
+            </Field>
+          </div>
+          {form.action==="create_task"&&(
+            <div style={{background:"#F8FAFC",borderRadius:8,padding:14,border:"1px solid #E9EEF6"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",marginBottom:10}}>Task Details</div>
+              <div style={S.grid2}>
+                <Field label="Task Title"><input style={S.input} value={form.actionData.title||""} onChange={e=>setForm(f=>({...f,actionData:{...f.actionData,title:e.target.value}}))}/></Field>
+                <Field label="Due in (days)"><input type="number" style={S.input} min={0} value={form.actionData.daysOut||1} onChange={e=>setForm(f=>({...f,actionData:{...f.actionData,daysOut:+e.target.value}}))}/></Field>
+              </div>
+              <Field label="Priority">
+                <select style={S.select} value={form.actionData.priority||"medium"} onChange={e=>setForm(f=>({...f,actionData:{...f.actionData,priority:e.target.value}}))}>
+                  {PRIORITIES.map(p=><option key={p}>{p}</option>)}
+                </select>
+              </Field>
+            </div>
+          )}
+          {form.action==="add_note"&&(
+            <Field label="Note Content"><textarea style={{...S.textarea,minHeight:80}} value={form.actionData.content||""} onChange={e=>setForm(f=>({...f,actionData:{...f.actionData,content:e.target.value}}))}/></Field>
+          )}
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12}}>
+            <button style={S.btnSecondary} onClick={()=>setShowNew(false)}>Cancel</button>
+            <button style={S.btnPrimary} onClick={()=>{if(!form.name){showToast("Name required","error");return;}addAutomation({...form,active:true});setShowNew(false);showToast("Automation created!");}}>Create Automation</button>
+          </div>
+        </div>
+      )}
+      {eAuto.length===0&&!showNew&&<div style={{...S.card({padding:48}),textAlign:"center",color:"#475569"}}>No automations yet. Automate your workflow!</div>}
+      {eAuto.map(auto=>(
+        <div key={auto.id} style={S.card({padding:18,marginBottom:10})}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:38,height:38,background:auto.active?"#EFF6FF":"#F1F5F9",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic d={I.zap} size={17} c={auto.active?"#1D4ED8":"#94A3B8"}/></div>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:"#0F172A"}}>{auto.name}</div>
+                <div style={{fontSize:12,color:"#64748B",marginTop:2}}>
+                  <span style={S.badge("#8B5CF6")}>{TRIGGER_LABELS[auto.trigger]}</span>
+                  <span style={{margin:"0 6px",color:"#CBD5E1"}}>→</span>
+                  <span style={S.badge("#1D4ED8")}>{ACTION_LABELS[auto.action]}</span>
+                  {auto.actionData?.title&&<span style={{marginLeft:6,fontSize:12,color:"#475569"}}>"{auto.actionData.title}"</span>}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button style={{...S.btnSecondary,fontSize:12,padding:"5px 12px"}} onClick={()=>updateAutomation(auto.id,{active:!auto.active})}>{auto.active?"Pause":"Activate"}</button>
+              <span style={S.badge(auto.active?"#10B981":"#64748B")}>{auto.active?"Active":"Paused"}</span>
+              <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm("Delete automation?"))deleteAutomation(auto.id);}}><Ic d={I.trash} size={14}/></button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SETTINGS VIEW (Entities, Products, Custom Fields, Email, Profile)
+// ═══════════════════════════════════════════════════════════════════════════════
+function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,openModal,setEntities,showToast,products,activeEntityId,addProduct,updateProduct,deleteProduct,customFields,addCustomField,deleteCustomField,webhooks,addWebhook,updateWebhook,deleteWebhook}){
+  const [tab,setTab]=useState("entities");
+  const [connecting,setConnecting]=useState(null);
+  const [emailForm,setEmailForm]=useState({email:"",password:"",server:"",port:""});
+  const [newProduct,setNewProduct]=useState({name:"",price:"",category:"Software",description:""});
+  const [newField,setNewField]=useState({entity:"contact",name:"",type:"text",options:""});
+  const [showNewProd,setShowNewProd]=useState(false);
+  const [showNewField,setShowNewField]=useState(false);
+
+  const eProducts=products.filter(p=>p.entityId===activeEntityId);
+  const eFields=customFields.filter(f=>f.entityId===activeEntityId);
+
+  const simulateOAuth=(provider)=>{connectEmail(provider,"user@"+provider+".com");setConnecting(null);showToast(`${provider} connected! (Demo mode)`);};
+
+  return(
+    <div>
+      <PageHeader title="Settings" sub="Manage entities, products, fields, integrations & preferences"/>
+      <div style={{display:"flex",gap:0,background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:12,overflow:"hidden"}}>
+        <div style={{width:210,borderRight:"1px solid #E9EEF6",padding:"12px 0",flexShrink:0}}>
+          {[["entities","Entities"],["products","Product Catalog"],["fields","Custom Fields"],["email","Email Integration"],["webhooks","Webhooks"],["profile","Profile"]].map(([id,lbl])=>(
+            <button key={id} style={{width:"100%",padding:"10px 16px",background:tab===id?"#EEF2FF":"transparent",border:"none",borderLeft:tab===id?"3px solid #1D4ED8":"3px solid transparent",color:tab===id?"#1D4ED8":"#64748B",cursor:"pointer",textAlign:"left",fontSize:13,fontWeight:tab===id?600:500}} onClick={()=>setTab(id)}>{lbl}</button>
+          ))}
+        </div>
+        <div style={{flex:1,padding:24,overflowY:"auto"}}>
+
+          {/* ENTITIES */}
+          {tab==="entities"&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+                <div><h3 style={{margin:0,fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Legal Entities</h3><p style={{margin:"4px 0 0",color:"#475569",fontSize:13}}>Each entity has completely separate contacts, deals, tasks, and notes.</p></div>
+                <button style={S.btnPrimary} onClick={()=>openModal("addEntity")}><Ic d={I.plus} size={14}/>Add Entity</button>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {entities.map(e=>(
+                  <div key={e.id} style={{background:"#F8FAFC",borderRadius:10,padding:"14px 16px",display:"flex",alignItems:"center",gap:12,border:`1px solid ${e.id===entity?.id?"#1D4ED8":"#E2E8F0"}`}}>
+                    <div style={{width:40,height:40,background:e.color+"20",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",border:`1px solid ${e.color}40`}}><div style={{width:12,height:12,borderRadius:"50%",background:e.color}}/></div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,color:"#0F172A",fontSize:14}}>{e.name}</div>
+                      <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{e.type} · {e.industry||"General"}{e.website&&` · ${e.website}`}</div>
+                    </div>
+                    {e.id===entity?.id&&<span style={S.badge("#10B981")}>Active</span>}
+                    <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(entities.length===1)return showToast("Cannot delete last entity","error");if(confirm("Delete entity and all its data?"))setEntities(p=>p.filter(x=>x.id!==e.id));}}><Ic d={I.trash} size={14}/></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* PRODUCTS */}
+          {tab==="products"&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+                <div><h3 style={{margin:0,fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Product & Service Catalog</h3><p style={{margin:"4px 0 0",color:"#475569",fontSize:13}}>Add your products and services to use when building quotes.</p></div>
+                <button style={S.btnPrimary} onClick={()=>setShowNewProd(true)}><Ic d={I.plus} size={14}/>Add Product</button>
+              </div>
+              {showNewProd&&(
+                <div style={{...S.card({padding:16}),marginBottom:16,border:"1px solid #BFDBFE"}}>
+                  <div style={S.grid2}>
+                    <Field label="Product Name"><input style={S.input} value={newProduct.name} onChange={e=>setNewProduct(p=>({...p,name:e.target.value}))}/></Field>
+                    <Field label="Price (USD)"><input type="number" style={S.input} value={newProduct.price} onChange={e=>setNewProduct(p=>({...p,price:e.target.value}))}/></Field>
+                    <Field label="Category">
+                      <select style={S.select} value={newProduct.category} onChange={e=>setNewProduct(p=>({...p,category:e.target.value}))}>
+                        {["Software","Hardware","Services","Support","Consulting","Other"].map(c=><option key={c}>{c}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Description"><input style={S.input} value={newProduct.description} onChange={e=>setNewProduct(p=>({...p,description:e.target.value}))}/></Field>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:4}}>
+                    <button style={S.btnSecondary} onClick={()=>setShowNewProd(false)}>Cancel</button>
+                    <button style={S.btnPrimary} onClick={()=>{if(!newProduct.name)return;addProduct({...newProduct,price:+newProduct.price||0});setShowNewProd(false);setNewProduct({name:"",price:"",category:"Software",description:""});showToast("Product added!");}}>Add Product</button>
+                  </div>
+                </div>
+              )}
+              <div style={S.card({overflow:"hidden"})}>
+                {eProducts.length===0?<div style={{padding:40,textAlign:"center",color:"#475569"}}>No products yet.</div>:(
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>{["Product","Category","Price","Description",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                    <tbody>{eProducts.map((p,i)=>(
+                      <tr key={p.id}>
+                        <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{p.name}</td>
+                        <td style={S.td}><span style={S.badge("#06B6D4")}>{p.category}</span></td>
+                        <td style={{...S.td,fontWeight:700,color:"#10B981"}}>{fmt$(p.price)}</td>
+                        <td style={{...S.td,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.description}</td>
+                        <td style={S.td}><button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteProduct(p.id)}><Ic d={I.trash} size={13}/></button></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* CUSTOM FIELDS */}
+          {tab==="fields"&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+                <div><h3 style={{margin:0,fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Custom Fields</h3><p style={{margin:"4px 0 0",color:"#475569",fontSize:13}}>Add extra fields to contacts, companies, or deals.</p></div>
+                <button style={S.btnPrimary} onClick={()=>setShowNewField(true)}><Ic d={I.plus} size={14}/>Add Field</button>
+              </div>
+              {showNewField&&(
+                <div style={{...S.card({padding:16}),marginBottom:16,border:"1px solid #BFDBFE"}}>
+                  <div style={S.grid2}>
+                    <Field label="Applies To">
+                      <select style={S.select} value={newField.entity} onChange={e=>setNewField(f=>({...f,entity:e.target.value}))}>
+                        <option value="contact">Contact</option><option value="company">Company</option><option value="deal">Deal</option>
+                      </select>
+                    </Field>
+                    <Field label="Field Name"><input style={S.input} value={newField.name} onChange={e=>setNewField(f=>({...f,name:e.target.value}))} placeholder="e.g. LinkedIn URL"/></Field>
+                    <Field label="Field Type">
+                      <select style={S.select} value={newField.type} onChange={e=>setNewField(f=>({...f,type:e.target.value}))}>
+                        <option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Dropdown</option><option value="url">URL</option>
+                      </select>
+                    </Field>
+                    {newField.type==="select"&&<Field label="Options (comma-separated)"><input style={S.input} value={newField.options} onChange={e=>setNewField(f=>({...f,options:e.target.value}))} placeholder="Option 1, Option 2"/></Field>}
+                  </div>
+                  <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:4}}>
+                    <button style={S.btnSecondary} onClick={()=>setShowNewField(false)}>Cancel</button>
+                    <button style={S.btnPrimary} onClick={()=>{if(!newField.name)return;addCustomField({...newField,options:newField.options.split(",").map(o=>o.trim()).filter(Boolean)});setShowNewField(false);setNewField({entity:"contact",name:"",type:"text",options:""});showToast("Field added!");}}>Add Field</button>
+                  </div>
+                </div>
+              )}
+              {["contact","company","deal"].map(entityType=>{
+                const fields=eFields.filter(f=>f.entity===entityType);
+                if(fields.length===0)return null;
+                return(<div key={entityType} style={{marginBottom:16}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>{entityType} Fields</div>
+                  {fields.map(f=>(
+                    <div key={f.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:"#F8FAFC",borderRadius:8,marginBottom:6,border:"1px solid #E9EEF6"}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{f.name}</div>
+                        <div style={{fontSize:11,color:"#64748B"}}>{f.type}{f.options?.length>0&&` · ${f.options.join(", ")}`}</div>
+                      </div>
+                      <span style={S.badge("#8B5CF6")}>{f.type}</span>
+                      <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteCustomField(f.id)}><Ic d={I.trash} size={13}/></button>
+                    </div>
+                  ))}
+                </div>);
+              })}
+              {eFields.length===0&&!showNewField&&<div style={{padding:40,textAlign:"center",color:"#475569",border:"2px dashed #CBD5E1",borderRadius:10}}>No custom fields yet.</div>}
+            </div>
+          )}
+
+          {/* EMAIL */}
+          {tab==="email"&&(
+            <div>
+              <div style={{marginBottom:20}}>
+                <h3 style={{margin:"0 0 4px",fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Email Integration</h3>
+                <p style={{margin:0,color:"#475569",fontSize:13}}>Connect Gmail, Outlook, or SMTP to send and log emails from contact profiles.</p>
+              </div>
+              {emailInts.length>0&&(
+                <div style={{marginBottom:20}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Connected Accounts</div>
+                  {emailInts.map(int=>(
+                    <div key={int.id} style={{background:"#F8FAFC",borderRadius:10,padding:"14px 16px",display:"flex",alignItems:"center",gap:12,marginBottom:8,border:"1px solid #10B98140"}}>
+                      <div style={{width:36,height:36,background:EMAIL_PROVIDERS.find(p=>p.id===int.provider)?.color+"20",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:EMAIL_PROVIDERS.find(p=>p.id===int.provider)?.color,fontSize:16}}>{EMAIL_PROVIDERS.find(p=>p.id===int.provider)?.logo}</div>
+                      <div style={{flex:1}}><div style={{fontWeight:600,color:"#0F172A"}}>{EMAIL_PROVIDERS.find(p=>p.id===int.provider)?.label}</div><div style={{fontSize:12,color:"#64748B"}}>{int.email} · Connected {fmtDate(int.connectedAt)}</div></div>
+                      <span style={S.badge("#10B981")}><Ic d={I.ok} size={10}/>Connected</span>
+                      <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>disconnectEmail(int.id)}><Ic d={I.trash} size={13}/></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap"}}>
+                {EMAIL_PROVIDERS.map(prov=>{
+                  const connected=emailInts.some(i=>i.provider===prov.id);
+                  return connected?null:(
+                    <div key={prov.id} style={{background:"#F8FAFC",borderRadius:12,padding:20,textAlign:"center",border:`1px solid ${connected?"#10B98140":"#E2E8F0"}`,cursor:"pointer",flex:"1 0 150px",minWidth:140}} onClick={()=>prov.id!=="smtp"?simulateOAuth(prov.id):setConnecting("smtp")}>
+                      <div style={{width:44,height:44,background:prov.color+"20",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:prov.color,fontSize:20,margin:"0 auto 10px"}}>{prov.logo}</div>
+                      <div style={{fontWeight:600,color:"#0F172A",fontSize:13}}>Connect {prov.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {connecting==="smtp"&&(
+                <div style={S.card({padding:20})}>
+                  <h4 style={{margin:"0 0 14px",color:"#0F172A"}}>SMTP Configuration</h4>
+                  <div style={S.grid2}>
+                    <Field label="Email Address"><input style={S.input} value={emailForm.email} onChange={e=>setEmailForm(f=>({...f,email:e.target.value}))}/></Field>
+                    <Field label="Password / App Password"><input type="password" style={S.input} value={emailForm.password} onChange={e=>setEmailForm(f=>({...f,password:e.target.value}))}/></Field>
+                    <Field label="SMTP Server"><input style={S.input} value={emailForm.server} onChange={e=>setEmailForm(f=>({...f,server:e.target.value}))} placeholder="smtp.gmail.com"/></Field>
+                    <Field label="Port"><input style={S.input} value={emailForm.port} onChange={e=>setEmailForm(f=>({...f,port:e.target.value}))} placeholder="587"/></Field>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:4}}>
+                    <button style={S.btnSecondary} onClick={()=>setConnecting(null)}>Cancel</button>
+                    <button style={S.btnPrimary} onClick={()=>{if(!emailForm.email)return;connectEmail("smtp",emailForm.email);setConnecting(null);showToast("SMTP connected!");}}>Connect SMTP</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab==="webhooks"&&<WebhooksPanel webhooks={webhooks} activeEntityId={activeEntityId} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} showToast={showToast}/>}
+
+          {/* PROFILE */}
+          {tab==="profile"&&(
+            <div>
+              <h3 style={{margin:"0 0 16px",fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Profile & Roadmap</h3>
+              <div style={{background:"#F8FAFC",borderRadius:10,padding:16,border:"1px solid #E2E8F0",marginBottom:16}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#0F172A",marginBottom:6}}>🚀 Current: Personal Mode</div>
+                <div style={{fontSize:13,color:"#64748B",lineHeight:1.6}}>NexCRM is running in personal/demo mode. Deploy to Vercel or Netlify to access it from any device. When ready for multi-user SaaS: add user auth, 2FA, team invites, RBAC, billing, and white-labeling.</div>
+              </div>
+              <div style={{background:"#F8FAFC",borderRadius:10,padding:16,border:"1px solid #E2E8F0"}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#0F172A",marginBottom:10}}>📋 Integration Roadmap</div>
+                {[["✅","AI Data Extraction (Claude API)"],["✅","HubSpot & Zoho CSV Import"],["✅","Document Storage per Contact"],["✅","Email Sequences & Templates"],["✅","Web-to-Lead Forms"],["✅","Workflow Automation"],["✅","Quote / Proposal Builder"],["✅","Forecasting"],["✅","Product Catalog"],["✅","Lead Scoring"],["✅","Custom Fields"],["🔜","Zapier / Make Webhooks"],["🔜","Calendly / Cal.com Integration"],["🔜","Slack Notifications"],["🔜","QuickBooks Invoicing"],["🔜","DocuSign eSignature"],["🔜","Twilio SMS Sequences"],["🔜","Two-way Email Sync"],].map(([icon,item])=>(
+                  <div key={item} style={{display:"flex",gap:8,padding:"5px 0",fontSize:13,color:icon==="✅"?"#10B981":"#64748B",borderBottom:"1px solid #F1F5F9"}}>
+                    <span>{icon}</span><span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODALS
+// ═══════════════════════════════════════════════════════════════════════════════
+function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,addContact,updateContact,addCompany,updateCompany,addDeal,updateDeal,addTask,addNote,addEntity,connectEmail,showToast,products,sequences,addEnrollment,customFields}){
+  const {type,data}=modal;
+  const [form,setForm]=useState(data||{});
+  const set=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  const contactCustomFields=customFields?.filter(f=>f.entity==="contact"&&f.entityId===activeEntityId)||[];
+  const dealCustomFields=customFields?.filter(f=>f.entity==="deal"&&f.entityId===activeEntityId)||[];
+
+  // Duplicate check
+  const dupContact=type==="addContact"&&form.email&&contacts.some(c=>c.email?.toLowerCase()===form.email?.toLowerCase());
+
+  const F=({label,name,placeholder,type:ftype="text",options,required})=>(
+    <Field label={label}>
+      {options?<select style={S.select} value={form[name]||""} onChange={e=>set(name,e.target.value)}><option value="">Select...</option>{options.map(o=><option key={o}>{o}</option>)}</select>
+      :<input type={ftype} style={{...S.input,borderColor:required&&!form[name]?"#FCA5A5":undefined}} placeholder={placeholder} value={form[name]||""} onChange={e=>set(name,e.target.value)}/>}
+    </Field>
+  );
+
+  if(type==="addContact"||type==="editContact") return(
+    <Modal title={type==="addContact"?"Add Contact":"Edit Contact"} onClose={closeModal} wide>
+      {dupContact&&<div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:10,marginBottom:14,fontSize:13,color:"#92400E"}}>⚠ A contact with this email already exists.</div>}
+      <div style={S.grid2}>
+        <F label="Full Name *" name="name" placeholder="Sarah Johnson" required/>
+        <F label="Email" name="email" type="email" placeholder="sarah@company.com"/>
+        <F label="Phone" name="phone" placeholder="+1 555-0100"/>
+        <F label="Title" name="title" placeholder="VP of Engineering"/>
+        <F label="Company" name="companyName" placeholder="TechCorp"/>
+        <F label="Source" name="source" options={SOURCES}/>
+      </div>
+      {contactCustomFields.map(cf=>(
+        <Field key={cf.id} label={cf.name}>
+          {cf.type==="select"?<select style={S.select} value={form[cf.name]||""} onChange={e=>set(cf.name,e.target.value)}><option value="">Select...</option>{cf.options?.map(o=><option key={o}>{o}</option>)}</select>
+          :<input type={cf.type==="url"?"url":cf.type==="number"?"number":"text"} style={S.input} placeholder={cf.placeholder||""} value={form[cf.name]||""} onChange={e=>set(cf.name,e.target.value)}/>}
+        </Field>
+      ))}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+        <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
+        <button style={S.btnPrimary} onClick={()=>{if(!form.name)return;type==="addContact"?addContact(form):updateContact(data.id,form);closeModal();}}>
+          {type==="addContact"?"Add Contact":"Save Changes"}
+        </button>
+      </div>
+    </Modal>
+  );
+
+  if(type==="addCompany"||type==="editCompany") return(
+    <Modal title={type==="addCompany"?"Add Company":"Edit Company"} onClose={closeModal} wide>
+      <div style={S.grid2}>
+        <F label="Company Name *" name="name" required/>
+        <F label="Industry" name="industry" options={INDUSTRIES}/>
+        <F label="Website" name="website" placeholder="company.com"/>
+        <F label="Email" name="email" type="email"/>
+        <F label="Phone" name="phone"/>
+        <F label="Employees" name="employees" type="number"/>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+        <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
+        <button style={S.btnPrimary} onClick={()=>{if(!form.name)return;type==="addCompany"?addCompany(form):updateCompany(data.id,form);closeModal();}}>
+          {type==="addCompany"?"Add Company":"Save Changes"}
+        </button>
+      </div>
+    </Modal>
+  );
+
+  if(type==="addDeal"||type==="editDeal") return(
+    <Modal title={type==="addDeal"?"Add Deal":"Edit Deal"} onClose={closeModal} wide>
+      <F label="Deal Title *" name="title" placeholder="Enterprise License Q3" required/>
+      <div style={S.grid2}>
+        <F label="Value (USD)" name="value" type="number" placeholder="50000"/>
+        <F label="Stage" name="stage" options={STAGES}/>
+        <F label="Close Date" name="closeDate" type="date"/>
+        <Field label="Probability (%)"><input type="range" min={0} max={100} value={form.probability||50} onChange={e=>set("probability",+e.target.value)} style={{width:"100%",accentColor:"#1D4ED8"}}/><div style={{fontSize:12,color:"#64748B",textAlign:"right"}}>{form.probability||50}%</div></Field>
+        <Field label="Contact"><select style={S.select} value={form.contactId||""} onChange={e=>set("contactId",e.target.value)}><option value="">Select contact...</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
+        <Field label="Company"><select style={S.select} value={form.companyId||""} onChange={e=>set("companyId",e.target.value)}><option value="">Select company...</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+      </div>
+      {dealCustomFields.map(cf=>(
+        <Field key={cf.id} label={cf.name}>
+          {cf.type==="select"?<select style={S.select} value={form[cf.name]||""} onChange={e=>set(cf.name,e.target.value)}><option value="">Select...</option>{cf.options?.map(o=><option key={o}>{o}</option>)}</select>
+          :<input type="text" style={S.input} value={form[cf.name]||""} onChange={e=>set(cf.name,e.target.value)}/>}
+        </Field>
+      ))}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+        <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
+        <button style={S.btnPrimary} onClick={()=>{if(!form.title)return;type==="addDeal"?addDeal(form):updateDeal(data.id,form);closeModal();}}>
+          {type==="addDeal"?"Add Deal":"Save Changes"}
+        </button>
+      </div>
+    </Modal>
+  );
+
+  if(type==="addTask") return(
+    <Modal title="Add Task" onClose={closeModal}>
+      <F label="Task Title *" name="title" placeholder="Follow up on proposal" required/>
+      <div style={S.grid2}>
+        <F label="Due Date" name="dueDate" type="date"/>
+        <F label="Priority" name="priority" options={PRIORITIES}/>
+        <Field label="Linked Contact"><select style={S.select} value={form.contactId||""} onChange={e=>set("contactId",e.target.value)}><option value="">Select contact...</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+      </div>
+      <Field label="Reminder">
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <input type="checkbox" checked={form.reminder||false} onChange={e=>set("reminder",e.target.checked)} style={{cursor:"pointer",accentColor:"#1D4ED8",width:16,height:16}}/>
+          <span style={{fontSize:13,color:"#64748B"}}>Enable reminder notification</span>
+        </div>
+      </Field>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+        <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
+        <button style={S.btnPrimary} onClick={()=>{if(!form.title)return;addTask({...form,contactId:form.contactId||data?.contactId,completed:false});closeModal();}}>Add Task</button>
+      </div>
+    </Modal>
+  );
+
+  if(type==="addEntity") return(
+    <Modal title="Add Legal Entity" onClose={closeModal}>
+      <div style={{background:"#F1F5F9",borderRadius:8,padding:12,marginBottom:14,fontSize:13,color:"#475569",lineHeight:1.6}}>Each entity is completely isolated — separate contacts, deals, tasks, notes, and email integrations.</div>
+      <F label="Entity Name *" name="name" placeholder="e.g. Apex Ventures LLC" required/>
+      <div style={S.grid2}>
+        <F label="Entity Type" name="type" options={ETYPES}/>
+        <F label="Industry" name="industry" options={INDUSTRIES}/>
+        <F label="Website" name="website" placeholder="yourcompany.com"/>
+      </div>
+      <Field label="Brand Color">
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {["#1D4ED8","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899","#F97316","#06B6D4"].map(c=>(
+            <div key={c} style={{width:28,height:28,borderRadius:6,background:c,cursor:"pointer",border:form.color===c?"3px solid #0F172A":"2px solid transparent"}} onClick={()=>set("color",c)}/>
+          ))}
+        </div>
+      </Field>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+        <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
+        <button style={S.btnPrimary} onClick={()=>{if(!form.name)return;addEntity({...form,color:form.color||"#1D4ED8"});closeModal();}}>Create Entity</button>
+      </div>
+    </Modal>
+  );
+
+  if(type==="composeEmail") return(
+    <Modal title="Compose Email" onClose={closeModal} wide>
+      <Field label="To"><input style={S.input} value={form.to||data?.to||""} onChange={e=>set("to",e.target.value)}/></Field>
+      <F label="Subject" name="subject" placeholder="Enter subject..."/>
+      <Field label="Message">
+        <textarea style={{...S.textarea,minHeight:180}} placeholder="Write your email..." value={form.body||""} onChange={e=>set("body",e.target.value)}/>
+      </Field>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+        <p style={{fontSize:12,color:"#475569",margin:0}}>Email will be logged on the contact timeline.</p>
+        <div style={{display:"flex",gap:8}}>
+          <button style={S.btnSecondary} onClick={closeModal}>Discard</button>
+          <button style={S.btnPrimary} onClick={()=>{if(!form.subject&&!form.body)return;const content=`To: ${form.to||data?.to}\nSubject: ${form.subject||"(no subject)"}\n\n${form.body||""}`;if(data?.contactId)addNote({contactId:data.contactId,content,type:"email"});showToast("Email sent & logged!");closeModal();}}><Ic d={I.send} size={14}/>Send Email</button>
+        </div>
+      </div>
+    </Modal>
+  );
+
+  if(type==="connectEmail") return(
+    <Modal title="Connect Email" onClose={closeModal}>
+      <p style={{fontSize:13,color:"#64748B",marginBottom:16}}>Connect an email account to send emails directly from contact profiles.</p>
+      <div style={{display:"flex",gap:10,flexDirection:"column"}}>
+        {EMAIL_PROVIDERS.map(prov=>(
+          <button key={prov.id} style={{...S.btnSecondary,justifyContent:"flex-start",padding:"12px 16px"}} onClick={closeModal}>
+            <div style={{width:28,height:28,background:prov.color+"20",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:prov.color,fontSize:14}}>{prov.logo}</div>
+            Connect {prov.label}
+          </button>
+        ))}
+      </div>
+      <p style={{fontSize:12,color:"#475569",marginTop:12}}>→ Go to Settings → Email Integration to connect your account.</p>
+    </Modal>
+  );
+
+  if(type==="enrollSequence") return(
+    <Modal title="Enroll in Sequence" onClose={closeModal}>
+      <p style={{fontSize:13,color:"#64748B",marginBottom:16}}>Select a sequence to enroll this contact in.</p>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {(sequences||[]).filter(s=>s.entityId===activeEntityId&&s.active).map(seq=>(
+          <button key={seq.id} style={{...S.btnSecondary,justifyContent:"flex-start",padding:"12px 16px"}} onClick={()=>{addEnrollment({contactId:data?.contactId,sequenceId:seq.id,currentStep:0,status:"active",enrolledAt:new Date().toISOString()});showToast(`Enrolled in "${seq.name}"`);closeModal();}}>
+            <Ic d={I.seq} size={15} c="#1D4ED8"/>
+            <div>
+              <div style={{fontWeight:600,color:"#0F172A"}}>{seq.name}</div>
+              <div style={{fontSize:11,color:"#64748B"}}>{seq.steps.length} steps</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+
+  if(type==="buildQuote") return <QuoteBuilder data={data} contacts={contacts} products={products} activeEntityId={activeEntityId} onClose={closeModal} addNote={addNote} showToast={showToast}/>;
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUOTE BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+function QuoteBuilder({data,contacts,products,activeEntityId,onClose,addNote,showToast}){
+  const [items,setItems]=useState([{productId:"",qty:1,price:0,name:"",description:""}]);
+  const [notes,setNotes]=useState("");
+  const [title,setTitle]=useState("Proposal");
+  const eProducts=products.filter(p=>p.entityId===activeEntityId);
+  const contact=contacts.find(c=>c.id===data?.contactId);
+  const total=items.reduce((s,i)=>s+(i.qty*(i.price||0)),0);
+  const addItem=()=>setItems(p=>[...p,{productId:"",qty:1,price:0,name:"",description:""}]);
+  const updateItem=(idx,field,val)=>setItems(p=>p.map((it,i)=>{if(i!==idx)return it;const updated={...it,[field]:val};if(field==="productId"){const prod=eProducts.find(p=>p.id===val);if(prod){updated.name=prod.name;updated.price=prod.price;updated.description=prod.description;}}return updated;}));
+  const removeItem=(idx)=>setItems(p=>p.filter((_,i)=>i!==idx));
+
+  const generateQuoteText=()=>`PROPOSAL: ${title}
+${contact?`To: ${contact.name} — ${contact.companyName||""}`:""} 
+Date: ${fmtDate(new Date())}
+${"─".repeat(50)}
+
+LINE ITEMS:
+${items.map(it=>`  ${it.name||"Item"} (x${it.qty}) ............... ${fmt$(it.qty*it.price)}`).join("\n")}
+
+${"─".repeat(50)}
+TOTAL: ${fmt$(total)}
+
+${notes?`\nNotes:\n${notes}`:""}
+
+This proposal is valid for 30 days.`;
+
+  const saveQuote=()=>{
+    if(!data?.contactId)return;
+    addNote({contactId:data.contactId,content:generateQuoteText(),type:"note"});
+    showToast("Quote saved to contact timeline!");
+    onClose();
+  };
+
+  const copyQuote=()=>{
+    navigator.clipboard?.writeText(generateQuoteText()).catch(()=>{});
+    showToast("Quote copied to clipboard!");
+  };
+
+  return(
+    <div style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{...S.modal,maxWidth:680}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",margin:0}}>Build Quote / Proposal</h2>
+          <button style={S.btnGhost} onClick={onClose}><Ic d={I.x} size={18}/></button>
+        </div>
+        <div style={{display:"flex",gap:12,marginBottom:16,alignItems:"center"}}>
+          <div style={{flex:1}}><label style={S.label}>Proposal Title</label><input style={S.input} value={title} onChange={e=>setTitle(e.target.value)}/></div>
+          {contact&&<div style={{flexShrink:0,background:"#F1F5F9",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#475569"}}>For: <strong style={{color:"#0F172A"}}>{contact.name}</strong></div>}
+        </div>
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <label style={S.label}>Line Items</label>
+            <button style={{...S.btnSecondary,fontSize:12,padding:"4px 10px"}} onClick={addItem}><Ic d={I.plus} size={12}/>Add Item</button>
+          </div>
+          {items.map((item,i)=>(
+            <div key={i} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8,marginBottom:8,alignItems:"center"}}>
+              <div>
+                <select style={{...S.select,marginBottom:4}} value={item.productId||""} onChange={e=>updateItem(i,"productId",e.target.value)}>
+                  <option value="">Custom item...</option>
+                  {eProducts.map(p=><option key={p.id} value={p.id}>{p.name} — {fmt$(p.price)}</option>)}
+                </select>
+                <input style={{...S.input,fontSize:12}} placeholder="Item name" value={item.name} onChange={e=>updateItem(i,"name",e.target.value)}/>
+              </div>
+              <div>
+                <label style={{...S.label,marginBottom:3}}>Qty</label>
+                <input type="number" style={S.input} min={1} value={item.qty} onChange={e=>updateItem(i,"qty",+e.target.value)}/>
+              </div>
+              <div>
+                <label style={{...S.label,marginBottom:3}}>Unit Price</label>
+                <input type="number" style={S.input} min={0} value={item.price} onChange={e=>updateItem(i,"price",+e.target.value)}/>
+              </div>
+              <div style={{paddingTop:18,display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:12,fontWeight:600,color:"#10B981",whiteSpace:"nowrap"}}>{fmt$(item.qty*item.price)}</span>
+                <button style={{...S.btnGhost,color:"#EF4444",padding:3}} onClick={()=>removeItem(i)}><Ic d={I.x} size={13}/></button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{background:"#F8FAFC",borderRadius:8,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,border:"1px solid #E9EEF6"}}>
+          <span style={{fontSize:14,fontWeight:700,color:"#0F172A"}}>Total</span>
+          <span style={{fontSize:22,fontWeight:800,color:"#10B981",fontFamily:"'Sora',sans-serif"}}>{fmt$(total)}</span>
+        </div>
+        <Field label="Additional Notes (optional)">
+          <textarea style={{...S.textarea,minHeight:60}} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Payment terms, validity period, special conditions..."/>
+        </Field>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12}}>
+          <button style={S.btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={S.btnSecondary} onClick={copyQuote}><Ic d={I.copy} size={13}/>Copy as Text</button>
+          {data?.contactId&&<button style={S.btnPrimary} onClick={saveQuote}><Ic d={I.note} size={13}/>Save to Contact</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════════════════════════════
+export default function App(){
+  const [entities,setEntities]=useState(DEMO.entities);
+  const [activeEntityId,setActiveEntityId]=useState("e1");
+  const [contacts,setContacts]=useState(DEMO.contacts);
+  const [companies,setCompanies]=useState(DEMO.companies);
+  const [deals,setDeals]=useState(DEMO.deals);
+  const [tasks,setTasks]=useState(DEMO.tasks);
+  const [notes,setNotes]=useState(DEMO.notes);
+  const [emailInts,setEmailInts]=useState(DEMO.emailIntegrations);
+  const [products,setProducts]=useState(DEMO.products);
+  const [sequences,setSequences]=useState(DEMO.sequences);
+  const [templates,setTemplates]=useState(DEMO.templates);
+  const [forms,setForms]=useState(DEMO.forms);
+  const [automations,setAutomations]=useState(DEMO.automations);
+  const [docs,setDocs]=useState(DEMO.docs);
+  const [quotes,setQuotes]=useState(DEMO.quotes);
+  const [customFields,setCustomFields]=useState(DEMO.customFields);
+  const [enrollments,setEnrollments]=useState(DEMO.enrollments);
+  // New state
+  const [timeEntries,setTimeEntries]=useState(DEMO.timeEntries);
+  const [invoices,setInvoices]=useState(DEMO.invoices);
+  const [meetings,setMeetings]=useState(DEMO.meetings);
+  const [webhooks,setWebhooks]=useState(DEMO.webhooks);
+  const [portalTokens,setPortalTokens]=useState(DEMO.portalTokens);
+  const [emailThreads,setEmailThreads]=useState(DEMO.emailThreads);
+  const [availability,setAvailability]=useState(DEMO.availability);
+  const [invoiceCounter,setInvoiceCounter]=useState(DEMO.invoiceCounter);
+  const [signatures,setSignatures]=useState([]);
+  // UI state
+  const [view,setView]=useState("dashboard");
+  const [selContact,setSelContact]=useState(null);
+  const [search,setSearch]=useState("");
+  const [modal,setModal]=useState(null);
+  const [toast,setToast]=useState(null);
+  const [entityMenuOpen,setEntityMenuOpen]=useState(false);
+  const [sigModal,setSigModal]=useState(null);
+
+  const entity=entities.find(e=>e.id===activeEntityId);
+  const ec=contacts.filter(c=>c.entityId===activeEntityId);
+  const eco=companies.filter(c=>c.entityId===activeEntityId);
+  const ed=deals.filter(d=>d.entityId===activeEntityId);
+  const et=tasks.filter(t=>t.entityId===activeEntityId);
+  const en=notes.filter(n=>n.entityId===activeEntityId);
+  const eei=emailInts.filter(i=>i.entityId===activeEntityId);
+
+  // ─── PERSISTENCE ──────────────────────────────────────────────────────────
+  useEffect(()=>{(async()=>{
+    const load=async(key,setter)=>{try{const r=await window.storage?.get(key);if(r?.value)setter(JSON.parse(r.value));}catch(e){}};
+    const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures]];
+    for(const [k,s] of keys)await load(k,s);
+    try{const r=await window.storage?.get("crm:activeEntityId");if(r?.value)setActiveEntityId(JSON.parse(r.value));}catch(e){}
+  })();},[]);
+
+  const save=async(key,val)=>{try{await window.storage?.set(key,JSON.stringify(val));}catch(e){}};
+  useEffect(()=>{save("crm:entities",entities);},[entities]);
+  useEffect(()=>{save("crm:contacts",contacts);},[contacts]);
+  useEffect(()=>{save("crm:companies",companies);},[companies]);
+  useEffect(()=>{save("crm:deals",deals);},[deals]);
+  useEffect(()=>{save("crm:tasks",tasks);},[tasks]);
+  useEffect(()=>{save("crm:notes",notes);},[notes]);
+  useEffect(()=>{save("crm:emailInts",emailInts);},[emailInts]);
+  useEffect(()=>{save("crm:products",products);},[products]);
+  useEffect(()=>{save("crm:sequences",sequences);},[sequences]);
+  useEffect(()=>{save("crm:templates",templates);},[templates]);
+  useEffect(()=>{save("crm:forms",forms);},[forms]);
+  useEffect(()=>{save("crm:automations",automations);},[automations]);
+  useEffect(()=>{save("crm:docs",docs);},[docs]);
+  useEffect(()=>{save("crm:quotes",quotes);},[quotes]);
+  useEffect(()=>{save("crm:customFields",customFields);},[customFields]);
+  useEffect(()=>{save("crm:enrollments",enrollments);},[enrollments]);
+  useEffect(()=>{save("crm:timeEntries",timeEntries);},[timeEntries]);
+  useEffect(()=>{save("crm:invoices",invoices);},[invoices]);
+  useEffect(()=>{save("crm:meetings",meetings);},[meetings]);
+  useEffect(()=>{save("crm:webhooks",webhooks);},[webhooks]);
+  useEffect(()=>{save("crm:portalTokens",portalTokens);},[portalTokens]);
+  useEffect(()=>{save("crm:emailThreads",emailThreads);},[emailThreads]);
+  useEffect(()=>{save("crm:availability",availability);},[availability]);
+  useEffect(()=>{save("crm:invoiceCounter",invoiceCounter);},[invoiceCounter]);
+  useEffect(()=>{save("crm:signatures",signatures);},[signatures]);
+  useEffect(()=>{save("crm:activeEntityId",activeEntityId);},[activeEntityId]);
+
+  const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
+
+  // ─── WEBHOOK FIRE ─────────────────────────────────────────────────────────
+  const fireWebhook=(event,data={})=>{
+    webhooks.filter(w=>w.entityId===activeEntityId&&w.active&&w.events.includes(event)).forEach(wh=>{
+      updateWebhook(wh.id,{lastFired:new Date().toISOString(),lastStatus:200});
+      // In production this would call: fetch(wh.url, {method:'POST', body: JSON.stringify({event, data, timestamp: new Date().toISOString()})})
+    });
+  };
+
+  // ─── AUTOMATION RUNNER ────────────────────────────────────────────────────
+  const runAutomations=(trigger,ctx={})=>{
+    automations.filter(a=>a.entityId===activeEntityId&&a.active&&a.trigger===trigger).forEach(auto=>{
+      if(auto.action==="create_task"&&auto.actionData?.title){
+        const due=new Date();due.setDate(due.getDate()+(auto.actionData.daysOut||0));
+        setTasks(p=>[...p,{id:uid(),entityId:activeEntityId,contactId:ctx.contactId,title:auto.actionData.title,dueDate:due.toISOString().split("T")[0],completed:false,priority:auto.actionData.priority||"medium",reminder:false,createdAt:new Date().toISOString()}]);
+        showToast(`Auto-task: "${auto.actionData.title}"`);
+      }
+      if(auto.action==="add_note"&&auto.actionData?.content){
+        setNotes(p=>[...p,{id:uid(),entityId:activeEntityId,contactId:ctx.contactId,content:auto.actionData.content,type:"note",createdAt:new Date().toISOString()}]);
+      }
+    });
+  };
+
+  const openModal=(type,data={})=>setModal({type,data});
+  const closeModal=()=>setModal(null);
+
+  // ─── CONTACTS ─────────────────────────────────────────────────────────────
+  const addContact=(data)=>{const c={id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()};setContacts(p=>[...p,c]);runAutomations("new_contact",{contactId:c.id});fireWebhook("contact.created",c);return c;};
+  const updateContact=(id,data)=>setContacts(p=>p.map(c=>c.id===id?{...c,...data}:c));
+  const deleteContact=(id)=>{setContacts(p=>p.filter(c=>c.id!==id));if(selContact===id)setSelContact(null);};
+
+  // ─── COMPANIES ────────────────────────────────────────────────────────────
+  const addCompany=(data)=>setCompanies(p=>[...p,{id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()}]);
+  const updateCompany=(id,data)=>setCompanies(p=>p.map(c=>c.id===id?{...c,...data}:c));
+  const deleteCompany=(id)=>setCompanies(p=>p.filter(c=>c.id!==id));
+
+  // ─── DEALS ────────────────────────────────────────────────────────────────
+  const addDeal=(data)=>{const d={id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()};setDeals(p=>[...p,d]);runAutomations("deal_created",{contactId:d.contactId});fireWebhook("deal.created",d);return d;};
+  const updateDeal=(id,data)=>{setDeals(p=>p.map(d=>{if(d.id!==id)return d;const u={...d,...data};if(data.stage==="Won"&&d.stage!=="Won"){runAutomations("deal_won",{contactId:d.contactId});fireWebhook("deal.won",u);}if(data.stage&&data.stage!==d.stage)runAutomations("stage_change",{contactId:d.contactId});return u;}));};
+  const deleteDeal=(id)=>setDeals(p=>p.filter(d=>d.id!==id));
+
+  // ─── TASKS ────────────────────────────────────────────────────────────────
+  const addTask=(data)=>setTasks(p=>[...p,{id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()}]);
+  const updateTask=(id,data)=>setTasks(p=>p.map(t=>t.id===id?{...t,...data}:t));
+  const deleteTask=(id)=>setTasks(p=>p.filter(t=>t.id!==id));
+
+  // ─── NOTES ────────────────────────────────────────────────────────────────
+  const addNote=(data)=>setNotes(p=>[...p,{id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()}]);
+
+  // ─── EMAIL ────────────────────────────────────────────────────────────────
+  const connectEmail=(provider,email)=>setEmailInts(p=>[...p,{id:uid(),entityId:activeEntityId,provider,email,connectedAt:new Date().toISOString()}]);
+  const disconnectEmail=(id)=>setEmailInts(p=>p.filter(i=>i.id!==id));
+  const addEmailThread=(data)=>setEmailThreads(p=>[...p,{id:uid(),entityId:activeEntityId,...data}]);
+  const addEmailMessage=(threadId,msg)=>setEmailThreads(p=>p.map(t=>t.id===threadId?{...t,messages:[...t.messages,msg],lastActivity:new Date().toISOString()}:t));
+
+  // ─── PRODUCTS ─────────────────────────────────────────────────────────────
+  const addProduct=(data)=>setProducts(p=>[...p,{id:uid(),entityId:activeEntityId,...data}]);
+  const updateProduct=(id,data)=>setProducts(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteProduct=(id)=>setProducts(p=>p.filter(x=>x.id!==id));
+
+  // ─── SEQUENCES ────────────────────────────────────────────────────────────
+  const addSequence=(data)=>setSequences(p=>[...p,{id:uid(),entityId:activeEntityId,...data,enrolledCount:0}]);
+  const updateSequence=(id,data)=>setSequences(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteSequence=(id)=>setSequences(p=>p.filter(x=>x.id!==id));
+
+  // ─── TEMPLATES ────────────────────────────────────────────────────────────
+  const addTemplate=(data)=>setTemplates(p=>[...p,{id:uid(),entityId:activeEntityId,...data}]);
+  const deleteTemplate=(id)=>setTemplates(p=>p.filter(x=>x.id!==id));
+
+  // ─── FORMS ────────────────────────────────────────────────────────────────
+  const addForm=(data)=>setForms(p=>[...p,{id:uid(),entityId:activeEntityId,...data}]);
+  const updateForm=(id,data)=>setForms(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteForm=(id)=>setForms(p=>p.filter(x=>x.id!==id));
+
+  // ─── AUTOMATIONS ──────────────────────────────────────────────────────────
+  const addAutomation=(data)=>setAutomations(p=>[...p,{id:uid(),entityId:activeEntityId,...data}]);
+  const updateAutomation=(id,data)=>setAutomations(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteAutomation=(id)=>setAutomations(p=>p.filter(x=>x.id!==id));
+
+  // ─── DOCS ─────────────────────────────────────────────────────────────────
+  const addDoc=(data,isUpdate=false)=>{if(isUpdate){setDocs(p=>p.map(d=>d.id===data.id?data:d));return;}setDocs(p=>[...p,{id:uid(),entityId:activeEntityId,...data}]);};
+  const deleteDoc=(id)=>setDocs(p=>p.filter(d=>d.id!==id));
+
+  // ─── CUSTOM FIELDS ────────────────────────────────────────────────────────
+  const addCustomField=(data)=>setCustomFields(p=>[...p,{id:uid(),entityId:activeEntityId,...data}]);
+  const deleteCustomField=(id)=>setCustomFields(p=>p.filter(x=>x.id!==id));
+
+  // ─── ENROLLMENTS ──────────────────────────────────────────────────────────
+  const addEnrollment=(data)=>setEnrollments(p=>[...p,{id:uid(),...data}]);
+
+  // ─── TIME TRACKING ────────────────────────────────────────────────────────
+  const addTimeEntry=(data)=>{setTimeEntries(p=>[...p,{id:uid(),...data}]);fireWebhook("time.logged",data);};
+  const updateTimeEntry=(id,data)=>setTimeEntries(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteTimeEntry=(id)=>setTimeEntries(p=>p.filter(x=>x.id!==id));
+
+  // ─── INVOICES ─────────────────────────────────────────────────────────────
+  const addInvoice=(data)=>{const inv={id:uid(),...data};setInvoices(p=>[...p,inv]);fireWebhook("invoice.sent",inv);return inv;};
+  const updateInvoice=(id,data)=>{setInvoices(p=>p.map(x=>{if(x.id!==id)return x;const u={...x,...data};if(data.status==="Paid"&&x.status!=="Paid")fireWebhook("invoice.paid",u);return u;}));};
+  const deleteInvoice=(id)=>setInvoices(p=>p.filter(x=>x.id!==id));
+
+  // ─── MEETINGS ─────────────────────────────────────────────────────────────
+  const addMeeting=(data)=>{const m={id:uid(),...data};setMeetings(p=>[...p,m]);fireWebhook("meeting.booked",m);return m;};
+  const updateMeeting=(id,data)=>setMeetings(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteMeeting=(id)=>setMeetings(p=>p.filter(x=>x.id!==id));
+
+  // ─── WEBHOOKS ─────────────────────────────────────────────────────────────
+  const addWebhook=(data)=>setWebhooks(p=>[...p,{id:uid(),...data}]);
+  const updateWebhook=(id,data)=>setWebhooks(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteWebhook=(id)=>setWebhooks(p=>p.filter(x=>x.id!==id));
+
+  // ─── PORTAL TOKENS ────────────────────────────────────────────────────────
+  const addPortalToken=(data)=>setPortalTokens(p=>[...p,{id:uid(),...data}]);
+  const deletePortalToken=(id)=>setPortalTokens(p=>p.filter(x=>x.id!==id));
+
+  // ─── AVAILABILITY ─────────────────────────────────────────────────────────
+  const updateAvailability=(entityId,data)=>setAvailability(p=>({...p,[entityId]:{...(p[entityId]||{}), ...data}}));
+
+  // ─── SIGNATURES ───────────────────────────────────────────────────────────
+  const addSignature=(data)=>{setSignatures(p=>[...p,{id:uid(),...data}]);addDoc({...data.doc,status:"Signed"},true);};
+
+  // ─── ENTITY ───────────────────────────────────────────────────────────────
+  const addEntity=(data)=>{const e={id:uid(),...data};setEntities(p=>[...p,e]);setActiveEntityId(e.id);setView("dashboard");showToast(`Switched to ${e.name}`);};
+
+  // ─── NAVIGATION ───────────────────────────────────────────────────────────
+  const overdueTasks=et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length;
+  const unpaidInvoices=invoices.filter(i=>i.entityId===activeEntityId&&["Sent","Viewed","Overdue"].includes(i.status)).length;
+  const unreadEmails=emailThreads.filter(t=>t.entityId===activeEntityId&&t.messages[t.messages.length-1]?.direction==="inbound").length;
+
+  const NAV=[
+    {id:"dashboard",label:"Dashboard",icon:I.home},
+    {id:"contacts",label:"Contacts",icon:I.users,badge:ec.length,badgeColor:"rgba(255,255,255,0.15)"},
+    {id:"companies",label:"Companies",icon:I.building},
+    {id:"deals",label:"Pipeline",icon:I.layers},
+    {id:"tasks",label:"Tasks",icon:I.check,badge:overdueTasks,badgeColor:"#EF4444"},
+    {id:"inbox",label:"Inbox",icon:I.inbox,badge:unreadEmails,badgeColor:"#1D4ED8"},
+    {id:"scheduler",label:"Scheduler",icon:I.meet},
+    {id:"time",label:"Time Tracking",icon:I.clock},
+    {id:"invoices",label:"Invoices",icon:I.invoice,badge:unpaidInvoices,badgeColor:"#F59E0B"},
+    {id:"portal",label:"Client Portal",icon:I.portal},
+    {id:"import",label:"Import",icon:I.import},
+    {id:"sequences",label:"Sequences",icon:I.seq},
+    {id:"forms",label:"Web Forms",icon:I.form},
+    {id:"automation",label:"Automation",icon:I.zap},
+    {id:"reports",label:"Reports",icon:I.bar},
+    {id:"settings",label:"Settings",icon:I.gear},
+  ];
+
+  return(
+    <div style={{display:"flex",height:"100vh",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif",background:"#F1F5F9",overflow:"hidden"}}>
+      <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&display=swap" rel="stylesheet"/>
+
+      {/* ─── SIDEBAR ─────────────────────────────────── */}
+      <div style={{width:222,background:"#0F2044",display:"flex",flexDirection:"column",flexShrink:0,overflowY:"auto"}}>
+        <div style={{padding:"16px 16px 10px",borderBottom:"1px solid #162B55"}}>
+          <div style={{fontFamily:"'Sora',sans-serif",fontSize:20,fontWeight:800,color:"#FFFFFF",letterSpacing:"-0.5px"}}>Nex<span style={{color:entity?.color||"#3B82F6"}}>CRM</span></div>
+          <div style={{fontSize:10,color:"#475569",letterSpacing:".5px",textTransform:"uppercase",marginTop:1}}>Multi-Entity Platform</div>
+        </div>
+        {/* Entity Switcher */}
+        <div style={{padding:"8px 10px 4px",position:"relative"}}>
+          <button style={{width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid #1E3A6B",borderRadius:8,padding:"7px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:7,color:"#E2E8F0",fontSize:12}} onClick={()=>setEntityMenuOpen(o=>!o)}>
+            <span style={{display:"flex",alignItems:"center",gap:7,flex:1,minWidth:0}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:entity?.color||"#3B82F6",flexShrink:0}}/>
+              <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:600}}>{entity?.name}</span>
+            </span>
+            <Ic d={I.down} size={12} c="#475569"/>
+          </button>
+          {entityMenuOpen&&(
+            <div style={{position:"absolute",top:"calc(100% + 2px)",left:10,right:10,background:"#162B55",border:"1px solid #1E3A6B",borderRadius:10,zIndex:50,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.4)"}}>
+              {entities.map(e=>(
+                <div key={e.id} style={{padding:"9px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,background:e.id===activeEntityId?"rgba(255,255,255,0.1)":"transparent",borderBottom:"1px solid #1E3A6B"}}
+                  onClick={()=>{setActiveEntityId(e.id);setEntityMenuOpen(false);setSelContact(null);showToast(`Switched to ${e.name}`);}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:e.color,flexShrink:0}}/>
+                  <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.name}</div><div style={{fontSize:10,color:"#475569"}}>{e.type}</div></div>
+                  {e.id===activeEntityId&&<Ic d={I.ok} size={12} c="#10B981"/>}
+                </div>
+              ))}
+              <div style={{padding:8}}><button style={{...S.btnPrimary,width:"100%",justifyContent:"center",fontSize:11,padding:"6px"}} onClick={()=>{setEntityMenuOpen(false);openModal("addEntity");}}><Ic d={I.plus} size={12}/>New Entity</button></div>
+            </div>
+          )}
+        </div>
+        {/* Navigation */}
+        <nav style={{flex:1,overflowY:"auto",padding:"4px 0"}}>
+          {NAV.map(item=>{
+            const active=view===item.id&&(item.id!=="contacts"||!selContact);
+            return(
+              <button key={item.id} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:active?600:400,color:active?"#FFFFFF":"#94A3B8",background:active?"rgba(255,255,255,0.10)":"transparent",border:"none",borderLeft:`3px solid ${active?entity?.color||"#3B82F6":"transparent"}`,transition:"all .1s",textAlign:"left"}}
+                onClick={()=>{setView(item.id);if(item.id!=="contacts")setSelContact(null);}}>
+                <Ic d={item.icon} size={14}/>
+                <span style={{flex:1}}>{item.label}</span>
+                {item.badge>0&&<span style={{background:item.badgeColor||"rgba(255,255,255,0.15)",color:item.badgeColor==="rgba(255,255,255,0.15)"?"#94A3B8":"#fff",borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>{item.badge}</span>}
+              </button>
+            );
+          })}
+        </nav>
+        <div style={{padding:"10px 14px",borderTop:"1px solid #162B55"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{width:26,height:26,borderRadius:"50%",background:entity?.color||"#3B82F6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff"}}>{entity?.name?.[0]||"?"}</div>
+            <div><div style={{fontSize:11,fontWeight:600,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:145}}>{entity?.name}</div><div style={{fontSize:9,color:"#475569"}}>{entity?.type}</div></div>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── MAIN ─────────────────────────────────────── */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
+        <div style={{height:50,background:"#FFFFFF",borderBottom:"1px solid #E2E8F0",display:"flex",alignItems:"center",padding:"0 20px",gap:10,flexShrink:0}}>
+          <div style={{position:"relative",flex:1,maxWidth:360}}>
+            <div style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}><Ic d={I.search} size={13} c="#94A3B8"/></div>
+            <input style={{...S.input,paddingLeft:30,background:"#F8FAFC",border:"1px solid #E2E8F0",color:"#0F172A",fontSize:12}} placeholder="Search contacts, deals, companies..." value={search} onChange={e=>setSearch(e.target.value)}/>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+            <span style={{fontSize:12,color:"#64748B",display:"flex",alignItems:"center",gap:4}}><div style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>{entity?.name}</span>
+            {overdueTasks>0&&<div style={{...S.badge("#EF4444"),cursor:"pointer"}} onClick={()=>setView("tasks")}><Ic d={I.bell} size={10}/>{overdueTasks} overdue</div>}
+            {unpaidInvoices>0&&<div style={{...S.badge("#F59E0B"),cursor:"pointer"}} onClick={()=>setView("invoices")}><Ic d={I.invoice} size={10}/>{unpaidInvoices} unpaid</div>}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div style={{flex:1,overflowY:"auto",padding:20}}>
+          {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} entity={entity} setView={setView} setSelContact={setSelContact} openModal={openModal}/>}
+          {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} deals={deals} notes={notes} tasks={tasks}/>}
+          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} customFields={customFields} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
+          {view==="companies"&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts}/>}
+          {view==="deals"&&<KanbanBoard ed={ed} contacts={contacts} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setView={setView} products={products}/>}
+          {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
+          {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
+          {view==="scheduler"&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
+          {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
+          {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast}/>}
+          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} invoices={invoices} docs={docs} quotes={quotes} deals={deals} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} showToast={showToast} entity={entity}/>}
+          {view==="import"&&<ImportView activeEntityId={activeEntityId} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
+          {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
+          {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
+          {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
+          {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} showToast={showToast}/>}
+          {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook}/>}
+        </div>
+      </div>
+
+      {/* ─── MODALS ────────────────────────────────────── */}
+      {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} addNote={addNote} addEntity={addEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields}/>}
+
+      {/* ─── E-SIGNATURE MODAL ─────────────────────────── */}
+      {sigModal&&<SignatureModal doc={sigModal.doc} contact={sigModal.contact} onClose={()=>setSigModal(null)} onSign={(sigData)=>addSignature({...sigData,doc:sigModal.doc,contactId:sigModal.contact?.id,entityId:activeEntityId})} showToast={showToast}/>}
+
+      {/* ─── TOAST ──────────────────────────────────────── */}
+      {toast&&(
+        <div style={{position:"fixed",bottom:20,right:20,background:toast.type==="error"?"#EF4444":"#10B981",color:"#fff",borderRadius:10,padding:"11px 18px",fontSize:13,fontWeight:600,zIndex:2000,boxShadow:"0 4px 20px rgba(0,0,0,.25)",display:"flex",alignItems:"center",gap:7,animation:"fadeIn .2s"}}>
+          <Ic d={toast.type==="error"?I.x:I.ok} size={14}/>{toast.msg}
+        </div>
+      )}
+
+      <style>{`
+        *{box-sizing:border-box;}body{margin:0;}
+        ::-webkit-scrollbar{width:5px;height:5px;}::-webkit-scrollbar-track{background:#F1F5F9;}::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px;}::-webkit-scrollbar-thumb:hover{background:#94A3B8;}
+        input[type="date"]::-webkit-calendar-picker-indicator{filter:none;}input[type="range"]{accent-color:#1D4ED8;}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+      `}</style>
+    </div>
+  );
+}
