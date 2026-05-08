@@ -1088,29 +1088,59 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
   const fileRef=useRef();
   const csvRef=useRef();
 
-  const CRM_FIELDS=["name","email","phone","title","companyName","source","notes"];
-  const HUBSPOT_DEFAULTS={firstname:"name",email:"email",phone:"phone",jobtitle:"title",company:"companyName","hs_analytics_source":"source"};
-  const ZOHO_DEFAULTS={"First Name":"name",Email:"email",Phone:"phone",Title:"title",Account:"companyName","Lead Source":"source"};
+  const CRM_FIELDS=["name","firstName","lastName","email","phone","title","companyName","source","notes"];
+  const FIELD_LABELS={name:"name",firstName:"name (first part)",lastName:"name (last part)",email:"email",phone:"phone",title:"title",companyName:"companyName",source:"source",notes:"notes"};
+  // HubSpot exports use API names in older flows and display names in the UI export — handle both.
+  const HUBSPOT_DEFAULTS={
+    firstname:"firstName",lastname:"lastName",email:"email",phone:"phone",jobtitle:"title",company:"companyName","hs_analytics_source":"source",
+    "First Name":"firstName","Last Name":"lastName","Email":"email","Phone Number":"phone","Job Title":"title","Company Name":"companyName","Lead Status":"source",
+  };
+  const ZOHO_DEFAULTS={"First Name":"firstName","Last Name":"lastName",Email:"email",Phone:"phone",Title:"title",Account:"companyName","Lead Source":"source"};
+  const HUBSPOT_SKIP=new Set(["city","record id","contact owner","create date","last activity date"]);
+
+  // Minimal CSV parser that handles quoted fields containing commas
+  const parseCsvLine=(line)=>{
+    const out=[];let cur="";let inQ=false;
+    for(let i=0;i<line.length;i++){
+      const ch=line[i];
+      if(inQ){
+        if(ch==='"'&&line[i+1]==='"'){cur+='"';i++;}
+        else if(ch==='"')inQ=false;
+        else cur+=ch;
+      }else{
+        if(ch==='"')inQ=true;
+        else if(ch===","){out.push(cur);cur="";}
+        else cur+=ch;
+      }
+    }
+    out.push(cur);
+    return out.map(v=>v.trim());
+  };
 
   const readFile=(f,isCSV)=>{
     const reader=new FileReader();
     reader.onload=(e)=>{
       const text=e.target.result;
       if(isCSV){
-        const lines=text.split("\n").filter(l=>l.trim());
-        const headers=lines[0].split(",").map(h=>h.replace(/"/g,"").trim());
+        const lines=text.split(/\r?\n/).filter(l=>l.trim());
+        const headers=parseCsvLine(lines[0]);
         const rows=lines.slice(1).map(l=>{
-          const vals=l.split(",").map(v=>v.replace(/"/g,"").trim());
+          const vals=parseCsvLine(l);
           const obj={};headers.forEach((h,i)=>obj[h]=vals[i]||"");return obj;
         }).filter(r=>Object.values(r).some(v=>v));
         setCsvHeaders(headers);setCsvRows(rows);
-        // Auto-detect HubSpot vs Zoho
-        const isHubspot=headers.some(h=>["firstname","hs_analytics_source","hubspot_owner_id"].includes(h.toLowerCase()));
+        // Auto-detect HubSpot vs Zoho — check both legacy API headers and modern display headers
+        const isHubspot=headers.some(h=>{
+          const l=h.toLowerCase();
+          return ["firstname","hs_analytics_source","hubspot_owner_id","record id","lead status"].includes(l)
+            ||(["first name","last name"].includes(l)&&headers.some(h2=>["phone number","job title","company name","record id","lead status"].includes(h2.toLowerCase())));
+        });
         const isZoho=headers.some(h=>["lead source","account","salutation"].includes(h.toLowerCase()));
         const defaults=isHubspot?HUBSPOT_DEFAULTS:isZoho?ZOHO_DEFAULTS:{};
         const mapping={};
         headers.forEach(h=>{
           const lower=h.toLowerCase();
+          if(isHubspot&&HUBSPOT_SKIP.has(lower))return;
           const match=Object.keys(defaults).find(k=>k.toLowerCase()===lower);
           if(match)mapping[h]=defaults[match];
         });
@@ -1168,16 +1198,32 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
     setExtracted(null);setFile(null);setFileContent("");
   };
 
-  const importCSVData=()=>{
-    let count=0;
-    csvRows.forEach(row=>{
-      const contact={source:importSource||"Other"};
-      Object.keys(csvMapping).forEach(h=>{if(csvMapping[h]&&row[h])contact[csvMapping[h]]=row[h];});
-      if(!contact.name)return;
-      const dup=contacts.some(c=>c.email&&c.email?.toLowerCase()===contact.email?.toLowerCase()&&c.entityId===activeEntityId);
-      if(!dup){addContact(contact);count++;}
+  const buildContactFromRow=(row)=>{
+    const contact={source:importSource||"Other"};
+    let firstName="";let lastName="";
+    Object.keys(csvMapping).forEach(h=>{
+      const target=csvMapping[h];const val=row[h];
+      if(!target||!val)return;
+      if(target==="firstName")firstName=val;
+      else if(target==="lastName")lastName=val;
+      else contact[target]=val;
     });
-    showToast(`Imported ${count} contacts (${csvRows.length-count} skipped as duplicates)`);
+    if(firstName||lastName){
+      contact.name=[firstName,lastName].filter(Boolean).join(" ");
+    }
+    return contact;
+  };
+
+  const importCSVData=()=>{
+    let count=0;let skipped=0;
+    csvRows.forEach(row=>{
+      const contact=buildContactFromRow(row);
+      if(!contact.name){skipped++;return;}
+      const dup=contact.email&&contacts.some(c=>c.email&&c.email.toLowerCase()===contact.email.toLowerCase()&&c.entityId===activeEntityId);
+      if(dup){skipped++;return;}
+      addContact(contact);count++;
+    });
+    showToast(`Imported ${count} contacts${skipped?` (${skipped} skipped as duplicates or missing name)`:""}`);
     setCsvRows([]);setCsvHeaders([]);setFile(null);
   };
 
@@ -1289,17 +1335,35 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
             <div>
               <div style={S.card({padding:20,marginBottom:20})}>
                 <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:14}}>Column Mapping ({csvRows.length} rows detected)</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                  {csvHeaders.slice(0,12).map(h=>(
-                    <div key={h} style={{display:"flex",alignItems:"center",gap:8}}>
-                      <div style={{fontSize:12,color:"#64748B",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={h}>{h}</div>
-                      <Ic d={I.arrow} size={14} c="#CBD5E1"/>
-                      <select value={csvMapping[h]||""} onChange={e=>setCsvMapping(p=>({...p,[h]:e.target.value}))} style={{...S.select,width:130,fontSize:12}}>
-                        <option value="">Skip</option>
-                        {CRM_FIELDS.map(f=><option key={f} value={f}>{f}</option>)}
-                      </select>
+                {(()=>{
+                  const firstHdr=Object.entries(csvMapping).find(([,v])=>v==="firstName")?.[0];
+                  const lastHdr=Object.entries(csvMapping).find(([,v])=>v==="lastName")?.[0];
+                  if(!firstHdr&&!lastHdr)return null;
+                  const sample=csvRows[0]||{};
+                  const fv=firstHdr?sample[firstHdr]:"";const lv=lastHdr?sample[lastHdr]:"";
+                  const combined=[fv,lv].filter(Boolean).join(" ")||"John Smith";
+                  return(
+                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,marginBottom:14,fontSize:12,color:"#1E3A8A"}}>
+                      <Ic d={I.users} size={14} c="#1D4ED8"/>
+                      <span><strong>{firstHdr||"First Name"}</strong>{firstHdr&&lastHdr?" + ":""}{lastHdr?<strong>{lastHdr}</strong>:null} will be combined into the <code style={{background:"#DBEAFE",padding:"1px 5px",borderRadius:3,fontFamily:"monospace"}}>name</code> field {csvRows[0]&&<>· e.g. <strong>"{combined}"</strong></>}</span>
                     </div>
-                  ))}
+                  );
+                })()}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  {csvHeaders.slice(0,16).map(h=>{
+                    const target=csvMapping[h];
+                    const isCombined=target==="firstName"||target==="lastName";
+                    return(
+                      <div key={h} style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{fontSize:12,color:"#64748B",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={h}>{h}</div>
+                        <Ic d={I.arrow} size={14} c={isCombined?"#1D4ED8":"#CBD5E1"}/>
+                        <select value={target||""} onChange={e=>setCsvMapping(p=>({...p,[h]:e.target.value}))} style={{...S.select,width:160,fontSize:12,...(isCombined?{borderColor:"#1D4ED8",color:"#1E3A8A",fontWeight:600}:{})}}>
+                          <option value="">Skip</option>
+                          {CRM_FIELDS.map(f=><option key={f} value={f}>{FIELD_LABELS[f]||f}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               <div style={S.card({overflow:"hidden",marginBottom:16})}>
@@ -1308,12 +1372,28 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
                   <span>{csvRows.length} total rows</span>
                 </div>
                 <div style={{overflowX:"auto"}}>
-                  <table style={{width:"100%",borderCollapse:"collapse"}}>
-                    <thead><tr>{csvHeaders.slice(0,6).map(h=><th key={h} style={S.th}>{h}{csvMapping[h]&&<span style={{color:"#10B981",marginLeft:4}}>→{csvMapping[h]}</span>}</th>)}</tr></thead>
-                    <tbody>{csvRows.slice(0,5).map((row,i)=>(
-                      <tr key={i}>{csvHeaders.slice(0,6).map(h=><td key={h} style={S.td}>{row[h]||"—"}</td>)}</tr>
-                    ))}</tbody>
-                  </table>
+                  {(()=>{
+                    const firstHdr=Object.entries(csvMapping).find(([,v])=>v==="firstName")?.[0];
+                    const lastHdr=Object.entries(csvMapping).find(([,v])=>v==="lastName")?.[0];
+                    const showCombined=!!(firstHdr||lastHdr);
+                    return(
+                      <table style={{width:"100%",borderCollapse:"collapse"}}>
+                        <thead><tr>
+                          {showCombined&&<th style={{...S.th,background:"#EFF6FF",color:"#1E3A8A"}}>combined name<span style={{color:"#1D4ED8",marginLeft:4}}>→ name</span></th>}
+                          {csvHeaders.slice(0,6).map(h=><th key={h} style={S.th}>{h}{csvMapping[h]&&<span style={{color:"#10B981",marginLeft:4}}>→{FIELD_LABELS[csvMapping[h]]||csvMapping[h]}</span>}</th>)}
+                        </tr></thead>
+                        <tbody>{csvRows.slice(0,5).map((row,i)=>{
+                          const combined=[firstHdr?row[firstHdr]:"",lastHdr?row[lastHdr]:""].filter(Boolean).join(" ");
+                          return(
+                            <tr key={i}>
+                              {showCombined&&<td style={{...S.td,background:"#F8FAFC",color:"#0F172A",fontWeight:600}}>{combined||"—"}</td>}
+                              {csvHeaders.slice(0,6).map(h=><td key={h} style={S.td}>{row[h]||"—"}</td>)}
+                            </tr>
+                          );
+                        })}</tbody>
+                      </table>
+                    );
+                  })()}
                 </div>
               </div>
               <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
