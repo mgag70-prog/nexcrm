@@ -1850,6 +1850,329 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
 }
 
 
+// ─── EMPTY STATE ──────────────────────────────────────────────────────────────
+const EmptyState = ({icon,title,message,ctaLabel,ctaSecondaryLabel,onCta,onCtaSecondary})=>(
+  <div style={{...S.card({padding:"56px 32px"}),textAlign:"center"}}>
+    {icon&&<div style={{display:"flex",justifyContent:"center",marginBottom:14,color:"#94A3B8"}}><Ic d={icon} size={36} c="#94A3B8"/></div>}
+    <div style={{fontSize:16,fontWeight:700,color:"#0F172A",marginBottom:6}}>{title}</div>
+    {message&&<div style={{fontSize:13,color:"#64748B",marginBottom:20,maxWidth:420,marginLeft:"auto",marginRight:"auto",lineHeight:1.5}}>{message}</div>}
+    <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+      {ctaLabel&&<button style={S.btnPrimary} onClick={onCta}><Ic d={I.plus} size={14}/>{ctaLabel}</button>}
+      {ctaSecondaryLabel&&<button style={S.btnSecondary} onClick={onCtaSecondary}>{ctaSecondaryLabel}</button>}
+    </div>
+  </div>
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INBOX
+// ═══════════════════════════════════════════════════════════════════════════════
+function InboxView({emailThreads,contacts,activeEntityId,emailIntegrations,setSelContact,setView}){
+  const eThreads=(emailThreads||[]).filter(t=>t.entityId===activeEntityId);
+  const noIntegration=(emailIntegrations||[]).length===0;
+  if(eThreads.length===0){
+    return(
+      <div>
+        <PageHeader title="Inbox" sub="Email conversations with your contacts"/>
+        {noIntegration?(
+          <EmptyState
+            icon={I.mail}
+            title="Connect your email to get started"
+            message="Link Gmail, Outlook, or any SMTP account to send and receive messages directly inside NexCRM. Once connected, conversations with your contacts will appear here."
+            ctaLabel="Connect email"
+            onCta={()=>setView("settings")}
+          />
+        ):(
+          <EmptyState
+            icon={I.inbox}
+            title="No conversations yet"
+            message="Open a contact's profile to send your first email. Replies and follow-ups will land here."
+            ctaLabel="Browse contacts"
+            onCta={()=>setView("contacts")}
+          />
+        )}
+      </div>
+    );
+  }
+  return(
+    <div>
+      <PageHeader title="Inbox" sub={`${eThreads.length} conversation${eThreads.length===1?"":"s"}`}/>
+      <div style={S.card({overflow:"hidden"})}>
+        {eThreads.sort((a,b)=>new Date(b.lastActivity||0)-new Date(a.lastActivity||0)).map(t=>{
+          const c=contacts.find(x=>x.id===t.contactId);
+          const lastMsg=t.messages?.[t.messages.length-1];
+          return(
+            <div key={t.id} style={{padding:"14px 18px",borderBottom:"1px solid #E9EEF6",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}
+              onClick={()=>{setSelContact(t.contactId);setView("contacts");}}>
+              <Avatar name={c?.name||"?"} size={32}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{c?.name||"Unknown contact"}</div>
+                <div style={{fontSize:12,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject||lastMsg?.subject||"(no subject)"}</div>
+              </div>
+              <div style={{fontSize:11,color:"#94A3B8",flexShrink:0}}>{fmtTime(t.lastActivity)}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIME TRACKING
+// ═══════════════════════════════════════════════════════════════════════════════
+function TimeView({timeEntries,contacts,deals,activeEntityId,addTimeEntry,deleteTimeEntry,showToast}){
+  const eEntries=(timeEntries||[]).filter(e=>e.entityId===activeEntityId);
+  const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
+  const eDeals=deals.filter(d=>d.entityId===activeEntityId);
+  const [adding,setAdding]=useState(false);
+  const [form,setForm]=useState({description:"",hours:"",date:new Date().toISOString().slice(0,10),contactId:"",dealId:"",rate:""});
+  const totalHours=eEntries.reduce((s,e)=>s+(+e.hours||0),0);
+  const billableTotal=eEntries.reduce((s,e)=>s+((+e.hours||0)*(+e.rate||0)),0);
+  const submit=()=>{
+    if(!form.description||!form.hours){showToast?.("Description and hours are required","error");return;}
+    addTimeEntry({entityId:activeEntityId,description:form.description,hours:+form.hours,rate:+form.rate||0,date:form.date,contactId:form.contactId||null,dealId:form.dealId||null,createdAt:new Date().toISOString()});
+    setForm({description:"",hours:"",date:new Date().toISOString().slice(0,10),contactId:"",dealId:"",rate:""});
+    setAdding(false);
+    showToast?.("Time entry logged");
+  };
+  return(
+    <div>
+      <PageHeader title="Time Tracking" sub={eEntries.length===0?"Log billable hours against contacts and deals":`${eEntries.length} entries · ${fmtHours(totalHours)} · ${fmt$(billableTotal)} billable`}>
+        {eEntries.length>0&&!adding&&<button style={S.btnPrimary} onClick={()=>setAdding(true)}><Ic d={I.plus} size={14}/>Log time</button>}
+      </PageHeader>
+      {adding&&(
+        <div style={{...S.card({padding:18}),marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>Log a time entry</div>
+          <Field label="Description"><input style={S.input} placeholder="e.g. Discovery call with client" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></Field>
+          <div style={S.grid2}>
+            <Field label="Hours"><input style={S.input} type="number" step="0.25" placeholder="1.5" value={form.hours} onChange={e=>setForm({...form,hours:e.target.value})}/></Field>
+            <Field label="Date"><input style={S.input} type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+            <Field label="Hourly rate (optional)"><input style={S.input} type="number" placeholder="150" value={form.rate} onChange={e=>setForm({...form,rate:e.target.value})}/></Field>
+            <Field label="Contact (optional)"><select style={S.select} value={form.contactId} onChange={e=>setForm({...form,contactId:e.target.value})}><option value="">—</option>{eContacts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+          </div>
+          <Field label="Deal (optional)"><select style={S.select} value={form.dealId} onChange={e=>setForm({...form,dealId:e.target.value})}><option value="">—</option>{eDeals.map(d=><option key={d.id} value={d.id}>{d.title}</option>)}</select></Field>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+            <button style={S.btnSecondary} onClick={()=>setAdding(false)}>Cancel</button>
+            <button style={S.btnPrimary} onClick={submit}>Save entry</button>
+          </div>
+        </div>
+      )}
+      {eEntries.length===0&&!adding?(
+        <EmptyState
+          icon={I.clock}
+          title="No time logged yet"
+          message="Track billable hours against contacts and deals. Time entries can be rolled into invoices later."
+          ctaLabel="Log your first entry"
+          onCta={()=>setAdding(true)}
+        />
+      ):(
+        <div style={S.card({overflow:"hidden"})}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>{["Date","Description","Contact","Hours","Amount",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{[...eEntries].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e=>{
+              const c=contacts.find(x=>x.id===e.contactId);
+              return(
+                <tr key={e.id}>
+                  <td style={S.td}>{fmtDate(e.date)}</td>
+                  <td style={{...S.td,color:"#0F172A",fontWeight:500}}>{e.description}</td>
+                  <td style={S.td}>{c?.name||"—"}</td>
+                  <td style={S.td}>{fmtHours(e.hours)}</td>
+                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{e.rate?fmt$((+e.hours||0)*(+e.rate||0)):"—"}</td>
+                  <td style={{...S.td,textAlign:"right"}}><button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm("Delete entry?"))deleteTimeEntry(e.id);}}><Ic d={I.trash} size={13}/></button></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INVOICES
+// ═══════════════════════════════════════════════════════════════════════════════
+function InvoicesView({invoices,contacts,products,activeEntityId,addInvoice,updateInvoice,deleteInvoice,invoiceCounter,setInvoiceCounter,showToast,setView}){
+  const eInvoices=(invoices||[]).filter(i=>i.entityId===activeEntityId);
+  const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
+  const eProducts=products.filter(p=>p.entityId===activeEntityId);
+  const [composing,setComposing]=useState(false);
+  const blankItem=()=>({description:"",quantity:1,unitPrice:0});
+  const [form,setForm]=useState({contactId:"",dueDate:"",notes:"",items:[blankItem()]});
+  const totalsFor=inv=>(inv.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0);
+  const total=form.items.reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0);
+  const submit=()=>{
+    if(!form.contactId){showToast?.("Pick a contact","error");return;}
+    if(!form.items.some(it=>it.description&&+it.quantity>0)){showToast?.("Add at least one line item","error");return;}
+    const number=invoiceCounter||1;
+    addInvoice({entityId:activeEntityId,number,contactId:form.contactId,dueDate:form.dueDate||null,notes:form.notes,items:form.items.filter(it=>it.description),status:"Draft",createdAt:new Date().toISOString()});
+    setInvoiceCounter(number+1);
+    setForm({contactId:"",dueDate:"",notes:"",items:[blankItem()]});
+    setComposing(false);
+    showToast?.(`Invoice ${fmtInvNum(number)} created as Draft`);
+  };
+  const openCompose=()=>{
+    if(eContacts.length===0){showToast?.("Add a contact before creating an invoice","error");return;}
+    setComposing(true);
+  };
+  const totalOutstanding=eInvoices.filter(i=>!["Paid","Cancelled"].includes(i.status)).reduce((s,i)=>s+totalsFor(i),0);
+  const totalPaid=eInvoices.filter(i=>i.status==="Paid").reduce((s,i)=>s+totalsFor(i),0);
+  return(
+    <div>
+      <PageHeader title="Invoices" sub={eInvoices.length===0?"Bill clients and track payments":`${eInvoices.length} invoice${eInvoices.length===1?"":"s"} · ${fmt$(totalOutstanding)} outstanding · ${fmt$(totalPaid)} collected`}>
+        {eInvoices.length>0&&!composing&&<button style={S.btnPrimary} onClick={openCompose}><Ic d={I.plus} size={14}/>New invoice</button>}
+      </PageHeader>
+      {composing&&(
+        <div style={{...S.card({padding:18}),marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>New invoice {fmtInvNum(invoiceCounter||1)}</div>
+          <div style={S.grid2}>
+            <Field label="Contact *"><select style={S.select} value={form.contactId} onChange={e=>setForm({...form,contactId:e.target.value})}><option value="">Select contact…</option>{eContacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
+            <Field label="Due date"><input style={S.input} type="date" value={form.dueDate} onChange={e=>setForm({...form,dueDate:e.target.value})}/></Field>
+          </div>
+          <div style={{...S.label,marginTop:6}}>Line items</div>
+          {form.items.map((it,idx)=>(
+            <div key={idx} style={{display:"grid",gridTemplateColumns:"1fr 90px 120px 32px",gap:8,marginBottom:8,alignItems:"center"}}>
+              <input style={S.input} placeholder="Description" value={it.description} onChange={e=>{const items=[...form.items];items[idx]={...it,description:e.target.value};setForm({...form,items});}} list={`prods-${idx}`}/>
+              <datalist id={`prods-${idx}`}>{eProducts.map(p=><option key={p.id} value={p.name}/>)}</datalist>
+              <input style={S.input} type="number" step="0.01" placeholder="Qty" value={it.quantity} onChange={e=>{const items=[...form.items];items[idx]={...it,quantity:e.target.value};setForm({...form,items});}}/>
+              <input style={S.input} type="number" step="0.01" placeholder="Unit price" value={it.unitPrice} onChange={e=>{const items=[...form.items];items[idx]={...it,unitPrice:e.target.value};setForm({...form,items});}}/>
+              <button style={S.btnGhost} title="Remove" onClick={()=>setForm({...form,items:form.items.filter((_,i)=>i!==idx).length?form.items.filter((_,i)=>i!==idx):[blankItem()]})}><Ic d={I.x} size={14}/></button>
+            </div>
+          ))}
+          <button style={{...S.btnGhost,fontSize:12,fontWeight:600,marginBottom:10}} onClick={()=>setForm({...form,items:[...form.items,blankItem()]})}><Ic d={I.plus} size={12}/>Add line</button>
+          <Field label="Notes (optional)"><textarea style={S.textarea} rows={2} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+            <div style={{fontSize:14,fontWeight:700,color:"#0F172A"}}>Total: {fmt$(total)}</div>
+            <div style={{display:"flex",gap:8}}>
+              <button style={S.btnSecondary} onClick={()=>setComposing(false)}>Cancel</button>
+              <button style={S.btnPrimary} onClick={submit}>Create draft</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {eInvoices.length===0&&!composing?(
+        eContacts.length===0?(
+          <EmptyState
+            icon={I.invoice}
+            title="No invoices yet"
+            message="You'll need at least one contact before you can bill them. Add a contact, then come back to create your first invoice."
+            ctaLabel="Add a contact"
+            onCta={()=>setView?.("contacts")}
+          />
+        ):(
+          <EmptyState
+            icon={I.invoice}
+            title="No invoices yet"
+            message="Create your first invoice to bill a client. Drafts can be edited and marked sent or paid as you work through the billing cycle."
+            ctaLabel="Create your first invoice"
+            onCta={openCompose}
+          />
+        )
+      ):(
+        <div style={S.card({overflow:"hidden"})}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>{["Number","Contact","Total","Status","Due",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{[...eInvoices].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(inv=>{
+              const c=contacts.find(x=>x.id===inv.contactId);
+              return(
+                <tr key={inv.id}>
+                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{fmtInvNum(inv.number)}</td>
+                  <td style={S.td}>{c?.name||"—"}</td>
+                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{fmt$(totalsFor(inv))}</td>
+                  <td style={S.td}>
+                    <select style={{...S.select,width:"auto",padding:"3px 6px",fontSize:11,...S.badge(INV_COLORS[inv.status]||"#64748B")}} value={inv.status} onChange={e=>updateInvoice(inv.id,{status:e.target.value})}>
+                      {INVOICE_STATUSES.map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </td>
+                  <td style={S.td}>{fmtDate(inv.dueDate)}</td>
+                  <td style={{...S.td,textAlign:"right"}}><button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm("Delete invoice?"))deleteInvoice(inv.id);}}><Ic d={I.trash} size={13}/></button></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLIENT PORTAL
+// ═══════════════════════════════════════════════════════════════════════════════
+function ClientPortalView({portalTokens,contacts,activeEntityId,addPortalToken,deletePortalToken,showToast,entity,setView}){
+  const eTokens=(portalTokens||[]).filter(t=>t.entityId===activeEntityId);
+  const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
+  const [generating,setGenerating]=useState(false);
+  const [contactId,setContactId]=useState("");
+  const linkFor=tok=>`${typeof window!=="undefined"?window.location.origin:""}/portal/${tok.token}`;
+  const generate=()=>{
+    if(!contactId){showToast?.("Pick a contact","error");return;}
+    const tok={entityId:activeEntityId,contactId,token:genToken(),createdAt:new Date().toISOString()};
+    addPortalToken(tok);
+    setContactId("");
+    setGenerating(false);
+    showToast?.("Portal link created");
+  };
+  const copy=async(t)=>{try{await navigator.clipboard.writeText(linkFor(t));showToast?.("Link copied");}catch{showToast?.("Could not copy","error");}};
+  const startGenerate=()=>{
+    if(eContacts.length===0){showToast?.("Add a contact first","error");return;}
+    setGenerating(true);
+  };
+  return(
+    <div>
+      <PageHeader title="Client Portal" sub={eTokens.length===0?`Give clients of ${entity?.name||"this workspace"} a private link`:`${eTokens.length} active link${eTokens.length===1?"":"s"}`}>
+        {eTokens.length>0&&!generating&&<button style={S.btnPrimary} onClick={startGenerate}><Ic d={I.plus} size={14}/>New portal link</button>}
+      </PageHeader>
+      {generating&&(
+        <div style={{...S.card({padding:18}),marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>Generate a portal link</div>
+          <Field label="Contact"><select style={S.select} value={contactId} onChange={e=>setContactId(e.target.value)}><option value="">Select contact…</option>{eContacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:6}}>
+            <button style={S.btnSecondary} onClick={()=>setGenerating(false)}>Cancel</button>
+            <button style={S.btnPrimary} onClick={generate}>Generate link</button>
+          </div>
+        </div>
+      )}
+      {eTokens.length===0&&!generating?(
+        eContacts.length===0?(
+          <EmptyState
+            icon={I.link}
+            title="No client portal links yet"
+            message="You'll need at least one contact before you can generate a portal link. Add a contact, then come back here to share a private link they can use to view their invoices, quotes, and documents."
+            ctaLabel="Add a contact"
+            onCta={()=>setView?.("contacts")}
+          />
+        ):(
+          <EmptyState
+            icon={I.link}
+            title="No client portal links yet"
+            message="Generate a private link for a client so they can view their invoices, quotes, and documents in one place."
+            ctaLabel="Generate your first link"
+            onCta={startGenerate}
+          />
+        )
+      ):(
+        <div style={S.card({overflow:"hidden"})}>
+          {eTokens.map((t,i)=>{
+            const c=contacts.find(x=>x.id===t.contactId);
+            return(
+              <div key={t.id} style={{padding:"14px 18px",borderTop:i?"1px solid #E9EEF6":"none",display:"flex",alignItems:"center",gap:12}}>
+                <Avatar name={c?.name||"?"} size={32}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{c?.name||"Unknown contact"}</div>
+                  <div style={{fontSize:12,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{linkFor(t)}</div>
+                </div>
+                <button style={S.btnSecondary} onClick={()=>copy(t)}><Ic d={I.copy} size={12}/>Copy</button>
+                <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm("Revoke link?"))deletePortalToken(t.id);}}><Ic d={I.trash} size={13}/></button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2475,8 +2798,8 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
           {view==="scheduler"&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
-          {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast}/>}
-          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} invoices={invoices} docs={docs} quotes={quotes} deals={deals} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} showToast={showToast} entity={entity}/>}
+          {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
+          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} invoices={invoices} docs={docs} quotes={quotes} deals={deals} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} showToast={showToast} entity={entity} setView={setView}/>}
           {view==="import"&&<ImportView activeEntityId={activeEntityId} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
