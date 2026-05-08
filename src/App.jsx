@@ -159,14 +159,39 @@ const DEMO_FULL = {
     {id:"cf2",entityId:"e1",entity:"deal",name:"Contract Type",type:"select",options:["Monthly","Annual","Multi-Year","One-time"]},
   ],
   enrollments:[],
-  timeEntries:[],
-  invoices:[],
+  timeEntries:[
+    {id:"te1",entityId:"e1",contactId:"c1",dealId:"d1",description:"Discovery call & needs assessment",hours:1.5,rate:200,date:new Date(Date.now()-6*864e5).toISOString().slice(0,10),createdAt:new Date(Date.now()-6*864e5).toISOString()},
+    {id:"te2",entityId:"e1",contactId:"c1",dealId:"d1",description:"Proposal drafting and pricing review",hours:3,rate:200,date:new Date(Date.now()-4*864e5).toISOString().slice(0,10),createdAt:new Date(Date.now()-4*864e5).toISOString()},
+    {id:"te3",entityId:"e1",contactId:"c2",dealId:"d2",description:"Strategy session — starter package fit",hours:2,rate:175,date:new Date(Date.now()-3*864e5).toISOString().slice(0,10),createdAt:new Date(Date.now()-3*864e5).toISOString()},
+    {id:"te4",entityId:"e1",contactId:"c3",dealId:"d3",description:"Solution architecture review",hours:2.5,rate:225,date:new Date(Date.now()-2*864e5).toISOString().slice(0,10),createdAt:new Date(Date.now()-2*864e5).toISOString()},
+    {id:"te5",entityId:"e1",contactId:null,dealId:null,description:"Internal sales pipeline review",hours:0.5,rate:0,date:new Date(Date.now()-864e5).toISOString().slice(0,10),createdAt:new Date(Date.now()-864e5).toISOString()},
+  ],
+  invoices:[
+    {id:"inv1",entityId:"e1",number:1,contactId:"c1",dueDate:new Date(Date.now()-30*864e5).toISOString().slice(0,10),status:"Paid",notes:"Q1 services — paid in full.",items:[{description:"Professional Services Q1",quantity:1,unitPrice:15000}],createdAt:new Date(Date.now()-45*864e5).toISOString()},
+    {id:"inv2",entityId:"e1",number:2,contactId:"c1",dueDate:new Date(Date.now()+10*864e5).toISOString().slice(0,10),status:"Sent",notes:"Net-30 terms.",items:[{description:"Enterprise License — annual",quantity:1,unitPrice:45000},{description:"Implementation services",quantity:20,unitPrice:200}],createdAt:new Date(Date.now()-7*864e5).toISOString()},
+    {id:"inv3",entityId:"e1",number:3,contactId:"c2",dueDate:new Date(Date.now()-5*864e5).toISOString().slice(0,10),status:"Overdue",notes:"Reminder sent 2 days ago.",items:[{description:"Starter Package — monthly",quantity:1,unitPrice:8500}],createdAt:new Date(Date.now()-35*864e5).toISOString()},
+    {id:"inv4",entityId:"e1",number:4,contactId:"c3",dueDate:null,status:"Draft",notes:"",items:[{description:"Annual Contract — Year 1",quantity:1,unitPrice:120000}],createdAt:new Date(Date.now()-864e5).toISOString()},
+  ],
   meetings:[],
   webhooks:[],
-  portalTokens:[],
-  emailThreads:[],
+  portalTokens:[
+    {id:"pt1",entityId:"e1",contactId:"c1",token:"a1b2c3d4e5f6g7h8",createdAt:new Date(Date.now()-10*864e5).toISOString()},
+    {id:"pt2",entityId:"e1",contactId:"c3",token:"x9y8z7w6v5u4t3s2",createdAt:new Date(Date.now()-2*864e5).toISOString()},
+  ],
+  emailThreads:[
+    {id:"et1",entityId:"e1",contactId:"c1",subject:"Re: Enterprise tier pricing",lastActivity:new Date(Date.now()-2*864e5).toISOString(),messages:[
+      {id:"em1",from:"sarah@techcorp.com",to:"you@apex.com",subject:"Enterprise tier pricing",body:"Hi — could you share the breakdown for the enterprise tier? Specifically interested in SSO and the SLA terms.",date:new Date(Date.now()-3*864e5).toISOString(),direction:"in"},
+      {id:"em2",from:"you@apex.com",to:"sarah@techcorp.com",subject:"Re: Enterprise tier pricing",body:"Absolutely — attaching the proposal. Happy to walk through it on a call this week.",date:new Date(Date.now()-2*864e5).toISOString(),direction:"out"},
+    ]},
+    {id:"et2",entityId:"e1",contactId:"c2",subject:"Re: Starter package — quick question",lastActivity:new Date(Date.now()-864e5).toISOString(),messages:[
+      {id:"em3",from:"marcus@startup.io",to:"you@apex.com",subject:"Starter package — quick question",body:"Does the starter tier include the API integrations?",date:new Date(Date.now()-864e5).toISOString(),direction:"in"},
+    ]},
+    {id:"et3",entityId:"e1",contactId:"c3",subject:"Implementation timeline",lastActivity:new Date(Date.now()-12*3600e3).toISOString(),messages:[
+      {id:"em4",from:"lisa@enterprise.co",to:"you@apex.com",subject:"Implementation timeline",body:"What's the realistic ramp time for a 1500-employee rollout?",date:new Date(Date.now()-12*3600e3).toISOString(),direction:"in"},
+    ]},
+  ],
   availability:{},
-  invoiceCounter:1,
+  invoiceCounter:5,
 };
 
 // ─── ICONS ────────────────────────────────────────────────────────────────────
