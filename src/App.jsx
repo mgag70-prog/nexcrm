@@ -4,6 +4,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pi
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const STAGES = ["New Lead","Contacted","Proposal Sent","Won","Lost"];
 const SC = {"New Lead":"#8B5CF6","Contacted":"#F59E0B","Proposal Sent":"#3B82F6","Won":"#10B981","Lost":"#EF4444"};
+const stagesFor = e => Array.isArray(e?.stages) && e.stages.length ? e.stages : STAGES;
+const stageColor = (e, s) => e?.stageColors?.[s] || SC[s] || "#64748B";
 const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","HubSpot Import","Zoho Import","Other"];
 const ETYPES = ["LLC","Corporation","Non-Profit","Partnership","Sole Proprietor","S-Corp","Trust"];
 const PRIORITIES = ["low","medium","high"];
@@ -55,70 +57,29 @@ function calcLeadScore(contact, deals, notes, tasks) {
 // ─── DEMO DATA ────────────────────────────────────────────────────────────────
 const DEMO = {
   entities:[
-    {id:"e1",name:"Apex Ventures LLC",type:"LLC",color:"#3B82F6",industry:"Technology"},
-    {id:"e2",name:"GreenPath Foundation",type:"Non-Profit",color:"#10B981",industry:"Education"},
-    {id:"e3",name:"Fairway Circuit LLC",type:"LLC",color:"#F59E0B",industry:"Other",website:"fairwaycircuit.com"},
-    {id:"e4",name:"Crestfolio LLC",type:"LLC",color:"#8B5CF6",industry:"Other",website:"crestfolio.io"},
+    {id:"e3",name:"Fairway Circuit LLC",type:"LLC",color:"#F59E0B",industry:"Sports & Recreation",website:"fairwaycircuit.com"},
+    {id:"e4",name:"Crestfolio LLC",type:"LLC",color:"#8B5CF6",industry:"Financial Services",website:"crestfolio.io",
+      stages:["Initial Contact","Discovery Meeting","Proposal Sent","Under Agreement","Active Client","Inactive"],
+      stageColors:{"Initial Contact":"#8B5CF6","Discovery Meeting":"#F59E0B","Proposal Sent":"#3B82F6","Under Agreement":"#06B6D4","Active Client":"#10B981","Inactive":"#94A3B8"}},
   ],
-  contacts:[
-    {id:"c1",entityId:"e1",name:"Sarah Johnson",email:"sarah@techcorp.com",phone:"+1 555-0101",companyName:"TechCorp",source:"LinkedIn",title:"VP of Engineering",createdAt:new Date(Date.now()-5*864e5).toISOString()},
-    {id:"c2",entityId:"e1",name:"Marcus Rivera",email:"marcus@startup.io",phone:"+1 555-0102",companyName:"Startup.io",source:"Referral",title:"CEO",createdAt:new Date(Date.now()-3*864e5).toISOString()},
-    {id:"c3",entityId:"e1",name:"Lisa Chen",email:"lisa@enterprise.co",phone:"+1 555-0103",companyName:"Enterprise Co",source:"Website",title:"CTO",createdAt:new Date(Date.now()-864e5).toISOString()},
-    {id:"c4",entityId:"e2",name:"David Park",email:"david@greenfund.org",phone:"+1 555-0104",companyName:"Green Fund",source:"Event",title:"Director",createdAt:new Date().toISOString()},
-  ],
-  companies:[
-    {id:"co1",entityId:"e1",name:"TechCorp",industry:"Technology",website:"techcorp.com",phone:"+1 555-1001",email:"info@techcorp.com",employees:200,createdAt:new Date().toISOString()},
-    {id:"co2",entityId:"e1",name:"Startup.io",industry:"SaaS",website:"startup.io",phone:"+1 555-1002",email:"hello@startup.io",employees:25,createdAt:new Date().toISOString()},
-    {id:"co3",entityId:"e1",name:"Enterprise Co",industry:"Finance",website:"enterprise.co",phone:"+1 555-1003",email:"info@enterprise.co",employees:1500,createdAt:new Date().toISOString()},
-  ],
-  deals:[
-    {id:"d1",entityId:"e1",contactId:"c1",companyId:"co1",title:"TechCorp Enterprise License",value:45000,stage:"Proposal Sent",closeDate:"2026-06-15",probability:70,createdAt:new Date(Date.now()-4*864e5).toISOString()},
-    {id:"d2",entityId:"e1",contactId:"c2",companyId:"co2",title:"Startup.io Starter Package",value:8500,stage:"Contacted",closeDate:"2026-05-30",probability:40,createdAt:new Date(Date.now()-2*864e5).toISOString()},
-    {id:"d3",entityId:"e1",contactId:"c3",companyId:"co3",title:"Enterprise Annual Contract",value:120000,stage:"New Lead",closeDate:"2026-07-01",probability:20,createdAt:new Date(Date.now()-864e5).toISOString()},
-    {id:"d4",entityId:"e1",contactId:"c1",companyId:"co1",title:"Professional Services Q2",value:15000,stage:"Won",closeDate:"2026-04-15",probability:100,createdAt:new Date(Date.now()-7*864e5).toISOString()},
-    {id:"d5",entityId:"e1",contactId:"c2",companyId:"co2",title:"Add-on Module",value:3000,stage:"Lost",closeDate:"2026-04-01",probability:0,createdAt:new Date(Date.now()-10*864e5).toISOString()},
-    {id:"d6",entityId:"e1",contactId:"c3",companyId:"co3",title:"Implementation Support",value:22000,stage:"Contacted",closeDate:"2026-06-30",probability:50,createdAt:new Date(Date.now()-3*864e5).toISOString()},
-  ],
-  tasks:[
-    {id:"t1",entityId:"e1",contactId:"c1",title:"Follow up on proposal",dueDate:"2026-05-10",completed:false,priority:"high",reminder:true,createdAt:new Date().toISOString()},
-    {id:"t2",entityId:"e1",contactId:"c2",title:"Schedule demo call",dueDate:"2026-05-08",completed:false,priority:"medium",reminder:false,createdAt:new Date().toISOString()},
-    {id:"t3",entityId:"e1",contactId:"c3",title:"Send intro email",dueDate:"2026-05-09",completed:true,priority:"low",reminder:false,createdAt:new Date().toISOString()},
-    {id:"t4",entityId:"e1",contactId:"c1",title:"Review contract terms",dueDate:"2026-05-12",completed:false,priority:"high",reminder:true,createdAt:new Date().toISOString()},
-  ],
-  notes:[
-    {id:"n1",entityId:"e1",contactId:"c1",content:"Great intro call. Very interested in enterprise tier. Budget confirmed ~$50k.",createdAt:new Date(Date.now()-2*864e5).toISOString(),type:"note"},
-    {id:"n2",entityId:"e1",contactId:"c1",content:"Proposal sent via email. Following up next Tuesday. Legal review required.",createdAt:new Date(Date.now()-864e5).toISOString(),type:"note"},
-    {id:"n3",entityId:"e1",contactId:"c2",content:"Referral from John at HQ. Needs starter package within 30 days. Budget ~$10k.",createdAt:new Date(Date.now()-3*864e5).toISOString(),type:"note"},
-    {id:"n4",entityId:"e1",contactId:"c3",content:"Initial contact via website form. Large enterprise, 1500 employees. High potential.",createdAt:new Date(Date.now()-864e5).toISOString(),type:"note"},
-  ],
+  contacts:[],
+  companies:[],
+  deals:[],
+  tasks:[],
+  notes:[],
   emailIntegrations:[],
-  products:[
-    {id:"p1",entityId:"e1",name:"Starter Package",price:8500,category:"Software",description:"Entry-level SaaS subscription, up to 5 users"},
-    {id:"p2",entityId:"e1",name:"Enterprise License",price:45000,category:"Software",description:"Full enterprise tier, unlimited users, SSO"},
-    {id:"p3",entityId:"e1",name:"Professional Services",price:15000,category:"Services",description:"Implementation and onboarding support"},
-    {id:"p4",entityId:"e1",name:"Annual Support",price:12000,category:"Support",description:"Priority support, 4hr SLA, dedicated CSM"},
-  ],
-  sequences:[
-    {id:"sq1",entityId:"e1",name:"New Lead Nurture",steps:[{id:"s1",delay:0,subject:"Thanks for your interest",body:"Hi {{name}},\n\nThanks for reaching out! I'd love to learn more about what you're looking for.\n\nBest,\n{{sender}}"},{id:"s2",delay:3,subject:"Quick follow-up",body:"Hi {{name}},\n\nJust checking in — do you have 20 minutes this week for a quick call?\n\nBest,\n{{sender}}"},{id:"s3",delay:7,subject:"Resources that might help",body:"Hi {{name}},\n\nHere are a few resources that might be useful as you evaluate your options...\n\nBest,\n{{sender}}"}],active:true,enrolledCount:0},
-    {id:"sq2",entityId:"e1",name:"Post-Proposal Follow-up",steps:[{id:"s4",delay:0,subject:"Proposal — any questions?",body:"Hi {{name}},\n\nFollowing up on the proposal I sent. Happy to walk through any questions!\n\nBest,\n{{sender}}"},{id:"s5",delay:5,subject:"Still interested?",body:"Hi {{name}},\n\nWanted to check in one more time. Let me know if timing isn't right — no pressure.\n\nBest,\n{{sender}}"}],active:true,enrolledCount:0},
-  ],
-  templates:[
-    {id:"tm1",entityId:"e1",name:"Introduction Email",subject:"Quick introduction",body:"Hi {{name}},\n\nMy name is {{sender}} and I wanted to reach out because...\n\nWould you be open to a 15-minute call this week?\n\nBest regards,\n{{sender}}",tags:["outreach","intro"]},
-    {id:"tm2",entityId:"e1",name:"Proposal Follow-up",subject:"Following up on our proposal",body:"Hi {{name}},\n\nI wanted to follow up on the proposal we sent over. Have you had a chance to review it?\n\nHappy to answer any questions or jump on a call.\n\nBest,\n{{sender}}",tags:["follow-up","proposal"]},
-    {id:"tm3",entityId:"e1",name:"Meeting Confirmation",subject:"Confirmed: our call {{date}}",body:"Hi {{name}},\n\nJust confirming our call on {{date}}. Looking forward to connecting!\n\nTalk soon,\n{{sender}}",tags:["meeting","confirmation"]},
-  ],
-  forms:[
-    {id:"f1",entityId:"e1",name:"Contact Us Form",fields:[{name:"name",label:"Full Name",type:"text",required:true},{name:"email",label:"Email Address",type:"email",required:true},{name:"phone",label:"Phone Number",type:"text",required:false},{name:"company",label:"Company",type:"text",required:false},{name:"message",label:"Message",type:"textarea",required:false}],submissions:[],active:true,createdAt:new Date().toISOString()},
-  ],
-  automations:[
-    {id:"a1",entityId:"e1",name:"Welcome new leads",trigger:"new_contact",condition:"",action:"create_task",actionData:{title:"Send welcome email",priority:"high",daysOut:1},active:true},
-    {id:"a2",entityId:"e1",name:"Follow up won deals",trigger:"deal_won",condition:"",action:"create_task",actionData:{title:"Send thank you & onboarding info",priority:"high",daysOut:0},active:true},
-  ],
+  products:[],
+  sequences:[],
+  templates:[],
+  forms:[],
+  automations:[],
   docs:[],
   quotes:[],
   customFields:[
-    {id:"cf1",entityId:"e1",entity:"contact",name:"LinkedIn URL",type:"text",placeholder:"https://linkedin.com/in/..."},
-    {id:"cf2",entityId:"e1",entity:"deal",name:"Contract Type",type:"select",options:["Monthly","Annual","Multi-Year","One-time"]},
+    {id:"cf_e4_1",entityId:"e4",entity:"contact",name:"Contact Type",type:"select",options:["Individual","Family","Small Business","Family Office","RIA"]},
+    {id:"cf_e4_2",entityId:"e4",entity:"contact",name:"AUM Range",type:"select",options:["Under $1M","$1M-$5M","$5M-$25M","$25M-$100M","$100M+"]},
+    {id:"cf_e4_3",entityId:"e4",entity:"contact",name:"Relationship Manager",type:"text"},
+    {id:"cf_e4_4",entityId:"e4",entity:"contact",name:"Referral Source",type:"text"},
   ],
   enrollments:[],
   timeEntries:[],
@@ -275,7 +236,7 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
   const closed=ed.filter(d=>["Won","Lost"].includes(d.stage));
   const closeRate=closed.length?Math.round((ed.filter(d=>d.stage==="Won").length/closed.length)*100):0;
   const weightedPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
-  const stageChart=STAGES.map(st=>({name:st.split(" ")[0],deals:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)/1000}));
+  const stageChart=stagesFor(entity).map(st=>({name:st.split(" ")[0],deals:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)/1000}));
   const recentNotes=[...notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,4);
   const pendingTasks=et.filter(t=>!t.completed).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate)).slice(0,5);
   const recentDeals=[...ed].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,4);
@@ -322,13 +283,13 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
         <div style={S.card({padding:20})}>
           <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Stage Breakdown</div>
           <ResponsiveContainer width="100%" height={120}>
-            <PieChart><Pie data={STAGES.map(st=>({name:st,value:ed.filter(d=>d.stage===st).length}))} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" stroke="none">
-              {STAGES.map((_,i)=><Cell key={i} fill={Object.values(SC)[i]}/>)}
+            <PieChart><Pie data={stagesFor(entity).map(st=>({name:st,value:ed.filter(d=>d.stage===st).length}))} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" stroke="none">
+              {stagesFor(entity).map((st,i)=><Cell key={i} fill={stageColor(entity,st)}/>)}
             </Pie><Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={(v,n)=>[v+" deals",n]}/></PieChart>
           </ResponsiveContainer>
-          {STAGES.map(st=>(
+          {stagesFor(entity).map(st=>(
             <div key={st} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"2px 0"}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:SC[st]}}/><span style={{fontSize:11,color:"#475569"}}>{st}</span></div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:stageColor(entity,st)}}/><span style={{fontSize:11,color:"#475569"}}>{st}</span></div>
               <span style={{fontSize:12,fontWeight:700,color:"#0F172A"}}>{ed.filter(d=>d.stage===st).length}</span>
             </div>
           ))}
@@ -364,8 +325,8 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
                 <div style={{fontSize:11,color:"#64748B"}}>{contact?.name} · {fmtDate(deal.createdAt)}</div>
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:SC[deal.stage]}}>{fmt$(deal.value)}</div>
-                <span style={S.badge(SC[deal.stage])}>{deal.stage}</span>
+                <div style={{fontSize:13,fontWeight:700,color:stageColor(entity,deal.stage)}}>{fmt$(deal.value)}</div>
+                <span style={S.badge(stageColor(entity,deal.stage))}>{deal.stage}</span>
               </div>
             </div>);
           })}
@@ -463,7 +424,7 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,deals,not
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONTACT DETAIL (Notes, Tasks, Docs, Sequences tabs + Lead Score)
 // ═══════════════════════════════════════════════════════════════════════════════
-function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequences,enrollments,openModal,onBack,addNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,customFields}){
+function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequences,enrollments,openModal,onBack,addNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,customFields,entity}){
   const [noteText,setNoteText]=useState("");
   const [tab,setTab]=useState("notes");
   const fileRef=useRef();
@@ -541,7 +502,7 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequ
               <div key={d.id} style={{background:"#F1F5F9",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
                 <div style={{fontSize:13,fontWeight:600,color:"#0F172A",marginBottom:4}}>{d.title}</div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <span style={S.badge(SC[d.stage])}>{d.stage}</span>
+                  <span style={S.badge(stageColor(entity,d.stage))}>{d.stage}</span>
                   <span style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{fmt$(d.value)}</span>
                 </div>
                 <div style={{fontSize:11,color:"#475569",marginTop:4}}>Close: {fmtDate(d.closeDate)}</div>
@@ -713,7 +674,7 @@ function CompaniesList({eco,search,openModal,deleteCompany,contacts}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // KANBAN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
-function KanbanBoard({ed,contacts,updateDeal,deleteDeal,openModal,setSelContact,setView,products}){
+function KanbanBoard({ed,contacts,updateDeal,deleteDeal,openModal,setSelContact,setView,products,entity}){
   const [dragging,setDragging]=useState(null);
   const [dragOver,setDragOver]=useState(null);
   const totalPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
@@ -723,24 +684,25 @@ function KanbanBoard({ed,contacts,updateDeal,deleteDeal,openModal,setSelContact,
         <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>Add Deal</button>
       </PageHeader>
       <div style={{display:"flex",gap:14,overflowX:"auto",paddingBottom:16,alignItems:"flex-start"}}>
-        {STAGES.map(stage=>{
+        {stagesFor(entity).map(stage=>{
           const sDeals=ed.filter(d=>d.stage===stage);
           const sVal=sDeals.reduce((s,d)=>s+(d.value||0),0);
           const isOver=dragOver===stage;
+          const sCol=stageColor(entity,stage);
           return(
-            <div key={stage} style={{minWidth:240,flex:"1 0 240px",background:isOver?"#E9EEF6":"#F1F5F9",border:`1px solid ${isOver?SC[stage]+"60":"#E2E8F0"}`,borderRadius:12,padding:14,transition:"all .15s",maxWidth:300}}
+            <div key={stage} style={{minWidth:240,flex:"1 0 240px",background:isOver?"#E9EEF6":"#F1F5F9",border:`1px solid ${isOver?sCol+"60":"#E2E8F0"}`,borderRadius:12,padding:14,transition:"all .15s",maxWidth:300}}
               onDragOver={e=>{e.preventDefault();setDragOver(stage);}} onDragLeave={()=>setDragOver(null)}
               onDrop={e=>{e.preventDefault();if(dragging)updateDeal(dragging,{stage});setDragging(null);setDragOver(null);}}>
               <div style={{marginBottom:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                   <div style={{display:"flex",alignItems:"center",gap:7}}>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:SC[stage]}}/>
+                    <div style={{width:10,height:10,borderRadius:"50%",background:sCol}}/>
                     <span style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{stage}</span>
                     <span style={{background:"#E2E8F0",color:"#64748B",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700}}>{sDeals.length}</span>
                   </div>
                   <button style={{...S.btnGhost,padding:2}} onClick={()=>openModal("addDeal",{stage})}><Ic d={I.plus} size={14}/></button>
                 </div>
-                <div style={{fontSize:12,color:SC[stage],fontWeight:600}}>{fmt$(sVal)}</div>
+                <div style={{fontSize:12,color:sCol,fontWeight:600}}>{fmt$(sVal)}</div>
               </div>
               <div style={{minHeight:80}}>
                 {sDeals.map(deal=>{
@@ -749,10 +711,10 @@ function KanbanBoard({ed,contacts,updateDeal,deleteDeal,openModal,setSelContact,
                     <div key={deal.id} draggable onDragStart={()=>setDragging(deal.id)} onDragEnd={()=>{setDragging(null);setDragOver(null);}}
                       style={{background:"#FFFFFF",border:`1px solid ${dragging===deal.id?"#1D4ED8":"#E2E8F0"}`,borderRadius:10,padding:14,marginBottom:10,cursor:"grab",opacity:dragging===deal.id?.5:1}}>
                       <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:6,lineHeight:1.4}}>{deal.title}</div>
-                      <div style={{fontSize:20,fontWeight:800,color:SC[stage],marginBottom:8}}>{fmt$(deal.value)}</div>
+                      <div style={{fontSize:20,fontWeight:800,color:sCol,marginBottom:8}}>{fmt$(deal.value)}</div>
                       {deal.probability!=null&&<div style={{marginBottom:8}}>
-                        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginBottom:3}}><span>Probability</span><span style={{color:SC[stage]}}>{deal.probability}%</span></div>
-                        <div style={{height:4,background:"#E9EEF6",borderRadius:2}}><div style={{height:"100%",background:SC[stage],borderRadius:2,width:`${deal.probability}%`,transition:"width .3s"}}/></div>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginBottom:3}}><span>Probability</span><span style={{color:sCol}}>{deal.probability}%</span></div>
+                        <div style={{height:4,background:"#E9EEF6",borderRadius:2}}><div style={{height:"100%",background:sCol,borderRadius:2,width:`${deal.probability}%`,transition:"width .3s"}}/></div>
                       </div>}
                       {contact&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}><Avatar name={contact.name} size={20}/><span style={{fontSize:12,color:"#64748B"}}>{contact.name}</span></div>}
                       <div style={{fontSize:11,color:"#475569",marginBottom:8}}><Ic d={I.cal} size={11} c="#475569"/> {fmtDate(deal.closeDate)}</div>
@@ -834,7 +796,7 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
   const closeRate=closed.length?Math.round((ed.filter(d=>d.stage==="Won").length/closed.length)*100):0;
   const avgDeal=ed.length?Math.round(ed.reduce((s,d)=>s+(d.value||0),0)/ed.length):0;
   const weighted=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
-  const stageData=STAGES.map(st=>({stage:st,count:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)}));
+  const stageData=stagesFor(entity).map(st=>({stage:st,count:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)}));
   const sourceData=SOURCES.map(src=>({source:src,count:ec.filter(c=>c.source===src).length})).filter(d=>d.count>0);
   // Forecast: 6 months
   const now=new Date();
@@ -880,7 +842,7 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
                   <XAxis dataKey="stage" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v.split(" ")[0]}/>
                   <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
                   <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
-                  <Bar dataKey="count" radius={[4,4,0,0]}>{stageData.map((_,i)=><Cell key={i} fill={Object.values(SC)[i]}/>)}</Bar>
+                  <Bar dataKey="count" radius={[4,4,0,0]}>{stageData.map((d,i)=><Cell key={i} fill={stageColor(entity,d.stage)}/>)}</Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -892,7 +854,7 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
                   <XAxis dataKey="stage" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v.split(" ")[0]}/>
                   <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
                   <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={v=>fmt$(v)}/>
-                  <Bar dataKey="value" radius={[4,4,0,0]}>{stageData.map((_,i)=><Cell key={i} fill={Object.values(SC)[i]+"80"}/>)}</Bar>
+                  <Bar dataKey="value" radius={[4,4,0,0]}>{stageData.map((d,i)=><Cell key={i} fill={stageColor(entity,d.stage)+"80"}/>)}</Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -904,8 +866,8 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
               <tbody>{ed.map(d=>(
                 <tr key={d.id}>
                   <td style={S.td}><div style={{fontWeight:600,color:"#0F172A"}}>{d.title}</div></td>
-                  <td style={{...S.td,fontWeight:700,color:SC[d.stage]}}>{fmt$(d.value)}</td>
-                  <td style={S.td}><span style={S.badge(SC[d.stage])}>{d.stage}</span></td>
+                  <td style={{...S.td,fontWeight:700,color:stageColor(entity,d.stage)}}>{fmt$(d.value)}</td>
+                  <td style={S.td}><span style={S.badge(stageColor(entity,d.stage))}>{d.stage}</span></td>
                   <td style={S.td}>{d.probability||"—"}%</td>
                   <td style={S.td}>{fmtDate(d.closeDate)}</td>
                 </tr>
@@ -1814,7 +1776,7 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════════════════════════════════════════
-function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,addContact,updateContact,addCompany,updateCompany,addDeal,updateDeal,addTask,addNote,addEntity,connectEmail,showToast,products,sequences,addEnrollment,customFields}){
+function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,addContact,updateContact,addCompany,updateCompany,addDeal,updateDeal,addTask,addNote,addEntity,connectEmail,showToast,products,sequences,addEnrollment,customFields,entity}){
   const {type,data}=modal;
   const [form,setForm]=useState(data||{});
   const set=(k,v)=>setForm(p=>({...p,[k]:v}));
@@ -1882,7 +1844,7 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
       <F label="Deal Title *" name="title" placeholder="Enterprise License Q3" required/>
       <div style={S.grid2}>
         <F label="Value (USD)" name="value" type="number" placeholder="50000"/>
-        <F label="Stage" name="stage" options={STAGES}/>
+        <F label="Stage" name="stage" options={stagesFor(entity)}/>
         <F label="Close Date" name="closeDate" type="date"/>
         <Field label="Probability (%)"><input type="range" min={0} max={100} value={form.probability||50} onChange={e=>set("probability",+e.target.value)} style={{width:"100%",accentColor:"#1D4ED8"}}/><div style={{fontSize:12,color:"#64748B",textAlign:"right"}}>{form.probability||50}%</div></Field>
         <Field label="Contact"><select style={S.select} value={form.contactId||""} onChange={e=>set("contactId",e.target.value)}><option value="">Select contact...</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
@@ -2108,7 +2070,7 @@ This proposal is valid for 30 days.`;
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function App({session,onLogout}={}){
   const [entities,setEntities]=useState(DEMO.entities);
-  const [activeEntityId,setActiveEntityId]=useState("e1");
+  const [activeEntityId,setActiveEntityId]=useState("e3");
   const [contacts,setContacts]=useState(DEMO.contacts);
   const [companies,setCompanies]=useState(DEMO.companies);
   const [deals,setDeals]=useState(DEMO.deals);
@@ -2143,7 +2105,7 @@ export default function App({session,onLogout}={}){
   const [entityMenuOpen,setEntityMenuOpen]=useState(false);
   const [sigModal,setSigModal]=useState(null);
 
-  const entity=entities.find(e=>e.id===activeEntityId);
+  const entity=entities.find(e=>e.id===activeEntityId)||entities[0];
   const ec=contacts.filter(c=>c.entityId===activeEntityId);
   const eco=companies.filter(c=>c.entityId===activeEntityId);
   const ed=deals.filter(d=>d.entityId===activeEntityId);
@@ -2417,9 +2379,9 @@ export default function App({session,onLogout}={}){
         <div style={{flex:1,overflowY:"auto",padding:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} entity={entity} setView={setView} setSelContact={setSelContact} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} deals={deals} notes={notes} tasks={tasks}/>}
-          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} customFields={customFields} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
+          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} customFields={customFields} entity={entity} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
           {view==="companies"&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts}/>}
-          {view==="deals"&&<KanbanBoard ed={ed} contacts={contacts} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setView={setView} products={products}/>}
+          {view==="deals"&&<KanbanBoard ed={ed} contacts={contacts} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setView={setView} products={products} entity={entity}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
           {view==="scheduler"&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
@@ -2436,7 +2398,7 @@ export default function App({session,onLogout}={}){
       </div>
 
       {/* ─── MODALS ────────────────────────────────────── */}
-      {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} addNote={addNote} addEntity={addEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields}/>}
+      {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} addNote={addNote} addEntity={addEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields} entity={entity}/>}
 
       {/* ─── E-SIGNATURE MODAL ─────────────────────────── */}
       {sigModal&&<SignatureModal doc={sigModal.doc} contact={sigModal.contact} onClose={()=>setSigModal(null)} onSign={(sigData)=>addSignature({...sigData,doc:sigModal.doc,contactId:sigModal.contact?.id,entityId:activeEntityId})} showToast={showToast}/>}
