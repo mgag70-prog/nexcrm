@@ -2106,7 +2106,7 @@ This proposal is valid for 30 days.`;
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
-export default function App(){
+export default function App({session,onLogout}={}){
   const [entities,setEntities]=useState(DEMO.entities);
   const [activeEntityId,setActiveEntityId]=useState("e1");
   const [contacts,setContacts]=useState(DEMO.contacts);
@@ -2383,10 +2383,19 @@ export default function App(){
           })}
         </nav>
         <div style={{padding:"10px 14px",borderTop:"1px solid #162B55"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:26,height:26,borderRadius:"50%",background:entity?.color||"#3B82F6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff"}}>{entity?.name?.[0]||"?"}</div>
-            <div><div style={{fontSize:11,fontWeight:600,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:145}}>{entity?.name}</div><div style={{fontSize:9,color:"#475569"}}>{entity?.type}</div></div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:session?8:0}}>
+            <div style={{width:26,height:26,borderRadius:"50%",background:entity?.color||"#3B82F6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff"}}>{(session?.user?.email?.[0]||entity?.name?.[0]||"?").toUpperCase()}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:11,fontWeight:600,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:145}}>{session?.user?.email||entity?.name}</div>
+              <div style={{fontSize:9,color:"#475569"}}>{session?"Signed in":entity?.type}</div>
+            </div>
           </div>
+          {onLogout&&(
+            <button onClick={onLogout} style={{width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid #1E3A6B",borderRadius:6,padding:"6px 10px",cursor:"pointer",color:"#CBD5E1",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              Sign out
+            </button>
+          )}
         </div>
       </div>
 

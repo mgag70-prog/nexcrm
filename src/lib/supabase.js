@@ -11,28 +11,17 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 })
 
-let userIdPromise = null
-
-function resolveUserId() {
-  if (!userIdPromise) {
-    userIdPromise = (async () => {
-      const { data: sessionData } = await supabase.auth.getSession()
-      if (sessionData?.session?.user?.id) return sessionData.session.user.id
-      const { data, error } = await supabase.auth.signInAnonymously()
-      if (error) throw error
-      return data.user.id
-    })().catch((err) => {
-      userIdPromise = null
-      throw err
-    })
-  }
-  return userIdPromise
+async function requireUserId() {
+  const { data } = await supabase.auth.getSession()
+  const id = data?.session?.user?.id
+  if (!id) throw new Error('Not authenticated')
+  return id
 }
 
 export const storage = {
   async get(key) {
     try {
-      const userId = await resolveUserId()
+      const userId = await requireUserId()
       const { data, error } = await supabase
         .from('crm_store')
         .select('key, value')
@@ -46,7 +35,7 @@ export const storage = {
     }
   },
   async set(key, value) {
-    const userId = await resolveUserId()
+    const userId = await requireUserId()
     const { error } = await supabase
       .from('crm_store')
       .upsert(
@@ -56,7 +45,7 @@ export const storage = {
     if (error) throw error
   },
   async delete(key) {
-    const userId = await resolveUserId()
+    const userId = await requireUserId()
     await supabase
       .from('crm_store')
       .delete()
@@ -64,17 +53,45 @@ export const storage = {
       .eq('key', key)
   },
   async list(prefix) {
-    const userId = await resolveUserId()
-    const { data, error } = await supabase
-      .from('crm_store')
-      .select('key')
-      .eq('user_id', userId)
-      .like('key', `${prefix}%`)
-    if (error) return { keys: [] }
-    return { keys: (data || []).map((r) => r.key) }
+    try {
+      const userId = await requireUserId()
+      const { data, error } = await supabase
+        .from('crm_store')
+        .select('key')
+        .eq('user_id', userId)
+        .like('key', `${prefix}%`)
+      if (error) return { keys: [] }
+      return { keys: (data || []).map((r) => r.key) }
+    } catch {
+      return { keys: [] }
+    }
   },
 }
 
 if (typeof window !== 'undefined') {
   window.storage = storage
+}
+
+export async function signUp(email, password) {
+  return supabase.auth.signUp({ email, password })
+}
+
+export async function signIn(email, password) {
+  return supabase.auth.signInWithPassword({ email, password })
+}
+
+export async function signOut() {
+  return supabase.auth.signOut()
+}
+
+export async function getSession() {
+  const { data } = await supabase.auth.getSession()
+  return data?.session ?? null
+}
+
+export function onAuthChange(callback) {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    callback(session)
+  })
+  return () => data.subscription.unsubscribe()
 }
