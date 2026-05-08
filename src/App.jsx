@@ -121,6 +121,14 @@ const DEMO = {
     {id:"cf2",entityId:"e1",entity:"deal",name:"Contract Type",type:"select",options:["Monthly","Annual","Multi-Year","One-time"]},
   ],
   enrollments:[],
+  timeEntries:[],
+  invoices:[],
+  meetings:[],
+  webhooks:[],
+  portalTokens:[],
+  emailThreads:[],
+  availability:{},
+  invoiceCounter:1,
 };
 
 // ─── ICONS ────────────────────────────────────────────────────────────────────
