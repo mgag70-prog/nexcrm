@@ -732,7 +732,7 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequ
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMPANIES
 // ═══════════════════════════════════════════════════════════════════════════════
-function CompaniesList({eco,search,openModal,deleteCompany,contacts}){
+function CompaniesList({eco,search,openModal,deleteCompany,contacts,setSelCompany}){
   const filtered=eco.filter(c=>!search||[c.name,c.industry,c.email].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
   return(
     <div>
@@ -744,7 +744,10 @@ function CompaniesList({eco,search,openModal,deleteCompany,contacts}){
         :filtered.map(c=>{
           const cContacts=contacts.filter(ct=>ct.companyName===c.name);
           return(
-            <div key={c.id} style={S.card({padding:20,position:"relative"})}>
+            <div key={c.id} style={{...S.card({padding:20,position:"relative"}),cursor:"pointer",transition:"box-shadow .15s, transform .15s"}}
+              onClick={()=>setSelCompany?.(c.id)}
+              onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 8px 20px rgba(15,30,60,.08)";e.currentTarget.style.transform="translateY(-1px)";}}
+              onMouseLeave={e=>{e.currentTarget.style.boxShadow="";e.currentTarget.style.transform="";}}>
               <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:14}}>
                 <div style={{width:44,height:44,background:"#EEF2FF",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:avColor(c.name),border:"1px solid #E2E8F0",flexShrink:0}}>{c.name[0]}</div>
                 <div style={{flex:1,minWidth:0}}>
@@ -753,22 +756,193 @@ function CompaniesList({eco,search,openModal,deleteCompany,contacts}){
                 </div>
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
-                {c.email&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.mail} size={12}/><a href={`mailto:${c.email}`} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.email}</a></div>}
+                {c.email&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.mail} size={12}/><a href={`mailto:${c.email}`} onClick={e=>e.stopPropagation()} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.email}</a></div>}
                 {c.phone&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.phone} size={12}/>{c.phone}</div>}
-                {c.website&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.link} size={12}/><a href={`https://${c.website}`} target="_blank" rel="noreferrer" style={{color:"#1D4ED8",textDecoration:"none"}}>{c.website}</a></div>}
+                {c.website&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.link} size={12}/><a href={`https://${c.website}`} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.website}</a></div>}
                 {c.employees&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.users} size={12}/>{c.employees.toLocaleString()} employees</div>}
               </div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderTop:"1px solid #E9EEF6",paddingTop:12}}>
                 <span style={{fontSize:12,color:"#475569"}}>{cContacts.length} contact{cContacts.length!==1?"s":""}</span>
                 <div style={{display:"flex",gap:4}}>
-                  <button style={S.btnGhost} onClick={()=>openModal("editCompany",c)}><Ic d={I.edit} size={13}/></button>
-                  <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm(`Delete ${c.name}?`))deleteCompany(c.id);}}><Ic d={I.trash} size={13}/></button>
+                  <button style={S.btnGhost} onClick={e=>{e.stopPropagation();openModal("editCompany",c);}}><Ic d={I.edit} size={13}/></button>
+                  <button style={{...S.btnGhost,color:"#EF4444"}} onClick={e=>{e.stopPropagation();if(confirm(`Delete ${c.name}?`))deleteCompany(c.id);}}><Ic d={I.trash} size={13}/></button>
                 </div>
               </div>
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPANY DETAIL
+// ═══════════════════════════════════════════════════════════════════════════════
+function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,openModal,setSelContact,setView,deleteCompany,entity}){
+  const [tab,setTab]=useState("overview");
+  if(!company){
+    return(
+      <div>
+        <button style={{...S.btnGhost,fontSize:12,marginBottom:14}} onClick={onBack}><Ic d={I.arrow} size={12}/>Back to Companies</button>
+        <div style={{...S.card({padding:48}),textAlign:"center",color:"#475569"}}>This company no longer exists.</div>
+      </div>
+    );
+  }
+  const cContacts=allContacts.filter(ct=>ct.companyName===company.name||ct.companyId===company.id);
+  const contactIds=new Set(cContacts.map(c=>c.id));
+  const cDeals=allDeals.filter(d=>d.companyId===company.id||(d.companyName&&d.companyName.toLowerCase()===(company.name||"").toLowerCase())||contactIds.has(d.contactId));
+  const cNotes=allNotes.filter(n=>contactIds.has(n.contactId));
+  const cTasks=allTasks.filter(t=>contactIds.has(t.contactId));
+  const dealValue=cDeals.reduce((s,d)=>s+(+d.value||0),0);
+  const wonValue=cDeals.filter(d=>d.stage==="Won").reduce((s,d)=>s+(+d.value||0),0);
+  const openDeals=cDeals.filter(d=>!["Won","Lost"].includes(d.stage));
+
+  const TAB=({id,label,count})=>(
+    <button onClick={()=>setTab(id)} style={{...S.btnGhost,padding:"6px 14px",borderBottom:`2px solid ${tab===id?"#1D4ED8":"transparent"}`,color:tab===id?"#1D4ED8":"#64748B",borderRadius:0,fontSize:13,fontWeight:600}}>
+      {label}{count!=null&&<span style={{marginLeft:6,background:tab===id?"#DBEAFE":"#F1F5F9",color:tab===id?"#1D4ED8":"#64748B",borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:700}}>{count}</span>}
+    </button>
+  );
+  return(
+    <div>
+      <button style={{...S.btnGhost,fontSize:12,marginBottom:14}} onClick={onBack}><Ic d={I.arrow} size={12}/>Back to Companies</button>
+      <div style={S.card({padding:24,marginBottom:20})}>
+        <div style={{display:"flex",alignItems:"flex-start",gap:16}}>
+          <div style={{width:64,height:64,background:"#EEF2FF",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:800,color:avColor(company.name),border:"1px solid #E2E8F0",flexShrink:0}}>{company.name?.[0]||"?"}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:22,fontWeight:800,color:"#0F172A",margin:"0 0 6px"}}>{company.name}</h2>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+              <span style={S.badge("#06B6D4")}>{company.industry||"Other"}</span>
+              {company.employees&&<span style={S.badge("#7C3AED")}>{company.employees.toLocaleString()} employees</span>}
+              {entity&&<span style={S.badge("#64748B")}>{entity.name}</span>}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6,fontSize:12,color:"#475569"}}>
+              {company.website&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.link} size={12}/><a href={`https://${company.website}`} target="_blank" rel="noreferrer" style={{color:"#1D4ED8",textDecoration:"none"}}>{company.website}</a></div>}
+              {company.email&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.mail} size={12}/><a href={`mailto:${company.email}`} style={{color:"#1D4ED8",textDecoration:"none"}}>{company.email}</a></div>}
+              {company.phone&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.phone} size={12}/>{company.phone}</div>}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,flexShrink:0}}>
+            <button style={S.btnSecondary} onClick={()=>openModal("editCompany",company)}><Ic d={I.edit} size={13}/>Edit</button>
+            <button style={{...S.btnSecondary,color:"#EF4444",borderColor:"#FECACA"}} onClick={()=>{if(confirm(`Delete ${company.name}? This won't remove its contacts or deals.`)){deleteCompany(company.id);onBack();}}}><Ic d={I.trash} size={13}/></button>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginTop:18,paddingTop:16,borderTop:"1px solid #E9EEF6"}}>
+          <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Open pipeline</div><div style={{fontSize:18,fontWeight:800,color:"#1D4ED8"}}>{fmt$(openDeals.reduce((s,d)=>s+(+d.value||0),0))}</div><div style={{fontSize:11,color:"#94A3B8"}}>{openDeals.length} open deal{openDeals.length===1?"":"s"}</div></div>
+          <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Won revenue</div><div style={{fontSize:18,fontWeight:800,color:"#10B981"}}>{fmt$(wonValue)}</div><div style={{fontSize:11,color:"#94A3B8"}}>across all time</div></div>
+          <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Total deal value</div><div style={{fontSize:18,fontWeight:800,color:"#0F172A"}}>{fmt$(dealValue)}</div><div style={{fontSize:11,color:"#94A3B8"}}>{cDeals.length} deal{cDeals.length===1?"":"s"}</div></div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:0,borderBottom:"1px solid #E2E8F0",marginBottom:16}}>
+        <TAB id="overview" label="Overview"/>
+        <TAB id="contacts" label="Contacts" count={cContacts.length}/>
+        <TAB id="deals" label="Deals" count={cDeals.length}/>
+        <TAB id="notes" label="Notes" count={cNotes.length}/>
+        <TAB id="tasks" label="Tasks" count={cTasks.length}/>
+      </div>
+
+      {tab==="overview"&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <div style={S.card({padding:18})}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Recent contacts</div>
+            {cContacts.length===0?<div style={{fontSize:13,color:"#94A3B8"}}>No contacts linked to this company yet.</div>
+            :cContacts.slice(0,6).map(ct=>(
+              <div key={ct.id} onClick={()=>{setSelContact(ct.id);setView("contacts");}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #F1F5F9",cursor:"pointer"}}>
+                <Avatar name={ct.name} size={28}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{ct.name}</div>
+                  <div style={{fontSize:11,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ct.title||ct.email||"—"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={S.card({padding:18})}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Recent deals</div>
+            {cDeals.length===0?<div style={{fontSize:13,color:"#94A3B8"}}>No deals associated yet.</div>
+            :cDeals.slice(0,6).map(d=>(
+              <div key={d.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #F1F5F9"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.title}</div>
+                  <span style={S.badge(stageColor(entity,d.stage))}>{d.stage}</span>
+                </div>
+                <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{fmt$(d.value)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab==="contacts"&&(
+        <div style={S.card({overflow:"hidden"})}>
+          {cContacts.length===0?<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:13}}>No contacts at this company yet.</div>
+          :cContacts.map((ct,i)=>(
+            <div key={ct.id} onClick={()=>{setSelContact(ct.id);setView("contacts");}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderTop:i?"1px solid #E9EEF6":"none",cursor:"pointer"}}>
+              <Avatar name={ct.name} size={32}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{ct.name}</div>
+                <div style={{fontSize:12,color:"#64748B"}}>{[ct.title,ct.email,ct.phone].filter(Boolean).join(" · ")||"—"}</div>
+              </div>
+              <Ic d={I.arrow} size={14} c="#CBD5E1"/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab==="deals"&&(
+        <div style={S.card({overflow:"hidden"})}>
+          {cDeals.length===0?<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:13}}>No deals associated.</div>
+          :(
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>{["Deal","Stage","Value","Close","Probability"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{cDeals.map(d=>(
+                <tr key={d.id}>
+                  <td style={{...S.td,color:"#0F172A",fontWeight:600}}>{d.title}</td>
+                  <td style={S.td}><span style={S.badge(stageColor(entity,d.stage))}>{d.stage}</span></td>
+                  <td style={{...S.td,fontWeight:700,color:"#0F172A"}}>{fmt$(d.value)}</td>
+                  <td style={S.td}>{fmtDate(d.closeDate)}</td>
+                  <td style={S.td}>{d.probability!=null?`${d.probability}%`:"—"}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab==="notes"&&(
+        <div style={S.card({padding:18})}>
+          {cNotes.length===0?<div style={{fontSize:13,color:"#94A3B8"}}>No notes yet. Notes are linked through this company's contacts.</div>
+          :cNotes.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(n=>{
+            const ct=allContacts.find(c=>c.id===n.contactId);
+            return(
+              <div key={n.id} style={{padding:"10px 0",borderBottom:"1px solid #F1F5F9"}}>
+                <div style={{fontSize:11,color:"#64748B",marginBottom:4}}>{ct?.name||"—"} · {fmtTime(n.createdAt)}</div>
+                <div style={{fontSize:13,color:"#0F172A",whiteSpace:"pre-wrap"}}>{n.content}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {tab==="tasks"&&(
+        <div style={S.card({overflow:"hidden"})}>
+          {cTasks.length===0?<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:13}}>No tasks yet.</div>
+          :cTasks.sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate)).map((t,i)=>{
+            const ct=allContacts.find(c=>c.id===t.contactId);
+            const overdue=!t.completed&&new Date(t.dueDate)<new Date();
+            return(
+              <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderTop:i?"1px solid #E9EEF6":"none"}}>
+                <input type="checkbox" checked={!!t.completed} readOnly style={{accentColor:"#1D4ED8"}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,color:"#0F172A",textDecoration:t.completed?"line-through":"none"}}>{t.title}</div>
+                  <div style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)}{ct?` · ${ct.name}`:""}</div>
+                </div>
+                <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority]||"#64748B")}>{t.priority||"medium"}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1319,9 +1493,9 @@ function ImportView({activeEntityId,entity,contacts,companies,addContact,addComp
       else if(target==="stage"){
         const mapped=HUBSPOT_STAGE_MAP[String(val).toLowerCase().trim()];
         const final=mapped||val;
-        // If the entity has a custom stages list and the mapped value isn't in it, fall back to first stage
-        if(entityStages&&entityStages.length&&!entityStages.includes(final)){deal.stage=entityStages[0];}
-        else deal.stage=final;
+        // Always coerce to a stage that exists in the active pipeline so the deal is visible in the kanban.
+        const pipeline=(entityStages&&entityStages.length)?entityStages:STAGES;
+        deal.stage=pipeline.includes(final)?final:pipeline[0];
       }
       else if(target==="companyName")companyName=String(val).trim();
       else if(target==="contactName")contactName=String(val).trim();
@@ -2780,6 +2954,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   // UI state
   const [view,setView]=useState("dashboard");
   const [selContact,setSelContact]=useState(null);
+  const [selCompany,setSelCompany]=useState(null);
   const [search,setSearch]=useState("");
   const [modal,setModal]=useState(null);
   const [toast,setToast]=useState(null);
@@ -3067,7 +3242,7 @@ export default function App({session,onLogout,demoMode=false}={}){
             const active=view===item.id&&(item.id!=="contacts"||!selContact);
             return(
               <button key={item.id} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:active?600:400,color:active?"#FFFFFF":"#94A3B8",background:active?"rgba(255,255,255,0.10)":"transparent",border:"none",borderLeft:`3px solid ${active?entity?.color||"#3B82F6":"transparent"}`,transition:"all .1s",textAlign:"left"}}
-                onClick={()=>{setView(item.id);if(item.id!=="contacts")setSelContact(null);}}>
+                onClick={()=>{setView(item.id);if(item.id!=="contacts")setSelContact(null);if(item.id!=="companies")setSelCompany(null);}}>
                 <Ic d={item.icon} size={14}/>
                 <span style={{flex:1}}>{item.label}</span>
                 {item.badge>0&&<span style={{background:item.badgeColor||"rgba(255,255,255,0.15)",color:item.badgeColor==="rgba(255,255,255,0.15)"?"#94A3B8":"#fff",borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>{item.badge}</span>}
@@ -3123,7 +3298,8 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} entity={entity} setView={setView} setSelContact={setSelContact} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} deals={deals} notes={notes} tasks={tasks}/>}
           {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} customFields={customFields} entity={entity} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
-          {view==="companies"&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts}/>}
+          {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} setSelCompany={setSelCompany}/>}
+          {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setView={setView} deleteCompany={deleteCompany} entity={entity}/>}
           {view==="deals"&&<KanbanBoard ed={ed} contacts={contacts} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setView={setView} products={products} entity={entity}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
