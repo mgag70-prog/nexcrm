@@ -1114,23 +1114,29 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
   const fieldsForType=(t)=>t==="company"?COMPANY_FIELDS:CONTACT_FIELDS;
   const labelsForType=(t)=>t==="company"?COMPANY_FIELD_LABELS:CONTACT_FIELD_LABELS;
 
-  // Minimal CSV parser that handles quoted fields containing commas
-  const parseCsvLine=(line)=>{
-    const out=[];let cur="";let inQ=false;
-    for(let i=0;i<line.length;i++){
-      const ch=line[i];
+  // Full-text CSV parser: handles quoted fields with embedded commas AND newlines, BOM, CRLF/LF.
+  const parseCsv=(text)=>{
+    if(!text)return[];
+    if(text.charCodeAt(0)===0xFEFF)text=text.slice(1); // strip BOM
+    const rows=[];let row=[];let cur="";let inQ=false;
+    const pushCell=()=>{row.push(cur);cur="";};
+    const pushRow=()=>{if(row.length>1||row[0]!=="")rows.push(row.map(v=>v.trim()));row=[];};
+    for(let i=0;i<text.length;i++){
+      const ch=text[i];
       if(inQ){
-        if(ch==='"'&&line[i+1]==='"'){cur+='"';i++;}
+        if(ch==='"'&&text[i+1]==='"'){cur+='"';i++;}
         else if(ch==='"')inQ=false;
         else cur+=ch;
       }else{
         if(ch==='"')inQ=true;
-        else if(ch===","){out.push(cur);cur="";}
+        else if(ch===","){pushCell();}
+        else if(ch==='\r'){pushCell();pushRow();if(text[i+1]==='\n')i++;}
+        else if(ch==='\n'){pushCell();pushRow();}
         else cur+=ch;
       }
     }
-    out.push(cur);
-    return out.map(v=>v.trim());
+    if(cur!==""||row.length>0){pushCell();pushRow();}
+    return rows;
   };
 
   const readFile=(f,isCSV)=>{
@@ -1138,12 +1144,13 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
     reader.onload=(e)=>{
       const text=e.target.result;
       if(isCSV){
-        const lines=text.split(/\r?\n/).filter(l=>l.trim());
-        const headers=parseCsvLine(lines[0]);
-        const rows=lines.slice(1).map(l=>{
-          const vals=parseCsvLine(l);
+        const allRows=parseCsv(text);
+        const headers=allRows[0]||[];
+        const rows=allRows.slice(1).map(vals=>{
           const obj={};headers.forEach((h,i)=>obj[h]=vals[i]||"");return obj;
         }).filter(r=>Object.values(r).some(v=>v));
+        console.log("[CSV Parse] file:",f?.name,"headers:",headers.length,"data rows:",rows.length);
+        if(rows[0])console.log("[CSV Parse] first row sample:",rows[0]);
         setCsvHeaders(headers);setCsvRows(rows);
         const lowered=headers.map(h=>h.toLowerCase().trim());
         // Auto-detect HubSpot vs Zoho — check both legacy API headers and modern display headers
@@ -1257,25 +1264,37 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
   };
 
   const importCSVData=()=>{
-    let count=0;let skipped=0;
+    console.log("[CSV Import] type:",csvType,"rows:",csvRows.length,"activeEntityId:",activeEntityId);
+    console.log("[CSV Import] mapping:",csvMapping);
+    if(csvRows[0]){
+      console.log("[CSV Import] first raw row:",csvRows[0]);
+      const built=csvType==="company"?buildCompanyFromRow(csvRows[0]):buildContactFromRow(csvRows[0]);
+      console.log("[CSV Import] first built object:",built);
+    }
+    let count=0;let skipped=0;const skipReasons=[];
+    const log=(reason)=>{skipped++;if(skipReasons.length<10)skipReasons.push(reason);};
     if(csvType==="company"){
-      csvRows.forEach(row=>{
+      csvRows.forEach((row,idx)=>{
         const co=buildCompanyFromRow(row);
-        if(!co.name){skipped++;return;}
+        if(!co.name){log(`row ${idx+1}: missing name (raw=${JSON.stringify(row).slice(0,120)})`);return;}
         const dup=companies.some(x=>x.name&&x.name.toLowerCase()===co.name.toLowerCase()&&x.entityId===activeEntityId);
-        if(dup){skipped++;return;}
+        if(dup){log(`row ${idx+1}: duplicate of "${co.name}"`);return;}
         addCompany(co);count++;
       });
-      showToast(`Imported ${count} compan${count===1?"y":"ies"}${skipped?` (${skipped} skipped as duplicates or missing name)`:""}`);
+      console.log("[CSV Import] created:",count,"skipped:",skipped);
+      if(skipReasons.length)console.log("[CSV Import] skip reasons (first 10):",skipReasons);
+      showToast(`Imported ${count} compan${count===1?"y":"ies"}${skipped?` (${skipped} skipped — open the browser console for details)`:""}`);
     } else {
-      csvRows.forEach(row=>{
+      csvRows.forEach((row,idx)=>{
         const contact=buildContactFromRow(row);
-        if(!contact.name){skipped++;return;}
+        if(!contact.name){log(`row ${idx+1}: missing name (raw=${JSON.stringify(row).slice(0,120)})`);return;}
         const dup=contact.email&&contacts.some(c=>c.email&&c.email.toLowerCase()===contact.email.toLowerCase()&&c.entityId===activeEntityId);
-        if(dup){skipped++;return;}
+        if(dup){log(`row ${idx+1}: duplicate email ${contact.email}`);return;}
         addContact(contact);count++;
       });
-      showToast(`Imported ${count} contact${count===1?"":"s"}${skipped?` (${skipped} skipped as duplicates or missing name)`:""}`);
+      console.log("[CSV Import] created:",count,"skipped:",skipped);
+      if(skipReasons.length)console.log("[CSV Import] skip reasons (first 10):",skipReasons);
+      showToast(`Imported ${count} contact${count===1?"":"s"}${skipped?` (${skipped} skipped — open the browser console for details)`:""}`);
     }
     setCsvRows([]);setCsvHeaders([]);setCsvMapping({});setFile(null);
   };
