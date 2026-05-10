@@ -94,6 +94,57 @@ if (typeof window !== 'undefined') {
   window.storage = storage
 }
 
+// ─── PORTAL (public, no-auth) ───────────────────────────────────────────────
+// Reads/writes the public `portal_snapshots` table so that anonymous visitors
+// at /portal/:token can see what the workspace owner exposed for that contact.
+// SQL required (one-time, run by user):
+//   create table if not exists public.portal_snapshots (
+//     token text primary key,
+//     payload jsonb not null,
+//     created_at timestamptz not null default now()
+//   );
+//   alter table public.portal_snapshots enable row level security;
+//   create policy "portal public read" on public.portal_snapshots for select to anon, authenticated using (true);
+//   create policy "portal owner write" on public.portal_snapshots for insert to authenticated with check (true);
+//   create policy "portal owner update" on public.portal_snapshots for update to authenticated using (true) with check (true);
+//   create policy "portal owner delete" on public.portal_snapshots for delete to authenticated using (true);
+export async function fetchPortalSnapshot(token) {
+  try {
+    const { data, error } = await supabase
+      .from('portal_snapshots')
+      .select('payload, created_at')
+      .eq('token', token)
+      .maybeSingle()
+    if (error) {
+      console.error('[fetchPortalSnapshot]', error)
+      return null
+    }
+    return data
+  } catch (e) {
+    console.error('[fetchPortalSnapshot] threw', e)
+    return null
+  }
+}
+
+export async function writePortalSnapshot(token, payload) {
+  try {
+    const { error } = await supabase
+      .from('portal_snapshots')
+      .upsert({ token, payload, created_at: new Date().toISOString() })
+    if (error) console.error('[writePortalSnapshot]', error)
+  } catch (e) {
+    console.error('[writePortalSnapshot] threw', e)
+  }
+}
+
+export async function deletePortalSnapshot(token) {
+  try {
+    await supabase.from('portal_snapshots').delete().eq('token', token)
+  } catch (e) {
+    console.error('[deletePortalSnapshot] threw', e)
+  }
+}
+
 export async function signUp(email, password) {
   return supabase.auth.signUp({ email, password })
 }

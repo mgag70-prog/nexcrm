@@ -3,8 +3,11 @@ import { createRoot } from 'react-dom/client'
 import { getSession, onAuthChange, signOut } from './lib/supabase.js'
 import App from './App.jsx'
 import Auth from './Auth.jsx'
+import Portal from './Portal.jsx'
 
-const isDemoRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo')
+const path = typeof window !== 'undefined' ? window.location.pathname : ''
+const isDemoRoute = path.startsWith('/demo')
+const isPortalRoute = path.startsWith('/portal/')
 
 function AuthGate() {
   const [status, setStatus] = useState('loading')
@@ -44,6 +47,7 @@ function AuthGate() {
 }
 
 function Root() {
+  if (isPortalRoute) return <Portal />
   if (isDemoRoute) return <App demoMode={true} />
   return <AuthGate />
 }
