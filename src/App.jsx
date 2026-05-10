@@ -678,7 +678,11 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,comp
           <div style={S.card({padding:16,marginBottom:12})}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Deals ({cDeals.length})</div>
-              <button style={S.btnGhost} onClick={()=>openModal("addDeal",{contactId:contact.id})}><Ic d={I.plus} size={14}/></button>
+              <button style={S.btnGhost} onClick={()=>{
+                // Resolve the contact's company so the deal's Company field is pre-filled
+                const co=companies.find(c=>c.id===contact.companyId)||companies.find(c=>c.name?.toLowerCase()===(contact.companyName||"").toLowerCase());
+                openModal("addDeal",{contactId:contact.id,companyId:co?.id||contact.companyId||null,companyName:co?.name||contact.companyName||""});
+              }}><Ic d={I.plus} size={14}/></button>
             </div>
             {cDeals.length===0?<p style={{fontSize:12,color:"#475569",padding:"4px 0"}}>No deals yet.</p>
             :cDeals.map(d=>(
@@ -873,9 +877,11 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
       </div>
     );
   }
-  const cContacts=allContacts.filter(ct=>ct.companyName===company.name||ct.companyId===company.id);
+  // Contacts at this company: linked by companyId OR by case-insensitive name
+  const cContacts=allContacts.filter(ct=>ct.companyId===company.id||(ct.companyName&&ct.companyName.toLowerCase()===(company.name||"").toLowerCase()));
   const contactIds=new Set(cContacts.map(c=>c.id));
-  const cDeals=allDeals.filter(d=>d.companyId===company.id||(d.companyName&&d.companyName.toLowerCase()===(company.name||"").toLowerCase())||contactIds.has(d.contactId));
+  // Deals at this company: ONLY by deal.companyId — deal name is independent of company name
+  const cDeals=allDeals.filter(d=>d.companyId===company.id);
   const cNotes=allNotes.filter(n=>contactIds.has(n.contactId));
   const cTasks=allTasks.filter(t=>contactIds.has(t.contactId));
   const dealValue=cDeals.reduce((s,d)=>s+(+d.value||0),0);
@@ -912,7 +918,9 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
               {company.lastContacted&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.clock} size={12}/>Last contact: {fmtDate(company.lastContacted)}</div>}
             </div>
           </div>
-          <div style={{display:"flex",gap:8,flexShrink:0}}>
+          <div style={{display:"flex",gap:8,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
+            <button style={S.btnPrimary} onClick={()=>openModal("addContact",{companyId:company.id,companyName:company.name,_lockCompany:true})}><Ic d={I.plus} size={13}/>Add Contact</button>
+            <button style={S.btnPrimary} onClick={()=>openModal("addDeal",{companyId:company.id,companyName:company.name,_lockCompany:true})}><Ic d={I.plus} size={13}/>Add Deal</button>
             <button style={S.btnSecondary} onClick={()=>openModal("editCompany",company)}><Ic d={I.edit} size={13}/>Edit</button>
             <button style={{...S.btnSecondary,color:"#EF4444",borderColor:"#FECACA"}} onClick={()=>{if(confirm(`Delete ${company.name}? This won't remove its contacts or deals.`)){deleteCompany(company.id);onBack();}}}><Ic d={I.trash} size={13}/></button>
           </div>
@@ -1043,7 +1051,7 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
 // ═══════════════════════════════════════════════════════════════════════════════
 // KANBAN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
-function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,setSelContact,setSelDeal,setView,products,entity}){
+function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,setSelContact,setSelCompany,setSelDeal,setView,products,entity}){
   const [dragging,setDragging]=useState(null);
   const [dragOver,setDragOver]=useState(null);
   const totalPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
@@ -1091,8 +1099,25 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
                         <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginBottom:3}}><span>Probability</span><span style={{color:sCol}}>{deal.probability}%</span></div>
                         <div style={{height:4,background:"#E9EEF6",borderRadius:2}}><div style={{height:"100%",background:sCol,borderRadius:2,width:`${deal.probability}%`,transition:"width .3s"}}/></div>
                       </div>}
-                      {companyLabel&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,fontSize:12,color:"#475569"}}><Ic d={I.building} size={12} c="#94A3B8"/><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:company?500:400,fontStyle:company?"normal":"italic"}}>{companyLabel}{!company&&deal.companyName?" (unlinked)":""}</span></div>}
-                      {contact&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}><Avatar name={contact.name} size={20}/><span style={{fontSize:12,color:"#64748B"}}>{contact.name}</span></div>}
+                      {companyLabel&&(
+                        company&&setSelCompany?(
+                          <button onClick={(e)=>{e.stopPropagation();setSelCompany(company.id);setView("companies");}} style={{background:"none",border:"none",padding:0,display:"flex",alignItems:"center",gap:6,marginBottom:6,fontSize:12,color:"#1D4ED8",cursor:"pointer",textAlign:"left",width:"100%",overflow:"hidden"}}>
+                            <Ic d={I.building} size={12} c="#1D4ED8"/>
+                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500,textDecoration:"underline"}}>{companyLabel}</span>
+                          </button>
+                        ):(
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,fontSize:12,color:"#475569"}}>
+                            <Ic d={I.building} size={12} c="#94A3B8"/>
+                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontStyle:"italic"}}>{companyLabel} (unlinked)</span>
+                          </div>
+                        )
+                      )}
+                      {contact&&(
+                        <button onClick={(e)=>{e.stopPropagation();setSelContact(contact.id);setView("contacts");}} style={{background:"none",border:"none",padding:0,display:"flex",alignItems:"center",gap:6,marginBottom:6,cursor:"pointer",textAlign:"left",width:"100%"}}>
+                          <Avatar name={contact.name} size={20}/>
+                          <span style={{fontSize:12,color:"#1D4ED8",textDecoration:"underline"}}>{contact.name}</span>
+                        </button>
+                      )}
                       <div style={{fontSize:11,color:"#475569",marginBottom:8}}><Ic d={I.cal} size={11} c="#475569"/> {fmtDate(deal.closeDate)}</div>
                       {deal.contractType&&<span style={{...S.badge("#06B6D4"),fontSize:10,marginBottom:6}}>{deal.contractType}</span>}
                       <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
@@ -3340,7 +3365,18 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
         <F form={form} set={set} label="Email" name="email" type="email" placeholder="sarah@company.com"/>
         <F form={form} set={set} label="Phone" name="phone" placeholder="+1 555-0100"/>
         <F form={form} set={set} label="Title" name="title" placeholder="VP of Engineering"/>
-        <F form={form} set={set} label="Company" name="companyName" placeholder="TechCorp"/>
+        {form._lockCompany?(
+          <Field label="Company"><div style={{...S.input,background:"#F1F5F9",color:"#475569",display:"flex",alignItems:"center",gap:6}}><Ic d={I.building} size={12} c="#64748B"/>{form.companyName||"—"}<span style={{fontSize:10,color:"#94A3B8",marginLeft:"auto"}}>locked</span></div></Field>
+        ):(
+          <Field label="Company">
+            <input style={S.input} list="contact-company-options" placeholder="Type or pick a company" value={form.companyName||""} onChange={e=>{
+              const v=e.target.value;
+              const match=companies.find(c=>c.name?.toLowerCase()===v.toLowerCase());
+              setForm(p=>({...p,companyName:v,companyId:match?match.id:null}));
+            }}/>
+            <datalist id="contact-company-options">{companies.map(c=><option key={c.id} value={c.name}/>)}</datalist>
+          </Field>
+        )}
         <F form={form} set={set} label="Platform" name="source" options={PLATFORMS}/>
         <F form={form} set={set} label="ICP" name="icp" options={ICP_LEVELS}/>
         <F form={form} set={set} label="Status" name="status" placeholder="e.g. Awaiting reply"/>
@@ -3357,9 +3393,10 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
         <button style={S.btnPrimary} onClick={()=>{
           if(!form.name)return;
-          // Auto-link to existing company by name (relationship requirement)
-          const co=form.companyName?companies.find(c=>c.name?.toLowerCase()===form.companyName.toLowerCase()):null;
-          const payload={...form,companyId:co?co.id:form.companyId||null};
+          const {_lockCompany,...rest}=form;
+          // Resolve companyId from companyName if not already set (datalist user-typed match)
+          const co=rest.companyName?companies.find(c=>c.name?.toLowerCase()===rest.companyName.toLowerCase()):null;
+          const payload={...rest,companyId:co?co.id:rest.companyId||null};
           type==="addContact"?addContact(payload):updateContact(data.id,payload);
           closeModal();
         }}>
@@ -3399,26 +3436,29 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
 
   if(type==="addDeal"||type==="editDeal") return(
     <Modal title={type==="addDeal"?"Add Deal":"Edit Deal"} onClose={closeModal} wide>
-      <F form={form} set={set} label="Deal Title *" name="title" placeholder="Enterprise License Q3" required/>
+      <F form={form} set={set} label="Deal Title *" name="title" placeholder="Free text — anything you want to call this deal" required/>
       <div style={S.grid2}>
         <F form={form} set={set} label="Value (USD)" name="value" type="number" placeholder="50000"/>
         <F form={form} set={set} label="Stage" name="stage" options={stagesFor(entity)}/>
         <F form={form} set={set} label="Close Date" name="closeDate" type="date"/>
         <Field label="Probability (%)"><input type="range" min={0} max={100} value={form.probability||50} onChange={e=>set("probability",+e.target.value)} style={{width:"100%",accentColor:"#1D4ED8"}}/><div style={{fontSize:12,color:"#64748B",textAlign:"right"}}>{form.probability||50}%</div></Field>
-        <Field label="Contact *"><select style={{...S.select,borderColor:!form.contactId?"#FCA5A5":undefined}} value={form.contactId||""} onChange={e=>{
-          set("contactId",e.target.value);
-          // Auto-fill company from the chosen contact if no company set yet
-          const c=contacts.find(x=>x.id===e.target.value);
-          if(c&&!form.companyId&&(c.companyId||c.companyName)){
-            const co=companies.find(x=>x.id===c.companyId)||companies.find(x=>x.name?.toLowerCase()===c.companyName?.toLowerCase());
-            if(co){set("companyId",co.id);set("companyName",co.name);}
-          }
-        }}><option value="">Select contact...</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
-        <Field label="Company *"><select style={{...S.select,borderColor:!form.companyId?"#FCA5A5":undefined}} value={form.companyId||""} onChange={e=>{
-          set("companyId",e.target.value);
-          const co=companies.find(x=>x.id===e.target.value);
-          if(co)set("companyName",co.name);
-        }}><option value="">Select company...</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        {form._lockCompany?(
+          <Field label="Company"><div style={{...S.input,background:"#F1F5F9",color:"#475569",display:"flex",alignItems:"center",gap:6}}><Ic d={I.building} size={12} c="#64748B"/>{form.companyName||"—"}<span style={{fontSize:10,color:"#94A3B8",marginLeft:"auto"}}>locked</span></div></Field>
+        ):(
+          <Field label="Company *"><select style={{...S.select,borderColor:!form.companyId?"#FCA5A5":undefined}} value={form.companyId||""} onChange={e=>{
+            const co=companies.find(x=>x.id===e.target.value);
+            setForm(p=>({...p,companyId:e.target.value,companyName:co?.name||"",contactId:null}));
+          }}><option value="">Select company…</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        )}
+        {(()=>{
+          const eligibleContacts=form.companyId?contacts.filter(c=>c.companyId===form.companyId||(c.companyName&&form.companyName&&c.companyName.toLowerCase()===form.companyName.toLowerCase())):[];
+          const placeholder=form.companyId?(eligibleContacts.length?"Select contact (optional)…":"No contacts at this company yet"):"Pick a company first";
+          return(
+            <Field label="Contact"><select style={S.select} value={form.contactId||""} disabled={!form.companyId} onChange={e=>{
+              setForm(p=>({...p,contactId:e.target.value}));
+            }}><option value="">{placeholder}</option>{eligibleContacts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+          );
+        })()}
         <F form={form} set={set} label="Deal Owner" name="owner" placeholder="Account exec"/>
         <F form={form} set={set} label="Deal Type" name="dealType" options={DEAL_TYPES}/>
         <F form={form} set={set} label="Priority" name="priority" options={DEAL_PRIORITIES}/>
@@ -3439,9 +3479,9 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
         <button style={S.btnPrimary} onClick={()=>{
           if(!form.title){showToast?.("Title required","error");return;}
-          if(!form.contactId){showToast?.("Pick a contact — every deal must link to one","error");return;}
           if(!form.companyId){showToast?.("Pick a company — every deal must link to one","error");return;}
-          type==="addDeal"?addDeal(form):updateDeal(data.id,form);
+          const {_lockCompany,...rest}=form;
+          type==="addDeal"?addDeal(rest):updateDeal(data.id,rest);
           closeModal();
         }}>
           {type==="addDeal"?"Add Deal":"Save Changes"}
@@ -4115,7 +4155,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
-          {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
+          {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
           {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
