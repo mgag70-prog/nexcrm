@@ -2704,17 +2704,43 @@ export default function App({session,onLogout,demoMode=false}={}){
   const eei=emailInts.filter(i=>i.entityId===activeEntityId);
 
   // ─── PERSISTENCE ──────────────────────────────────────────────────────────
+  // loadedRef gates writes: until the initial load from Supabase completes,
+  // save() must be a no-op. Otherwise the save useEffects below fire on mount
+  // with the initial DEMO=[] state and overwrite the user's real data before
+  // the async load can read it back.
+  const loadedRef=useRef(false);
   useEffect(()=>{
-    if(demoMode)return;
+    if(demoMode){loadedRef.current=true;return;}
+    loadedRef.current=false;
+    let cancelled=false;
     (async()=>{
-      const load=async(key,setter)=>{try{const r=await window.storage?.get(key);if(r?.value)setter(JSON.parse(r.value));}catch(e){}};
+      const load=async(key,setter)=>{
+        try{
+          const r=await window.storage?.get(key);
+          if(cancelled)return;
+          if(r?.value)setter(JSON.parse(r.value));
+        }catch(e){console.error("[Persistence] load failed for",key,e);}
+      };
       const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures]];
       for(const [k,s] of keys)await load(k,s);
-      try{const r=await window.storage?.get("crm:activeEntityId");if(r?.value)setActiveEntityId(JSON.parse(r.value));}catch(e){}
+      try{
+        const r=await window.storage?.get("crm:activeEntityId");
+        if(!cancelled&&r?.value)setActiveEntityId(JSON.parse(r.value));
+      }catch(e){console.error("[Persistence] load failed for crm:activeEntityId",e);}
+      if(!cancelled){
+        loadedRef.current=true;
+        console.log("[Persistence] initial load complete — saves enabled");
+      }
     })();
+    return()=>{cancelled=true;};
   },[demoMode]);
 
-  const save=async(key,val)=>{if(demoMode)return;try{await window.storage?.set(key,JSON.stringify(val));}catch(e){}};
+  const save=async(key,val)=>{
+    if(demoMode)return;
+    if(!loadedRef.current)return; // skip until initial load completes
+    try{await window.storage?.set(key,JSON.stringify(val));}
+    catch(e){console.error("[Persistence] save failed for",key,e);}
+  };
   useEffect(()=>{save("crm:entities",entities);},[entities]);
   useEffect(()=>{save("crm:contacts",contacts);},[contacts]);
   useEffect(()=>{save("crm:companies",companies);},[companies]);

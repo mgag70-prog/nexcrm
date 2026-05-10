@@ -28,29 +28,47 @@ export const storage = {
         .eq('user_id', userId)
         .eq('key', key)
         .maybeSingle()
-      if (error || !data) return null
+      if (error) {
+        console.error('[storage.get]', key, error)
+        return null
+      }
+      if (!data) return null
       return { key: data.key, value: data.value }
-    } catch {
+    } catch (e) {
+      console.error('[storage.get] threw for', key, e)
       return null
     }
   },
   async set(key, value) {
-    const userId = await requireUserId()
-    const { error } = await supabase
-      .from('crm_store')
-      .upsert(
-        { key, value: String(value), user_id: userId },
-        { onConflict: 'user_id,key' },
-      )
-    if (error) throw error
+    try {
+      const userId = await requireUserId()
+      const { error } = await supabase
+        .from('crm_store')
+        .upsert(
+          { key, value: String(value), user_id: userId },
+          { onConflict: 'user_id,key' },
+        )
+      if (error) {
+        console.error('[storage.set]', key, error)
+        throw error
+      }
+    } catch (e) {
+      console.error('[storage.set] threw for', key, e)
+      throw e
+    }
   },
   async delete(key) {
-    const userId = await requireUserId()
-    await supabase
-      .from('crm_store')
-      .delete()
-      .eq('user_id', userId)
-      .eq('key', key)
+    try {
+      const userId = await requireUserId()
+      const { error } = await supabase
+        .from('crm_store')
+        .delete()
+        .eq('user_id', userId)
+        .eq('key', key)
+      if (error) console.error('[storage.delete]', key, error)
+    } catch (e) {
+      console.error('[storage.delete] threw for', key, e)
+    }
   },
   async list(prefix) {
     try {
@@ -60,9 +78,13 @@ export const storage = {
         .select('key')
         .eq('user_id', userId)
         .like('key', `${prefix}%`)
-      if (error) return { keys: [] }
+      if (error) {
+        console.error('[storage.list]', prefix, error)
+        return { keys: [] }
+      }
       return { keys: (data || []).map((r) => r.key) }
-    } catch {
+    } catch (e) {
+      console.error('[storage.list] threw for', prefix, e)
       return { keys: [] }
     }
   },
