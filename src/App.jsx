@@ -7,10 +7,24 @@ const STAGES = ["New Lead","Contacted","Proposal Sent","Won","Lost"];
 const SC = {"New Lead":"#8B5CF6","Contacted":"#F59E0B","Proposal Sent":"#3B82F6","Won":"#10B981","Lost":"#EF4444"};
 const stagesFor = e => Array.isArray(e?.stages) && e.stages.length ? e.stages : STAGES;
 const stageColor = (e, s) => e?.stageColors?.[s] || SC[s] || "#64748B";
-const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","HubSpot Import","Zoho Import","Other"];
+const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","BiggerPockets","HubSpot Import","Zoho Import","Other"];
+const PLATFORMS = SOURCES; // alias — "Source" is now also surfaced as "Platform"
+const ICP_LEVELS = ["Small","Medium","High","Very High"];
+const LIFECYCLE_STAGES = ["Lead","Prospect","Opportunity","Customer","Churned"];
+const LEAD_STATUSES = ["New","Open","In Progress","Qualified","Unqualified"];
+const DEAL_TYPES = ["New Business","Existing Business","Renewal","Upsell"];
+const DEAL_PRIORITIES = ["Low","Medium","High"];
 const ETYPES = ["LLC","Corporation","Non-Profit","Partnership","Sole Proprietor","S-Corp","Trust"];
 const PRIORITIES = ["low","medium","high"];
-const INDUSTRIES = ["Technology","SaaS","Finance","Healthcare","Retail","Manufacturing","Real Estate","Legal","Education","Other"];
+const INDUSTRIES = [
+  // Generic
+  "Technology","SaaS","Finance","Healthcare","Retail","Manufacturing","Real Estate","Legal","Education",
+  // Fairway Circuit
+  "Indoor Golf Facility","Outdoor League","Tech Vendor","Golf Vendor","Golf Trip Organizer",
+  // Crestfolio
+  "Personal","Family Investment Account","Real Estate Investor","Small Business",
+  "Other"
+];
 const EMAIL_PROVIDERS = [{id:"gmail",label:"Gmail",color:"#EA4335",logo:"G"},{id:"outlook",label:"Outlook",color:"#0078D4",logo:"O"},{id:"smtp",label:"SMTP/Other",color:"#64748B",logo:"@"}];
 const SOURCE_SCORE = {"LinkedIn":20,"Referral":20,"Website":15,"Event":12,"Partner":18,"Cold Outreach":8,"Other":5,"HubSpot Import":10,"Zoho Import":10};
 const TRIGGER_LABELS = {"new_contact":"New Contact Created","stage_change":"Deal Stage Changes","task_overdue":"Task Becomes Overdue","deal_created":"New Deal Created","deal_won":"Deal Marked Won"};
@@ -288,6 +302,25 @@ const Avatar = ({name,size=32}) => (
 const Field = ({label,children})=>(
   <div style={S.formGroup}><label style={S.label}>{label}</label>{children}</div>
 );
+// Module-level form-field helper. CRITICAL: must NOT be redeclared inside any
+// component's render — that would create a new component identity per keystroke
+// and React would unmount/remount the input, killing focus.
+const F = ({label, name, placeholder, type: ftype = "text", options, required, form, set}) => (
+  <Field label={label}>
+    {options
+      ? (
+        <select style={S.select} value={form?.[name] || ""} onChange={e => set(name, e.target.value)}>
+          <option value="">Select…</option>
+          {options.map(o => <option key={o}>{o}</option>)}
+        </select>
+      )
+      : (
+        <input type={ftype} style={{...S.input, borderColor: required && !form?.[name] ? "#FCA5A5" : undefined}} placeholder={placeholder} value={form?.[name] || ""} onChange={e => set(name, e.target.value)}/>
+      )
+    }
+  </Field>
+);
+
 // Inline-editable note row (H5)
 function NoteRow({note,updateNote,deleteNote}){
   const [editing,setEditing]=useState(false);
@@ -560,7 +593,7 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,deals,not
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONTACT DETAIL (Notes, Tasks, Docs, Sequences tabs + Lead Score)
 // ═══════════════════════════════════════════════════════════════════════════════
-function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity}){
+function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView}){
   const [noteText,setNoteText]=useState("");
   const [tab,setTab]=useState("notes");
   const fileRef=useRef();
@@ -602,13 +635,27 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequ
               <div style={{display:"flex",justifyContent:"center",marginBottom:12}}><Avatar name={contact.name} size={72}/></div>
               <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:800,color:"#0F172A",margin:"0 0 4px"}}>{contact.name}</h2>
               {contact.title&&<div style={{color:"#64748B",fontSize:13,marginBottom:4}}>{contact.title}</div>}
-              <div style={{color:"#475569",fontSize:13,marginBottom:8}}>{contact.companyName||"—"}</div>
+              {(()=>{
+                const linkedCo=companies.find(c=>c.id===contact.companyId)||companies.find(c=>c.name?.toLowerCase()===(contact.companyName||"").toLowerCase());
+                if(linkedCo&&setSelCompany&&setView){
+                  return <button style={{background:"none",border:"none",color:"#1D4ED8",cursor:"pointer",fontSize:13,marginBottom:8,padding:0,textDecoration:"underline"}} onClick={()=>{setSelCompany(linkedCo.id);setView("companies");}}>{linkedCo.name}</button>;
+                }
+                return <div style={{color:"#475569",fontSize:13,marginBottom:8}}>{contact.companyName||"—"}</div>;
+              })()}
               <div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap"}}>
-                <span style={S.badge("#8B5CF6")}>{contact.source}</span>
+                {contact.source&&<span style={S.badge("#8B5CF6")}>{contact.source}</span>}
+                {contact.icp&&<span style={S.badge("#06B6D4")}>ICP: {contact.icp}</span>}
+                {contact.status&&<span style={S.badge("#F59E0B")}>{contact.status}</span>}
                 <div style={{display:"inline-flex",alignItems:"center",gap:4,background:scoreColor(score)+"18",border:`1px solid ${scoreColor(score)}40`,borderRadius:20,padding:"3px 10px"}}>
                   <Ic d={I.target} size={11} c={scoreColor(score)}/><span style={{fontSize:12,fontWeight:700,color:scoreColor(score)}}>Score: {score}</span>
                 </div>
               </div>
+              {(contact.followUp||contact.notes)&&(
+                <div style={{textAlign:"left",marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"}}>
+                  {contact.followUp&&<div style={{marginBottom:contact.notes?10:0}}><div style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Follow-up / Next Steps</div><div style={{fontSize:12,color:"#0F172A",whiteSpace:"pre-wrap"}}>{contact.followUp}</div></div>}
+                  {contact.notes&&<div><div style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Notes</div><div style={{fontSize:12,color:"#0F172A",whiteSpace:"pre-wrap"}}>{contact.notes}</div></div>}
+                </div>
+              )}
             </div>
             <div style={{borderTop:"1px solid #E9EEF6",paddingTop:16,display:"flex",flexDirection:"column",gap:10}}>
               {contact.email&&<a href={`mailto:${contact.email}`} style={{display:"flex",gap:8,alignItems:"center",fontSize:13,color:"#1D4ED8",textDecoration:"none"}}><Ic d={I.mail} size={14} c="#475569"/>{contact.email}</a>}
@@ -635,7 +682,7 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,sequ
             </div>
             {cDeals.length===0?<p style={{fontSize:12,color:"#475569",padding:"4px 0"}}>No deals yet.</p>
             :cDeals.map(d=>(
-              <div key={d.id} style={{background:"#F1F5F9",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+              <div key={d.id} onClick={()=>{if(setSelDeal&&setView){setSelDeal(d.id);setView("deals");}}} style={{background:"#F1F5F9",borderRadius:8,padding:"10px 12px",marginBottom:8,cursor:setSelDeal?"pointer":"default"}}>
                 <div style={{fontSize:13,fontWeight:600,color:"#0F172A",marginBottom:4}}>{d.title}</div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <span style={S.badge(stageColor(entity,d.stage))}>{d.stage}</span>
@@ -782,14 +829,21 @@ function CompaniesList({eco,search,openModal,deleteCompany,contacts,deals=[],set
                 <div style={{width:44,height:44,background:"#EEF2FF",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:avColor(c.name),border:"1px solid #E2E8F0",flexShrink:0}}>{c.name[0]}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:700,fontSize:15,color:"#0F172A",marginBottom:2}}>{c.name}</div>
-                  <span style={S.badge("#06B6D4")}>{c.industry||"Other"}</span>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span style={S.badge("#06B6D4")}>{c.industry||"Other"}</span>
+                    {c.lifecycleStage&&<span style={S.badge("#8B5CF6")}>{c.lifecycleStage}</span>}
+                    {c.leadStatus&&<span style={S.badge("#F59E0B")}>{c.leadStatus}</span>}
+                  </div>
                 </div>
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
                 {c.email&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.mail} size={12}/><a href={`mailto:${c.email}`} onClick={e=>e.stopPropagation()} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.email}</a></div>}
                 {c.phone&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.phone} size={12}/>{c.phone}</div>}
                 {c.website&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.link} size={12}/><a href={`https://${c.website}`} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.website}</a></div>}
+                {(c.city||c.state)&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.building} size={12}/>{[c.city,c.state].filter(Boolean).join(", ")}</div>}
+                {c.owner&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.users} size={12}/>Owner: {c.owner}</div>}
                 {c.employees&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.users} size={12}/>{c.employees.toLocaleString()} employees</div>}
+                {c.lastContacted&&<div style={{display:"flex",gap:6,alignItems:"center",fontSize:12,color:"#64748B"}}><Ic d={I.clock} size={12}/>Last contact: {fmtDate(c.lastContacted)}</div>}
               </div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderTop:"1px solid #E9EEF6",paddingTop:12}}>
                 <span style={{fontSize:12,color:"#475569"}}>{cContacts.length} contact{cContacts.length!==1?"s":""} · {cDeals.length} deal{cDeals.length!==1?"s":""}</span>
@@ -843,6 +897,8 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
             <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:22,fontWeight:800,color:"#0F172A",margin:"0 0 6px"}}>{company.name}</h2>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
               <span style={S.badge("#06B6D4")}>{company.industry||"Other"}</span>
+              {company.lifecycleStage&&<span style={S.badge("#8B5CF6")}>{company.lifecycleStage}</span>}
+              {company.leadStatus&&<span style={S.badge("#F59E0B")}>{company.leadStatus}</span>}
               {company.employees&&<span style={S.badge("#7C3AED")}>{company.employees.toLocaleString()} employees</span>}
               {entity&&<span style={S.badge("#64748B")}>{entity.name}</span>}
             </div>
@@ -850,6 +906,10 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
               {company.website&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.link} size={12}/><a href={`https://${company.website}`} target="_blank" rel="noreferrer" style={{color:"#1D4ED8",textDecoration:"none"}}>{company.website}</a></div>}
               {company.email&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.mail} size={12}/><a href={`mailto:${company.email}`} style={{color:"#1D4ED8",textDecoration:"none"}}>{company.email}</a></div>}
               {company.phone&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.phone} size={12}/>{company.phone}</div>}
+              {(company.city||company.state)&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.building} size={12}/>{[company.city,company.state].filter(Boolean).join(", ")}</div>}
+              {company.owner&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.users} size={12}/>Owner: {company.owner}</div>}
+              {(()=>{const pc=allContacts.find(c=>c.id===company.primaryContactId);return pc?<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.users} size={12}/>Primary: <button style={{background:"none",border:"none",color:"#1D4ED8",cursor:"pointer",padding:0,fontSize:12,textDecoration:"underline"}} onClick={()=>{setSelContact?.(pc.id);setView?.("contacts");}}>{pc.name}</button></div>:null;})()}
+              {company.lastContacted&&<div style={{display:"flex",gap:6,alignItems:"center"}}><Ic d={I.clock} size={12}/>Last contact: {fmtDate(company.lastContacted)}</div>}
             </div>
           </div>
           <div style={{display:"flex",gap:8,flexShrink:0}}>
@@ -3168,14 +3228,32 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
           <div style={S.card({padding:18})}>
             <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Deal facts</div>
-            <div style={{display:"grid",gridTemplateColumns:"110px 1fr",rowGap:8,fontSize:13}}>
+            <div style={{display:"grid",gridTemplateColumns:"130px 1fr",rowGap:8,fontSize:13}}>
               <div style={{color:"#94A3B8"}}>Value</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmt$(deal.value)}</div>
               <div style={{color:"#94A3B8"}}>Stage</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.stage}</div>
               <div style={{color:"#94A3B8"}}>Probability</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.probability||"—"}%</div>
               <div style={{color:"#94A3B8"}}>Close date</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmtDate(deal.closeDate)}</div>
               <div style={{color:"#94A3B8"}}>Created</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmtDate(deal.createdAt)}</div>
+              {deal.lastContacted&&(<><div style={{color:"#94A3B8"}}>Last contact</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmtDate(deal.lastContacted)}</div></>)}
+              {deal.owner&&(<><div style={{color:"#94A3B8"}}>Owner</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.owner}</div></>)}
+              {deal.dealType&&(<><div style={{color:"#94A3B8"}}>Type</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.dealType}</div></>)}
+              {deal.priority&&(<><div style={{color:"#94A3B8"}}>Priority</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.priority}</div></>)}
+              {deal.pipeline&&(<><div style={{color:"#94A3B8"}}>Pipeline</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.pipeline}</div></>)}
+              {deal.nextStep&&(<><div style={{color:"#94A3B8"}}>Next step</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.nextStep}</div></>)}
               {deal.contractType&&(<><div style={{color:"#94A3B8"}}>Contract</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.contractType}</div></>)}
             </div>
+            {deal.description&&(
+              <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Description</div>
+                <div style={{fontSize:13,color:"#0F172A",whiteSpace:"pre-wrap"}}>{deal.description}</div>
+              </div>
+            )}
+            {deal.stage==="Lost"&&deal.lostReason&&(
+              <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#EF4444",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Closed Lost reason</div>
+                <div style={{fontSize:13,color:"#0F172A",whiteSpace:"pre-wrap"}}>{deal.lostReason}</div>
+              </div>
+            )}
           </div>
           <div style={S.card({padding:18})}>
             <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Recent activity</div>
@@ -3254,24 +3332,21 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
   // Duplicate check
   const dupContact=type==="addContact"&&form.email&&contacts.some(c=>c.email?.toLowerCase()===form.email?.toLowerCase());
 
-  const F=({label,name,placeholder,type:ftype="text",options,required})=>(
-    <Field label={label}>
-      {options?<select style={S.select} value={form[name]||""} onChange={e=>set(name,e.target.value)}><option value="">Select...</option>{options.map(o=><option key={o}>{o}</option>)}</select>
-      :<input type={ftype} style={{...S.input,borderColor:required&&!form[name]?"#FCA5A5":undefined}} placeholder={placeholder} value={form[name]||""} onChange={e=>set(name,e.target.value)}/>}
-    </Field>
-  );
-
   if(type==="addContact"||type==="editContact") return(
     <Modal title={type==="addContact"?"Add Contact":"Edit Contact"} onClose={closeModal} wide>
       {dupContact&&<div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:10,marginBottom:14,fontSize:13,color:"#92400E"}}>⚠ A contact with this email already exists.</div>}
       <div style={S.grid2}>
-        <F label="Full Name *" name="name" placeholder="Sarah Johnson" required/>
-        <F label="Email" name="email" type="email" placeholder="sarah@company.com"/>
-        <F label="Phone" name="phone" placeholder="+1 555-0100"/>
-        <F label="Title" name="title" placeholder="VP of Engineering"/>
-        <F label="Company" name="companyName" placeholder="TechCorp"/>
-        <F label="Source" name="source" options={SOURCES}/>
+        <F form={form} set={set} label="Full Name *" name="name" placeholder="Sarah Johnson" required/>
+        <F form={form} set={set} label="Email" name="email" type="email" placeholder="sarah@company.com"/>
+        <F form={form} set={set} label="Phone" name="phone" placeholder="+1 555-0100"/>
+        <F form={form} set={set} label="Title" name="title" placeholder="VP of Engineering"/>
+        <F form={form} set={set} label="Company" name="companyName" placeholder="TechCorp"/>
+        <F form={form} set={set} label="Platform" name="source" options={PLATFORMS}/>
+        <F form={form} set={set} label="ICP" name="icp" options={ICP_LEVELS}/>
+        <F form={form} set={set} label="Status" name="status" placeholder="e.g. Awaiting reply"/>
       </div>
+      <Field label="Follow-up / Next Steps"><textarea rows={2} style={S.textarea} value={form.followUp||""} onChange={e=>set("followUp",e.target.value)}/></Field>
+      <Field label="Notes"><textarea rows={3} style={S.textarea} value={form.notes||""} onChange={e=>set("notes",e.target.value)} placeholder="Persistent notes about this contact (separate from the activity timeline)…"/></Field>
       {contactCustomFields.map(cf=>(
         <Field key={cf.id} label={cf.name}>
           {cf.type==="select"?<select style={S.select} value={form[cf.name]||""} onChange={e=>set(cf.name,e.target.value)}><option value="">Select...</option>{cf.options?.map(o=><option key={o}>{o}</option>)}</select>
@@ -3280,7 +3355,14 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
       ))}
       <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
-        <button style={S.btnPrimary} onClick={()=>{if(!form.name)return;type==="addContact"?addContact(form):updateContact(data.id,form);closeModal();}}>
+        <button style={S.btnPrimary} onClick={()=>{
+          if(!form.name)return;
+          // Auto-link to existing company by name (relationship requirement)
+          const co=form.companyName?companies.find(c=>c.name?.toLowerCase()===form.companyName.toLowerCase()):null;
+          const payload={...form,companyId:co?co.id:form.companyId||null};
+          type==="addContact"?addContact(payload):updateContact(data.id,payload);
+          closeModal();
+        }}>
           {type==="addContact"?"Add Contact":"Save Changes"}
         </button>
       </div>
@@ -3290,12 +3372,21 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
   if(type==="addCompany"||type==="editCompany") return(
     <Modal title={type==="addCompany"?"Add Company":"Edit Company"} onClose={closeModal} wide>
       <div style={S.grid2}>
-        <F label="Company Name *" name="name" required/>
-        <F label="Industry" name="industry" options={INDUSTRIES}/>
-        <F label="Website" name="website" placeholder="company.com"/>
-        <F label="Email" name="email" type="email"/>
-        <F label="Phone" name="phone"/>
-        <F label="Employees" name="employees" type="number"/>
+        <F form={form} set={set} label="Company Name *" name="name" required/>
+        <F form={form} set={set} label="Industry" name="industry" options={INDUSTRIES}/>
+        <F form={form} set={set} label="Website" name="website" placeholder="company.com"/>
+        <F form={form} set={set} label="Email" name="email" type="email"/>
+        <F form={form} set={set} label="Phone" name="phone"/>
+        <F form={form} set={set} label="Employees" name="employees" type="number"/>
+        <F form={form} set={set} label="Company Owner" name="owner" placeholder="Account manager"/>
+        <F form={form} set={set} label="Lifecycle Stage" name="lifecycleStage" options={LIFECYCLE_STAGES}/>
+        <F form={form} set={set} label="Lead Status" name="leadStatus" options={LEAD_STATUSES}/>
+        <F form={form} set={set} label="City" name="city"/>
+        <F form={form} set={set} label="State" name="state"/>
+        <Field label="Primary Contact"><select style={S.select} value={form.primaryContactId||""} onChange={e=>set("primaryContactId",e.target.value)}>
+          <option value="">— None —</option>
+          {contacts.filter(c=>!form.id||c.companyId===form.id||c.companyName===form.name).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </select></Field>
       </div>
       <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
@@ -3308,15 +3399,36 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
 
   if(type==="addDeal"||type==="editDeal") return(
     <Modal title={type==="addDeal"?"Add Deal":"Edit Deal"} onClose={closeModal} wide>
-      <F label="Deal Title *" name="title" placeholder="Enterprise License Q3" required/>
+      <F form={form} set={set} label="Deal Title *" name="title" placeholder="Enterprise License Q3" required/>
       <div style={S.grid2}>
-        <F label="Value (USD)" name="value" type="number" placeholder="50000"/>
-        <F label="Stage" name="stage" options={stagesFor(entity)}/>
-        <F label="Close Date" name="closeDate" type="date"/>
+        <F form={form} set={set} label="Value (USD)" name="value" type="number" placeholder="50000"/>
+        <F form={form} set={set} label="Stage" name="stage" options={stagesFor(entity)}/>
+        <F form={form} set={set} label="Close Date" name="closeDate" type="date"/>
         <Field label="Probability (%)"><input type="range" min={0} max={100} value={form.probability||50} onChange={e=>set("probability",+e.target.value)} style={{width:"100%",accentColor:"#1D4ED8"}}/><div style={{fontSize:12,color:"#64748B",textAlign:"right"}}>{form.probability||50}%</div></Field>
-        <Field label="Contact"><select style={S.select} value={form.contactId||""} onChange={e=>set("contactId",e.target.value)}><option value="">Select contact...</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
-        <Field label="Company"><select style={S.select} value={form.companyId||""} onChange={e=>set("companyId",e.target.value)}><option value="">Select company...</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        <Field label="Contact *"><select style={{...S.select,borderColor:!form.contactId?"#FCA5A5":undefined}} value={form.contactId||""} onChange={e=>{
+          set("contactId",e.target.value);
+          // Auto-fill company from the chosen contact if no company set yet
+          const c=contacts.find(x=>x.id===e.target.value);
+          if(c&&!form.companyId&&(c.companyId||c.companyName)){
+            const co=companies.find(x=>x.id===c.companyId)||companies.find(x=>x.name?.toLowerCase()===c.companyName?.toLowerCase());
+            if(co){set("companyId",co.id);set("companyName",co.name);}
+          }
+        }}><option value="">Select contact...</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
+        <Field label="Company *"><select style={{...S.select,borderColor:!form.companyId?"#FCA5A5":undefined}} value={form.companyId||""} onChange={e=>{
+          set("companyId",e.target.value);
+          const co=companies.find(x=>x.id===e.target.value);
+          if(co)set("companyName",co.name);
+        }}><option value="">Select company...</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        <F form={form} set={set} label="Deal Owner" name="owner" placeholder="Account exec"/>
+        <F form={form} set={set} label="Deal Type" name="dealType" options={DEAL_TYPES}/>
+        <F form={form} set={set} label="Priority" name="priority" options={DEAL_PRIORITIES}/>
+        <F form={form} set={set} label="Pipeline" name="pipeline" placeholder="Default"/>
       </div>
+      <Field label="Next Step"><input style={S.input} value={form.nextStep||""} onChange={e=>set("nextStep",e.target.value)} placeholder="e.g. Send pricing proposal"/></Field>
+      <Field label="Description"><textarea rows={3} style={S.textarea} value={form.description||""} onChange={e=>set("description",e.target.value)}/></Field>
+      {form.stage==="Lost"&&(
+        <Field label="Closed Lost Reason"><textarea rows={2} style={S.textarea} value={form.lostReason||""} onChange={e=>set("lostReason",e.target.value)} placeholder="Why was this deal lost?"/></Field>
+      )}
       {dealCustomFields.map(cf=>(
         <Field key={cf.id} label={cf.name}>
           {cf.type==="select"?<select style={S.select} value={form[cf.name]||""} onChange={e=>set(cf.name,e.target.value)}><option value="">Select...</option>{cf.options?.map(o=><option key={o}>{o}</option>)}</select>
@@ -3325,7 +3437,13 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
       ))}
       <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
-        <button style={S.btnPrimary} onClick={()=>{if(!form.title)return;type==="addDeal"?addDeal(form):updateDeal(data.id,form);closeModal();}}>
+        <button style={S.btnPrimary} onClick={()=>{
+          if(!form.title){showToast?.("Title required","error");return;}
+          if(!form.contactId){showToast?.("Pick a contact — every deal must link to one","error");return;}
+          if(!form.companyId){showToast?.("Pick a company — every deal must link to one","error");return;}
+          type==="addDeal"?addDeal(form):updateDeal(data.id,form);
+          closeModal();
+        }}>
           {type==="addDeal"?"Add Deal":"Save Changes"}
         </button>
       </div>
@@ -3334,10 +3452,10 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
 
   if(type==="addTask") return(
     <Modal title="Add Task" onClose={closeModal}>
-      <F label="Task Title *" name="title" placeholder="Follow up on proposal" required/>
+      <F form={form} set={set} label="Task Title *" name="title" placeholder="Follow up on proposal" required/>
       <div style={S.grid2}>
-        <F label="Due Date" name="dueDate" type="date"/>
-        <F label="Priority" name="priority" options={PRIORITIES}/>
+        <F form={form} set={set} label="Due Date" name="dueDate" type="date"/>
+        <F form={form} set={set} label="Priority" name="priority" options={PRIORITIES}/>
         <Field label="Linked Contact"><select style={S.select} value={form.contactId||""} onChange={e=>set("contactId",e.target.value)}><option value="">Select contact...</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
       </div>
       <Field label="Reminder">
@@ -3356,11 +3474,11 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
   if(type==="addEntity") return(
     <Modal title="Add Legal Entity" onClose={closeModal}>
       <div style={{background:"#F1F5F9",borderRadius:8,padding:12,marginBottom:14,fontSize:13,color:"#475569",lineHeight:1.6}}>Each entity is completely isolated — separate contacts, deals, tasks, notes, and email integrations.</div>
-      <F label="Entity Name *" name="name" placeholder="e.g. Apex Ventures LLC" required/>
+      <F form={form} set={set} label="Entity Name *" name="name" placeholder="e.g. Apex Ventures LLC" required/>
       <div style={S.grid2}>
-        <F label="Entity Type" name="type" options={ETYPES}/>
-        <F label="Industry" name="industry" options={INDUSTRIES}/>
-        <F label="Website" name="website" placeholder="yourcompany.com"/>
+        <F form={form} set={set} label="Entity Type" name="type" options={ETYPES}/>
+        <F form={form} set={set} label="Industry" name="industry" options={INDUSTRIES}/>
+        <F form={form} set={set} label="Website" name="website" placeholder="yourcompany.com"/>
       </div>
       <Field label="Brand Color">
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -3379,7 +3497,7 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
   if(type==="composeEmail") return(
     <Modal title="Compose Email" onClose={closeModal} wide>
       <Field label="To"><input style={S.input} value={form.to||data?.to||""} onChange={e=>set("to",e.target.value)}/></Field>
-      <F label="Subject" name="subject" placeholder="Enter subject..."/>
+      <F form={form} set={set} label="Subject" name="subject" placeholder="Enter subject..."/>
       <Field label="Message">
         <textarea style={{...S.textarea,minHeight:180}} placeholder="Write your email..." value={form.body||""} onChange={e=>set("body",e.target.value)}/>
       </Field>
@@ -3703,7 +3821,7 @@ export default function App({session,onLogout,demoMode=false}={}){
 
   // ─── DEALS ────────────────────────────────────────────────────────────────
   const addDeal=(data)=>{
-    const d={id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()};
+    const d={id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString(),lastContacted:new Date().toISOString()};
     setDeals(p=>[...p,d]);
     runAutomations("deal_created",{contactId:d.contactId});
     fireWebhook("deal.created",d);
@@ -3711,9 +3829,20 @@ export default function App({session,onLogout,demoMode=false}={}){
       runAutomations("stage_change",{contactId:d.contactId});
       if(d.stage==="Won"){runAutomations("deal_won",{contactId:d.contactId});fireWebhook("deal.won",d);}
     }
+    touchLastContacted(d.contactId);
     return d;
   };
-  const updateDeal=(id,data)=>{setDeals(p=>p.map(d=>{if(d.id!==id)return d;const u={...d,...data};if(data.stage==="Won"&&d.stage!=="Won"){runAutomations("deal_won",{contactId:d.contactId});fireWebhook("deal.won",u);}if(data.stage&&data.stage!==d.stage)runAutomations("stage_change",{contactId:d.contactId});return u;}));};
+  const updateDeal=(id,data)=>{
+    setDeals(p=>p.map(d=>{
+      if(d.id!==id)return d;
+      const u={...d,...data,lastContacted:new Date().toISOString()};
+      if(data.stage==="Won"&&d.stage!=="Won"){runAutomations("deal_won",{contactId:d.contactId});fireWebhook("deal.won",u);}
+      if(data.stage&&data.stage!==d.stage)runAutomations("stage_change",{contactId:d.contactId});
+      return u;
+    }));
+    const dl=deals.find(d=>d.id===id);
+    touchLastContacted(dl?.contactId);
+  };
   const deleteDeal=(id)=>setDeals(p=>p.filter(d=>d.id!==id));
 
   // ─── TASKS ────────────────────────────────────────────────────────────────
@@ -3722,7 +3851,19 @@ export default function App({session,onLogout,demoMode=false}={}){
   const deleteTask=(id)=>setTasks(p=>p.filter(t=>t.id!==id));
 
   // ─── NOTES ────────────────────────────────────────────────────────────────
-  const addNote=(data)=>setNotes(p=>[...p,{id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()}]);
+  const touchLastContacted=(contactId)=>{
+    if(!contactId)return;
+    const ct=contacts.find(c=>c.id===contactId);
+    if(!ct)return;
+    const now=new Date().toISOString();
+    // Touch the contact's company (by id or by name)
+    const co=companies.find(c=>c.id===ct.companyId)||companies.find(c=>c.name?.toLowerCase()===(ct.companyName||"").toLowerCase());
+    if(co)setCompanies(p=>p.map(x=>x.id===co.id?{...x,lastContacted:now}:x));
+  };
+  const addNote=(data)=>{
+    setNotes(p=>[...p,{id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()}]);
+    touchLastContacted(data.contactId);
+  };
   const updateNote=(id,data)=>setNotes(p=>p.map(n=>n.id===id?{...n,...data}:n));
   const deleteNote=(id)=>setNotes(p=>p.filter(n=>n.id!==id));
 
@@ -3786,7 +3927,13 @@ export default function App({session,onLogout,demoMode=false}={}){
   const deleteInvoice=(id)=>setInvoices(p=>p.filter(x=>x.id!==id));
 
   // ─── MEETINGS ─────────────────────────────────────────────────────────────
-  const addMeeting=(data)=>{const m={id:uid(),...data};setMeetings(p=>[...p,m]);fireWebhook("meeting.booked",m);return m;};
+  const addMeeting=(data)=>{
+    const m={id:uid(),...data};
+    setMeetings(p=>[...p,m]);
+    fireWebhook("meeting.booked",m);
+    touchLastContacted(m.contactId);
+    return m;
+  };
   const updateMeeting=(id,data)=>setMeetings(p=>p.map(x=>x.id===id?{...x,...data}:x));
   const deleteMeeting=(id)=>setMeetings(p=>p.filter(x=>x.id!==id));
 
@@ -3965,7 +4112,7 @@ export default function App({session,onLogout,demoMode=false}={}){
         <div style={{flex:1,overflowY:"auto",padding:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} entity={entity} setView={setView} setSelContact={setSelContact} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} deals={deals} notes={notes} tasks={tasks}/>}
-          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
+          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
           {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
