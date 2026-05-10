@@ -3,10 +3,26 @@ import { writePortalSnapshot, deletePortalSnapshot } from "./lib/supabase.js";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend, LineChart, Line, AreaChart, Area } from "recharts";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const STAGES = ["New Lead","Contacted","Proposal Sent","Won","Lost"];
-const SC = {"New Lead":"#8B5CF6","Contacted":"#F59E0B","Proposal Sent":"#3B82F6","Won":"#10B981","Lost":"#EF4444"};
+const STAGES = ["New Lead","Contacted","Responded / Interested","Follow-up / Discovery","Demo Scheduled","Proposal Sent","Won","Lost"];
+const SC = {
+  "New Lead":"#8B5CF6",
+  "Contacted":"#F59E0B",
+  "Responded / Interested":"#06B6D4",
+  "Follow-up / Discovery":"#8B5CF6",
+  "Demo Scheduled":"#F97316",
+  "Proposal Sent":"#3B82F6",
+  "Won":"#10B981",
+  "Lost":"#EF4444",
+};
 const stagesFor = e => Array.isArray(e?.stages) && e.stages.length ? e.stages : STAGES;
 const stageColor = (e, s) => e?.stageColors?.[s] || SC[s] || "#64748B";
+// Returns the entity's pipeline + any orphan stages found in the deals (so legacy/imported stages still render).
+const stagesForWithOrphans = (entity, deals) => {
+  const base = stagesFor(entity);
+  const used = [...new Set((deals || []).map(d => d.stage).filter(Boolean))];
+  const orphans = used.filter(s => !base.includes(s));
+  return [...base, ...orphans];
+};
 const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","BiggerPockets","HubSpot Import","Zoho Import","Other"];
 const PLATFORMS = SOURCES; // alias — "Source" is now also surfaced as "Platform"
 const ICP_LEVELS = ["Small","Medium","High","Very High"];
@@ -527,17 +543,41 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONTACTS LIST (with duplicate detection indicator)
 // ═══════════════════════════════════════════════════════════════════════════════
-function ContactsList({ec,search,openModal,setSelContact,deleteContact,deals,notes,tasks}){
+function ContactsList({ec,search,openModal,setSelContact,deleteContact,updateContact,deals,notes,tasks}){
   const [sort,setSort]=useState("name");
-  const filtered=ec.filter(c=>!search||[c.name,c.email,c.companyName,c.phone].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
+  const [activeFilter,setActiveFilter]=useState("active"); // all | active | inactive
+  const [selected,setSelected]=useState(()=>new Set());
+  const isActive=(c)=>c.active!==false; // undefined treated as active
+  const visibleByActive=ec.filter(c=>activeFilter==="all"?true:activeFilter==="active"?isActive(c):!isActive(c));
+  const filtered=visibleByActive.filter(c=>!search||[c.name,c.email,c.companyName,c.phone].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
   const sorted=[...filtered].sort((a,b)=>sort==="name"?a.name.localeCompare(b.name):sort==="score"?(calcLeadScore(b,deals,notes,tasks)-calcLeadScore(a,deals,notes,tasks)):new Date(b.createdAt)-new Date(a.createdAt));
   // Find duplicates: same email or very similar name
   const dupMap={};
   ec.forEach(c=>{if(c.email)dupMap[c.email.toLowerCase()]=(dupMap[c.email.toLowerCase()]||0)+1;});
+  const visibleIds=sorted.map(c=>c.id);
+  const allVisibleSelected=visibleIds.length>0&&visibleIds.every(id=>selected.has(id));
+  const toggleAll=()=>{
+    if(allVisibleSelected){const s=new Set(selected);visibleIds.forEach(id=>s.delete(id));setSelected(s);}
+    else{const s=new Set(selected);visibleIds.forEach(id=>s.add(id));setSelected(s);}
+  };
+  const toggleOne=(id)=>{const s=new Set(selected);s.has(id)?s.delete(id):s.add(id);setSelected(s);};
+  const bulkDelete=()=>{
+    const n=selected.size;
+    if(n===0)return;
+    if(!confirm(`Delete ${n} contact${n===1?"":"s"}? This cannot be undone.`))return;
+    selected.forEach(id=>deleteContact(id));
+    setSelected(new Set());
+  };
+  const counts={active:ec.filter(isActive).length,inactive:ec.filter(c=>!isActive(c)).length,all:ec.length};
 
   return(
     <div>
       <PageHeader title="Contacts" sub={`${ec.length} total contacts`}>
+        <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
+          {[["all","All",counts.all],["active","Active",counts.active],["inactive","Inactive",counts.inactive]].map(([v,l,n])=>(
+            <button key={v} style={{...S.btnGhost,padding:"5px 12px",background:activeFilter===v?"#1D4ED8":"transparent",color:activeFilter===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>setActiveFilter(v)}>{l} <span style={{opacity:.7}}>({n})</span></button>
+          ))}
+        </div>
         <select style={{...S.select,width:"auto"}} value={sort} onChange={e=>setSort(e.target.value)}>
           <option value="name">Sort: Name</option>
           <option value="date">Sort: Newest</option>
@@ -545,17 +585,31 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,deals,not
         </select>
         <button style={S.btnPrimary} onClick={()=>openModal("addContact")}><Ic d={I.plus} size={14}/>Add Contact</button>
       </PageHeader>
+      {selected.size>0&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
+          <div style={{fontSize:13,color:"#991B1B",fontWeight:600}}>{selected.size} contact{selected.size===1?"":"s"} selected</div>
+          <div style={{display:"flex",gap:8}}>
+            <button style={S.btnSecondary} onClick={()=>setSelected(new Set())}>Clear</button>
+            <button style={{...S.btnDanger}} onClick={bulkDelete}><Ic d={I.trash} size={13}/>Delete {selected.size} selected</button>
+          </div>
+        </div>
+      )}
       <div style={S.card({overflow:"hidden"})}>
         <table style={{width:"100%",borderCollapse:"collapse"}}>
-          <thead><tr>{["Contact","Score","Company","Email","Phone","Source","Added",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>
+            <th style={{...S.th,width:32}}><input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} style={{accentColor:"#1D4ED8",cursor:"pointer"}}/></th>
+            {["Contact","Status","Score","Company","Email","Phone","Source","Added",""].map(h=><th key={h} style={S.th}>{h}</th>)}
+          </tr></thead>
           <tbody>
-            {sorted.length===0?<tr><td colSpan={8} style={{padding:48,textAlign:"center",color:"#475569"}}>No contacts found. Add your first contact!</td></tr>
+            {sorted.length===0?<tr><td colSpan={10} style={{padding:48,textAlign:"center",color:"#475569"}}>No contacts found. Add your first contact!</td></tr>
             :sorted.map(c=>{
               const score=calcLeadScore(c,deals,notes,tasks);
               const isDup=dupMap[c.email?.toLowerCase()]>1;
+              const checked=selected.has(c.id);
               return(
-                <tr key={c.id} style={{cursor:"pointer"}} onClick={()=>setSelContact(c.id)}
-                  onMouseEnter={e=>e.currentTarget.style.background="#F1F5F9"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <tr key={c.id} style={{cursor:"pointer",background:checked?"#EFF6FF":undefined}} onClick={()=>setSelContact(c.id)}
+                  onMouseEnter={e=>{if(!checked)e.currentTarget.style.background="#F1F5F9";}} onMouseLeave={e=>{if(!checked)e.currentTarget.style.background="transparent";}}>
+                  <td style={S.td} onClick={e=>e.stopPropagation()}><input type="checkbox" checked={checked} onChange={()=>toggleOne(c.id)} style={{accentColor:"#1D4ED8",cursor:"pointer"}}/></td>
                   <td style={S.td}>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <div style={{position:"relative"}}>
@@ -568,6 +622,7 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,deals,not
                       </div>
                     </div>
                   </td>
+                  <td style={S.td}><span style={S.badge(isActive(c)?"#10B981":"#94A3B8")}>{isActive(c)?"Active":"Inactive"}</span></td>
                   <td style={S.td}><ScoreBadge score={score}/></td>
                   <td style={S.td}>{c.companyName||"—"}</td>
                   <td style={S.td}><a href={`mailto:${c.email}`} style={{color:"#1D4ED8",textDecoration:"none"}} onClick={e=>e.stopPropagation()}>{c.email||"—"}</a></td>
@@ -576,6 +631,7 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,deals,not
                   <td style={S.td}>{fmtDate(c.createdAt)}</td>
                   <td style={S.td}>
                     <div style={{display:"flex",gap:2}} onClick={e=>e.stopPropagation()}>
+                      <button style={S.btnGhost} title={isActive(c)?"Mark inactive":"Mark active"} onClick={()=>updateContact?.(c.id,{active:!isActive(c)})}><Ic d={isActive(c)?I.x:I.ok} size={14}/></button>
                       <button style={S.btnGhost} title="Edit" onClick={()=>openModal("editContact",c)}><Ic d={I.edit} size={14}/></button>
                       <button style={{...S.btnGhost,color:"#EF4444"}} title="Delete" onClick={()=>{if(confirm(`Delete ${c.name}?`))deleteContact(c.id);}}><Ic d={I.trash} size={14}/></button>
                     </div>
@@ -813,23 +869,54 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,comp
 // COMPANIES
 // ═══════════════════════════════════════════════════════════════════════════════
 function CompaniesList({eco,search,openModal,deleteCompany,contacts,deals=[],setSelCompany}){
+  const [selected,setSelected]=useState(()=>new Set());
   const filtered=eco.filter(c=>!search||[c.name,c.industry,c.email].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
+  const visibleIds=filtered.map(c=>c.id);
+  const allVisibleSelected=visibleIds.length>0&&visibleIds.every(id=>selected.has(id));
+  const toggleAll=()=>{
+    if(allVisibleSelected){const s=new Set(selected);visibleIds.forEach(id=>s.delete(id));setSelected(s);}
+    else{const s=new Set(selected);visibleIds.forEach(id=>s.add(id));setSelected(s);}
+  };
+  const toggleOne=(id)=>{const s=new Set(selected);s.has(id)?s.delete(id):s.add(id);setSelected(s);};
+  const bulkDelete=()=>{
+    const n=selected.size;
+    if(n===0)return;
+    if(!confirm(`Delete ${n} compan${n===1?"y":"ies"}? This cannot be undone.`))return;
+    selected.forEach(id=>deleteCompany(id));
+    setSelected(new Set());
+  };
   return(
     <div>
       <PageHeader title="Companies" sub={`${eco.length} companies`}>
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer"}}>
+          <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} style={{accentColor:"#1D4ED8",cursor:"pointer"}}/>Select all
+        </label>
         <button style={S.btnPrimary} onClick={()=>openModal("addCompany")}><Ic d={I.plus} size={14}/>Add Company</button>
       </PageHeader>
+      {selected.size>0&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
+          <div style={{fontSize:13,color:"#991B1B",fontWeight:600}}>{selected.size} compan{selected.size===1?"y":"ies"} selected</div>
+          <div style={{display:"flex",gap:8}}>
+            <button style={S.btnSecondary} onClick={()=>setSelected(new Set())}>Clear</button>
+            <button style={S.btnDanger} onClick={bulkDelete}><Ic d={I.trash} size={13}/>Delete {selected.size} selected</button>
+          </div>
+        </div>
+      )}
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>
         {filtered.length===0?<div style={{...S.card({padding:48}),gridColumn:"1/-1",textAlign:"center",color:"#475569"}}>No companies yet.</div>
         :filtered.map(c=>{
           const cContacts=contacts.filter(ct=>ct.companyName===c.name);
           const cDeals=deals.filter(d=>d.companyId===c.id||(d.companyName&&d.companyName.toLowerCase()===(c.name||"").toLowerCase()));
+          const checked=selected.has(c.id);
           return(
-            <div key={c.id} style={{...S.card({padding:20,position:"relative"}),cursor:"pointer",transition:"box-shadow .15s, transform .15s"}}
+            <div key={c.id} style={{...S.card({padding:20,position:"relative"}),cursor:"pointer",transition:"box-shadow .15s, transform .15s",borderColor:checked?"#1D4ED8":undefined,boxShadow:checked?"0 0 0 2px #1D4ED830":undefined}}
               onClick={()=>setSelCompany?.(c.id)}
-              onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 8px 20px rgba(15,30,60,.08)";e.currentTarget.style.transform="translateY(-1px)";}}
-              onMouseLeave={e=>{e.currentTarget.style.boxShadow="";e.currentTarget.style.transform="";}}>
-              <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:14}}>
+              onMouseEnter={e=>{if(!checked){e.currentTarget.style.boxShadow="0 8px 20px rgba(15,30,60,.08)";e.currentTarget.style.transform="translateY(-1px)";}}}
+              onMouseLeave={e=>{if(!checked){e.currentTarget.style.boxShadow="";e.currentTarget.style.transform="";}}}>
+              <div onClick={e=>{e.stopPropagation();toggleOne(c.id);}} style={{position:"absolute",top:12,right:12,cursor:"pointer",padding:4}}>
+                <input type="checkbox" checked={checked} onChange={()=>{}} onClick={e=>e.stopPropagation()} style={{accentColor:"#1D4ED8",cursor:"pointer",width:16,height:16}}/>
+              </div>
+              <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:14,paddingRight:24}}>
                 <div style={{width:44,height:44,background:"#EEF2FF",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:avColor(c.name),border:"1px solid #E2E8F0",flexShrink:0}}>{c.name[0]}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:700,fontSize:15,color:"#0F172A",marginBottom:2}}>{c.name}</div>
@@ -1054,14 +1141,41 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
 function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,setSelContact,setSelCompany,setSelDeal,setView,products,entity}){
   const [dragging,setDragging]=useState(null);
   const [dragOver,setDragOver]=useState(null);
+  const [selected,setSelected]=useState(()=>new Set());
+  const allIds=ed.map(d=>d.id);
+  const allSelected=allIds.length>0&&allIds.every(id=>selected.has(id));
+  const toggleAll=()=>{
+    if(allSelected){setSelected(new Set());}
+    else{setSelected(new Set(allIds));}
+  };
+  const toggleOne=(id)=>{const s=new Set(selected);s.has(id)?s.delete(id):s.add(id);setSelected(s);};
+  const bulkDelete=()=>{
+    const n=selected.size;
+    if(n===0)return;
+    if(!confirm(`Delete ${n} deal${n===1?"":"s"}? This cannot be undone.`))return;
+    selected.forEach(id=>deleteDeal(id));
+    setSelected(new Set());
+  };
   const totalPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
   return(
     <div>
       <PageHeader title="Deal Pipeline" sub={`${ed.length} deals · ${fmt$(totalPipe)} active pipeline`}>
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer"}}>
+          <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{accentColor:"#1D4ED8",cursor:"pointer"}}/>Select all
+        </label>
         <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>Add Deal</button>
       </PageHeader>
+      {selected.size>0&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
+          <div style={{fontSize:13,color:"#991B1B",fontWeight:600}}>{selected.size} deal{selected.size===1?"":"s"} selected</div>
+          <div style={{display:"flex",gap:8}}>
+            <button style={S.btnSecondary} onClick={()=>setSelected(new Set())}>Clear</button>
+            <button style={S.btnDanger} onClick={bulkDelete}><Ic d={I.trash} size={13}/>Delete {selected.size} selected</button>
+          </div>
+        </div>
+      )}
       <div style={{display:"flex",gap:14,overflowX:"auto",paddingBottom:16,alignItems:"flex-start"}}>
-        {stagesFor(entity).map(stage=>{
+        {stagesForWithOrphans(entity,ed).map(stage=>{
           const sDeals=ed.filter(d=>d.stage===stage);
           const sVal=sDeals.reduce((s,d)=>s+(d.value||0),0);
           const isOver=dragOver===stage;
@@ -1090,10 +1204,14 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
                     <div key={deal.id} draggable onDragStart={()=>setDragging(deal.id)} onDragEnd={()=>{setDragging(null);setDragOver(null);}}
                       onClick={(e)=>{
                         if(e.target.closest('button'))return;
+                        if(e.target.closest('input'))return;
                         if(setSelDeal)setSelDeal(deal.id);
                       }}
-                      style={{background:"#FFFFFF",border:`1px solid ${dragging===deal.id?"#1D4ED8":"#E2E8F0"}`,borderRadius:10,padding:14,marginBottom:10,cursor:"grab",opacity:dragging===deal.id?.5:1}}>
-                      <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:6,lineHeight:1.4}}>{deal.title}</div>
+                      style={{background:"#FFFFFF",border:`1px solid ${selected.has(deal.id)?"#1D4ED8":dragging===deal.id?"#1D4ED8":"#E2E8F0"}`,boxShadow:selected.has(deal.id)?"0 0 0 2px #1D4ED830":undefined,borderRadius:10,padding:14,marginBottom:10,cursor:"grab",opacity:dragging===deal.id?.5:1,position:"relative"}}>
+                      <div style={{position:"absolute",top:8,right:8}}>
+                        <input type="checkbox" checked={selected.has(deal.id)} onChange={()=>toggleOne(deal.id)} onClick={e=>e.stopPropagation()} style={{accentColor:"#1D4ED8",cursor:"pointer",width:14,height:14}}/>
+                      </div>
+                      <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:6,lineHeight:1.4,paddingRight:22}}>{deal.title}</div>
                       <div style={{fontSize:20,fontWeight:800,color:sCol,marginBottom:8}}>{fmt$(deal.value)}</div>
                       {deal.probability!=null&&<div style={{marginBottom:8}}>
                         <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginBottom:3}}><span>Probability</span><span style={{color:sCol}}>{deal.probability}%</span></div>
@@ -3184,6 +3302,17 @@ function SignatureModal({doc,contact,onClose,onSign,showToast}){
 function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId}){
   const [tab,setTab]=useState("overview");
   const [noteText,setNoteText]=useState("");
+  const [stageNoteDraft,setStageNoteDraft]=useState(deal?.stageNote||"");
+  // Re-sync the local stage-note draft when the deal or its stage changes (e.g., after a stage transition that clears it).
+  const stageKeyRef=useRef(deal?`${deal.id}|${deal.stage}`:"");
+  useEffect(()=>{
+    if(!deal)return;
+    const k=`${deal.id}|${deal.stage}`;
+    if(k!==stageKeyRef.current){
+      setStageNoteDraft(deal.stageNote||"");
+      stageKeyRef.current=k;
+    }
+  },[deal?.id,deal?.stage,deal?.stageNote]);
   if(!deal){
     return(
       <div>
@@ -3250,6 +3379,14 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
       </div>
 
       {tab==="overview"&&(
+        <div>
+          <div style={{...S.card({padding:18}),marginBottom:16,borderLeft:`4px solid ${sCol}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Stage notes — {deal.stage}</div>
+              {stageNoteDraft!==(deal.stageNote||"")&&<button style={{...S.btnPrimary,padding:"4px 12px",fontSize:12}} onClick={()=>updateDeal(deal.id,{stageNote:stageNoteDraft})}>Save</button>}
+            </div>
+            <textarea value={stageNoteDraft} onChange={e=>setStageNoteDraft(e.target.value)} onBlur={()=>{if(stageNoteDraft!==(deal.stageNote||""))updateDeal(deal.id,{stageNote:stageNoteDraft});}} placeholder={`What's happening in the "${deal.stage}" stage? This note clears and archives to the activity timeline when you move the deal to another stage.`} rows={3} style={S.textarea}/>
+          </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
           <div style={S.card({padding:18})}>
             <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Deal facts</div>
@@ -3290,6 +3427,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
               </div>
             ))}
           </div>
+        </div>
         </div>
       )}
 
@@ -3334,9 +3472,29 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
 
       {tab==="activity"&&(
         <div style={S.card({padding:18})}>
-          <div style={{fontSize:13,color:"#64748B"}}>
-            Created {fmtTime(deal.createdAt)}. Stage is currently <strong>{deal.stage}</strong>. Future activity will appear here as you log notes, tasks, and meetings against this deal.
-          </div>
+          {(()=>{
+            const events=[];
+            events.push({when:deal.createdAt,kind:"created",label:`Deal created at ${deal.stage} stage`});
+            (deal.stageHistory||[]).forEach(h=>{
+              events.push({when:h.at,kind:"stage",label:`Moved from ${h.from||"—"} → ${h.to}`,note:h.note});
+            });
+            notes.forEach(n=>events.push({when:n.createdAt,kind:"note",label:"Note added",note:n.content}));
+            tasks.forEach(t=>events.push({when:t.createdAt,kind:"task",label:`Task: ${t.title}${t.completed?" (done)":""}`}));
+            events.sort((a,b)=>new Date(b.when)-new Date(a.when));
+            if(events.length===0){
+              return <div style={{fontSize:13,color:"#94A3B8"}}>No activity yet.</div>;
+            }
+            return events.map((e,i)=>(
+              <div key={i} style={{padding:"10px 0",borderBottom:i<events.length-1?"1px solid #F1F5F9":"none",display:"flex",gap:12}}>
+                <div style={{width:6,marginTop:6,flexShrink:0}}><div style={{width:6,height:6,borderRadius:"50%",background:e.kind==="stage"?"#1D4ED8":e.kind==="note"?"#10B981":e.kind==="task"?"#F59E0B":"#64748B"}}/></div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:11,color:"#64748B"}}>{fmtTime(e.when)}</div>
+                  <div style={{fontSize:13,color:"#0F172A",fontWeight:600}}>{e.label}</div>
+                  {e.note&&<div style={{fontSize:12,color:"#475569",whiteSpace:"pre-wrap",marginTop:4,padding:"6px 10px",background:"#F8FAFC",borderRadius:6}}>{e.note}</div>}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       )}
     </div>
@@ -3383,6 +3541,12 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
       </div>
       <Field label="Follow-up / Next Steps"><textarea rows={2} style={S.textarea} value={form.followUp||""} onChange={e=>set("followUp",e.target.value)}/></Field>
       <Field label="Notes"><textarea rows={3} style={S.textarea} value={form.notes||""} onChange={e=>set("notes",e.target.value)} placeholder="Persistent notes about this contact (separate from the activity timeline)…"/></Field>
+      <Field label="Active">
+        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:"#334155"}}>
+          <input type="checkbox" checked={form.active!==false} onChange={e=>set("active",e.target.checked)} style={{accentColor:"#10B981",width:16,height:16,cursor:"pointer"}}/>
+          {form.active!==false?"Active — engaged in your pipeline":"Inactive — archived from active workflow"}
+        </label>
+      </Field>
       {contactCustomFields.map(cf=>(
         <Field key={cf.id} label={cf.name}>
           {cf.type==="select"?<select style={S.select} value={form[cf.name]||""} onChange={e=>set(cf.name,e.target.value)}><option value="">Select...</option>{cf.options?.map(o=><option key={o}>{o}</option>)}</select>
@@ -3876,8 +4040,14 @@ export default function App({session,onLogout,demoMode=false}={}){
     setDeals(p=>p.map(d=>{
       if(d.id!==id)return d;
       const u={...d,...data,lastContacted:new Date().toISOString()};
-      if(data.stage==="Won"&&d.stage!=="Won"){runAutomations("deal_won",{contactId:d.contactId});fireWebhook("deal.won",u);}
-      if(data.stage&&data.stage!==d.stage)runAutomations("stage_change",{contactId:d.contactId});
+      // Stage transition: archive the prior stage's note (if any) into stageHistory and clear stageNote
+      if(data.stage&&data.stage!==d.stage){
+        const archivedEntry={from:d.stage,to:data.stage,note:d.stageNote||"",at:new Date().toISOString()};
+        u.stageHistory=[...(d.stageHistory||[]),archivedEntry];
+        u.stageNote=""; // clears so the new stage starts fresh
+        runAutomations("stage_change",{contactId:d.contactId});
+        if(data.stage==="Won"&&d.stage!=="Won"){runAutomations("deal_won",{contactId:d.contactId});fireWebhook("deal.won",u);}
+      }
       return u;
     }));
     const dl=deals.find(d=>d.id===id);
@@ -4151,7 +4321,7 @@ export default function App({session,onLogout,demoMode=false}={}){
         {/* Content */}
         <div style={{flex:1,overflowY:"auto",padding:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} entity={entity} setView={setView} setSelContact={setSelContact} openModal={openModal}/>}
-          {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} deals={deals} notes={notes} tasks={tasks}/>}
+          {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
           {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
