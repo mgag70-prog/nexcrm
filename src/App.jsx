@@ -2735,11 +2735,24 @@ export default function App({session,onLogout,demoMode=false}={}){
     return()=>{cancelled=true;};
   },[demoMode]);
 
+  const [saveStatus,setSaveStatus]=useState({state:"idle",lastSavedAt:null,lastError:null});
+  const inFlightRef=useRef(0);
   const save=async(key,val)=>{
     if(demoMode)return;
     if(!loadedRef.current)return; // skip until initial load completes
-    try{await window.storage?.set(key,JSON.stringify(val));}
-    catch(e){console.error("[Persistence] save failed for",key,e);}
+    inFlightRef.current+=1;
+    setSaveStatus(s=>({...s,state:"saving"}));
+    try{
+      await window.storage?.set(key,JSON.stringify(val));
+      inFlightRef.current=Math.max(0,inFlightRef.current-1);
+      if(inFlightRef.current===0){
+        setSaveStatus({state:"saved",lastSavedAt:new Date().toISOString(),lastError:null});
+      }
+    }catch(e){
+      console.error("[Persistence] save failed for",key,e);
+      inFlightRef.current=Math.max(0,inFlightRef.current-1);
+      setSaveStatus({state:"error",lastSavedAt:null,lastError:String(e?.message||e)});
+    }
   };
   useEffect(()=>{save("crm:entities",entities);},[entities]);
   useEffect(()=>{save("crm:contacts",contacts);},[contacts]);
@@ -2979,6 +2992,18 @@ export default function App({session,onLogout,demoMode=false}={}){
               <div style={{fontSize:9,color:"#475569"}}>{session?"Signed in":entity?.type}</div>
             </div>
           </div>
+          {!demoMode&&(
+            <div title={saveStatus.lastError||(saveStatus.lastSavedAt?`Last saved ${new Date(saveStatus.lastSavedAt).toLocaleTimeString()}`:"Waiting for first change")} style={{
+              display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+              padding:"5px 8px",marginBottom:6,borderRadius:6,fontSize:10,fontWeight:600,
+              background:saveStatus.state==="error"?"rgba(239,68,68,0.15)":saveStatus.state==="saving"?"rgba(245,158,11,0.15)":saveStatus.state==="saved"?"rgba(16,185,129,0.15)":"rgba(255,255,255,0.04)",
+              color:saveStatus.state==="error"?"#FCA5A5":saveStatus.state==="saving"?"#FCD34D":saveStatus.state==="saved"?"#86EFAC":"#94A3B8",
+              border:`1px solid ${saveStatus.state==="error"?"#7F1D1D":saveStatus.state==="saving"?"#78350F":saveStatus.state==="saved"?"#064E3B":"#1E3A6B"}`,
+            }}>
+              <span style={{width:6,height:6,borderRadius:"50%",background:saveStatus.state==="error"?"#EF4444":saveStatus.state==="saving"?"#F59E0B":saveStatus.state==="saved"?"#10B981":"#64748B"}}/>
+              {saveStatus.state==="saving"?"Saving…":saveStatus.state==="saved"?"All changes saved":saveStatus.state==="error"?"Save failed — see console":"Idle"}
+            </div>
+          )}
           {onLogout&&(
             <button onClick={onLogout} style={{width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid #1E3A6B",borderRadius:6,padding:"6px 10px",cursor:"pointer",color:"#CBD5E1",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
