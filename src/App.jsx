@@ -1384,49 +1384,399 @@ function TasksView({et,contacts,updateTask,deleteTask,openModal}){
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// REPORTS (Pipeline, Activity, Forecasting tabs)
+// REPORTS — helpers, field metadata, templates, exports
 // ═══════════════════════════════════════════════════════════════════════════════
-function ReportsView({ed,ec,et,notes,entity,showToast}){
+
+// Date-range buckets used by Pipeline tab + Custom builder
+const REPORT_DATE_RANGES = [
+  ["all","All Time"],
+  ["week","This Week"],
+  ["month","This Month"],
+  ["quarter","This Quarter"],
+  ["year","This Year"],
+  ["custom","Custom"],
+];
+const dateRangeBounds = (range, customFrom, customTo) => {
+  const now = new Date();
+  if (range === "all") return { from: null, to: null };
+  if (range === "custom") return { from: customFrom ? new Date(customFrom) : null, to: customTo ? new Date(customTo) : null };
+  const from = new Date(now);
+  if (range === "week") { from.setDate(now.getDate() - 7); }
+  else if (range === "month") { from.setMonth(now.getMonth() - 1); }
+  else if (range === "quarter") { from.setMonth(now.getMonth() - 3); }
+  else if (range === "year") { from.setMonth(now.getMonth() - 12); }
+  return { from, to: now };
+};
+const inDateRange = (dateStr, from, to) => {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+  return true;
+};
+
+// Field metadata for the Custom Report Builder. Each field knows how to render itself
+// from a record + context (the full app data).
+const REPORT_FIELDS = {
+  contact: [
+    { key:"name",        label:"Name",            get: c => c.name },
+    { key:"email",       label:"Email",           get: c => c.email },
+    { key:"phone",       label:"Phone",           get: c => c.phone },
+    { key:"companyName", label:"Company",         get: c => c.companyName },
+    { key:"source",      label:"Source / Platform", get: c => c.source },
+    { key:"icp",         label:"ICP",             get: c => c.icp },
+    { key:"status",      label:"Status",          get: c => c.status },
+    { key:"active",      label:"Active",          get: c => (c.active!==false ? "Active" : "Inactive") },
+    { key:"createdAt",   label:"Created Date",    type:"date", get: c => c.createdAt },
+    { key:"leadScore",   label:"Lead Score",      numeric:true, get: (c,ctx) => calcLeadScore(c, ctx.deals||[], ctx.notes||[], ctx.tasks||[]) },
+    { key:"lastNoteAt",  label:"Last Note Date",  type:"date", get: (c,ctx) => { const ns=(ctx.notes||[]).filter(n=>n.contactId===c.id); return ns.length?ns.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0].createdAt:null; } },
+    { key:"dealCount",   label:"Deal Count",      numeric:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.contactId===c.id).length },
+    { key:"dealValue",   label:"Total Deal Value", numeric:true, money:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.contactId===c.id).reduce((s,d)=>s+(+d.value||0),0) },
+    { key:"followUp",    label:"Follow-up / Next Steps", get: c => c.followUp },
+  ],
+  company: [
+    { key:"name",            label:"Name",            get: c => c.name },
+    { key:"industry",        label:"Industry",        get: c => c.industry },
+    { key:"city",            label:"City",            get: c => c.city },
+    { key:"state",           label:"State",           get: c => c.state },
+    { key:"website",         label:"Website",         get: c => c.website },
+    { key:"employees",       label:"Employees",       numeric:true, get: c => c.employees },
+    { key:"lifecycleStage",  label:"Lifecycle Stage", get: c => c.lifecycleStage },
+    { key:"leadStatus",      label:"Lead Status",     get: c => c.leadStatus },
+    { key:"contactCount",    label:"Contact Count",   numeric:true, get: (c,ctx) => (ctx.contacts||[]).filter(x=>x.companyId===c.id||x.companyName===c.name).length },
+    { key:"dealCount",       label:"Deal Count",      numeric:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id).length },
+    { key:"pipelineValue",   label:"Total Pipeline Value", numeric:true, money:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id&&!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(+d.value||0),0) },
+    { key:"wonRevenue",      label:"Won Revenue",     numeric:true, money:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id&&d.stage==="Won").reduce((s,d)=>s+(+d.value||0),0) },
+    { key:"lastContacted",   label:"Last Contacted",  type:"date", get: c => c.lastContacted },
+  ],
+  deal: [
+    { key:"title",        label:"Title",       get: d => d.title },
+    { key:"value",        label:"Value",       numeric:true, money:true, get: d => d.value },
+    { key:"stage",        label:"Stage",       get: d => d.stage },
+    { key:"companyName",  label:"Company",     get: (d,ctx) => { const c=(ctx.companies||[]).find(x=>x.id===d.companyId); return c?.name||d.companyName; } },
+    { key:"contactName",  label:"Contact",     get: (d,ctx) => { const c=(ctx.contacts||[]).find(x=>x.id===d.contactId); return c?.name; } },
+    { key:"closeDate",    label:"Close Date",  type:"date", get: d => d.closeDate },
+    { key:"probability",  label:"Probability", numeric:true, get: d => d.probability },
+    { key:"weighted",     label:"Weighted Value", numeric:true, money:true, get: d => (+d.value||0) * ((d.probability||50)/100) },
+    { key:"dealType",     label:"Deal Type",   get: d => d.dealType },
+    { key:"priority",     label:"Priority",    get: d => d.priority },
+    { key:"owner",        label:"Owner",       get: d => d.owner },
+    { key:"pipeline",     label:"Pipeline",    get: d => d.pipeline },
+    { key:"daysInStage",  label:"Days in Stage", numeric:true, get: d => { const last=(d.stageHistory||[]).slice(-1)[0]; const since=last?new Date(last.at):new Date(d.createdAt); return Math.max(0, Math.round((Date.now()-since.getTime())/86400000)); } },
+    { key:"createdAt",    label:"Created Date", type:"date", get: d => d.createdAt },
+    { key:"stageNote",    label:"Stage Note",  get: d => d.stageNote },
+    { key:"nextStep",     label:"Next Step",   get: d => d.nextStep },
+  ],
+  time: [
+    { key:"contact",     label:"Contact",       get: (t,ctx) => (ctx.contacts||[]).find(c=>c.id===t.contactId)?.name },
+    { key:"description", label:"Description",   get: t => t.description },
+    { key:"hours",       label:"Hours",         numeric:true, get: t => t.hours },
+    { key:"rate",        label:"Rate",          numeric:true, money:true, get: t => t.rate },
+    { key:"billable",    label:"Billable Value", numeric:true, money:true, get: t => (+t.hours||0)*(+t.rate||0) },
+    { key:"date",        label:"Date",          type:"date", get: t => t.date },
+    { key:"invoiced",    label:"Invoiced",      get: (t,ctx) => (ctx.invoices||[]).some(i=>(i.items||[]).some(it=>it.timeEntryId===t.id))?"Yes":"No" },
+  ],
+  invoice: [
+    { key:"number",      label:"Invoice Number", get: i => fmtInvNum(i.number) },
+    { key:"contact",     label:"Contact",        get: (i,ctx) => (ctx.contacts||[]).find(c=>c.id===i.contactId)?.name },
+    { key:"company",     label:"Company",        get: (i,ctx) => { const c=(ctx.contacts||[]).find(x=>x.id===i.contactId); const co=(ctx.companies||[]).find(x=>x.id===c?.companyId); return co?.name; } },
+    { key:"total",       label:"Total",          numeric:true, money:true, get: i => (i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0) },
+    { key:"status",      label:"Status",         get: i => i.status },
+    { key:"dueDate",     label:"Due Date",       type:"date", get: i => i.dueDate },
+    { key:"paidAt",      label:"Paid Date",      type:"date", get: i => i.status==="Paid" ? i.updatedAt||i.createdAt : null },
+    { key:"itemsCount",  label:"Line Items",     numeric:true, get: i => (i.items||[]).length },
+  ],
+};
+const REPORT_TYPE_LABELS = { contact:"Contact List", company:"Company List", deal:"Deal Pipeline", revenue:"Revenue Summary", activity:"Activity Log", time:"Time & Billing", invoice:"Invoice Report", custom:"Custom" };
+
+// Pre-built templates (loaded as starting state for a new report)
+const REPORT_TEMPLATES = [
+  { name:"Monthly Pipeline Review", type:"deal", fields:["title","companyName","stage","value","weighted","closeDate"], filters:{ dateRange:"month", dateField:"createdAt" }, sort:{field:"value",dir:"desc"}, groupBy:"stage" },
+  { name:"Contact Source Performance", type:"contact", fields:["name","companyName","source","dealCount","dealValue"], filters:{}, sort:{field:"dealValue",dir:"desc"}, groupBy:"source" },
+  { name:"Overdue Deals", type:"deal", fields:["title","companyName","stage","value","closeDate","daysInStage"], filters:{ overdue:true }, sort:{field:"closeDate",dir:"asc"}, groupBy:null },
+  { name:"Top Accounts", type:"company", fields:["name","industry","contactCount","dealCount","pipelineValue","wonRevenue"], filters:{}, sort:{field:"pipelineValue",dir:"desc"}, groupBy:null },
+  { name:"Billable Hours This Month", type:"time", fields:["date","contact","description","hours","rate","billable"], filters:{ dateRange:"month", dateField:"date" }, sort:{field:"date",dir:"desc"}, groupBy:null },
+  { name:"Outstanding Invoices", type:"invoice", fields:["number","contact","total","status","dueDate"], filters:{ statuses:["Sent","Viewed","Overdue"] }, sort:{field:"dueDate",dir:"asc"}, groupBy:"status" },
+  { name:"Won Deals This Quarter", type:"deal", fields:["title","companyName","contactName","value","closeDate"], filters:{ dateRange:"quarter", dateField:"closeDate", stages:["Won"] }, sort:{field:"value",dir:"desc"}, groupBy:null },
+];
+
+// Build the rendered rows for a report given its definition + the app context
+const runReportRows = (report, ctx) => {
+  const fieldset = REPORT_FIELDS[report.type] || REPORT_FIELDS.deal;
+  let base = [];
+  if (report.type === "contact") base = ctx.contacts || [];
+  else if (report.type === "company") base = ctx.companies || [];
+  else if (report.type === "deal") base = ctx.deals || [];
+  else if (report.type === "time") base = ctx.timeEntries || [];
+  else if (report.type === "invoice") base = ctx.invoices || [];
+  else if (report.type === "revenue") base = ctx.deals || [];
+  else if (report.type === "activity") base = ctx.notes || [];
+  // Filter by entity (default = active entity, or all if filters.entityIds unset)
+  if (report.filters?.entityIds?.length) {
+    base = base.filter(r => report.filters.entityIds.includes(r.entityId));
+  } else if (ctx.activeEntityId) {
+    base = base.filter(r => !r.entityId || r.entityId === ctx.activeEntityId);
+  }
+  const f = report.filters || {};
+  // Date filter
+  if (f.dateRange && f.dateRange !== "all") {
+    const { from, to } = dateRangeBounds(f.dateRange, f.dateFrom, f.dateTo);
+    const dateField = f.dateField || "createdAt";
+    base = base.filter(r => inDateRange(r[dateField], from, to));
+  }
+  // Stage filter (deals)
+  if (f.stages?.length) base = base.filter(r => f.stages.includes(r.stage));
+  // Status filter (invoices)
+  if (f.statuses?.length) base = base.filter(r => f.statuses.includes(r.status));
+  // Source/Platform (contacts)
+  if (f.sources?.length) base = base.filter(r => f.sources.includes(r.source));
+  // ICP (contacts)
+  if (f.icps?.length) base = base.filter(r => f.icps.includes(r.icp));
+  // Active toggle (contacts)
+  if (f.activeOnly === true) base = base.filter(r => r.active !== false);
+  if (f.activeOnly === false) base = base.filter(r => r.active === false);
+  // Min/max value (deals)
+  if (f.valueMin != null && f.valueMin !== "") base = base.filter(r => (+r.value || 0) >= +f.valueMin);
+  if (f.valueMax != null && f.valueMax !== "") base = base.filter(r => (+r.value || 0) <= +f.valueMax);
+  // Overdue (deals)
+  if (f.overdue) base = base.filter(r => r.closeDate && new Date(r.closeDate) < new Date() && !["Won","Lost"].includes(r.stage));
+  // Project + sort + group
+  const fields = (report.fields?.length ? report.fields : fieldset.map(f => f.key)).map(k => fieldset.find(f => f.key === k)).filter(Boolean);
+  let rows = base.map(r => {
+    const out = { __id: r.id, __raw: r };
+    fields.forEach(f => { out[f.key] = f.get(r, ctx); });
+    return out;
+  });
+  if (report.sort?.field) {
+    const sf = report.sort.field;
+    const dir = report.sort.dir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      const av = a[sf], bv = b[sf];
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }
+  return { rows, fields };
+};
+
+// CSV escape + download
+const exportReportCSV = (report, fields, rows) => {
+  const esc = v => { const s = v == null ? "" : String(v); return /["\n,]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const header = fields.map(f => esc(f.label)).join(",");
+  const body = rows.map(r => fields.map(f => esc(r[f.key])).join(",")).join("\n");
+  const blob = new Blob([header + "\n" + body], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `${(report.name||"report").replace(/[^\w-]+/g,"_")}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+// PDF export — open print-optimized HTML in a new tab; user uses browser print → save as PDF
+const exportReportPDF = (report, fields, rows, summary, entity, filtersText) => {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${report.name||"Report"}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; color: #0F172A; padding: 32px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .meta { color: #64748B; font-size: 12px; margin-bottom: 18px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .stat { border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 14px; }
+  .stat-label { font-size: 10px; color: #64748B; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; }
+  .stat-value { font-size: 18px; font-weight: 800; margin-top: 2px; color: #0F172A; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; background: #F8FAFC; padding: 8px 10px; font-size: 10px; text-transform: uppercase; color: #64748B; font-weight: 700; border-bottom: 1px solid #E2E8F0; }
+  td { padding: 8px 10px; border-bottom: 1px solid #F1F5F9; color: #334155; }
+  .group-header { background: #EFF6FF; color: #1E3A8A; font-weight: 700; padding: 8px 10px; font-size: 12px; }
+  .footer { margin-top: 24px; font-size: 11px; color: #94A3B8; text-align: center; }
+  @media print { body { padding: 16px; } button { display: none; } }
+</style></head><body>
+  <h1>${report.name||"Report"}</h1>
+  <div class="meta">${entity?.name||""} · Generated ${new Date().toLocaleString()}${filtersText?` · ${filtersText}`:""}</div>
+  <div class="summary">
+    ${summary.map(s=>`<div class="stat"><div class="stat-label">${s.label}</div><div class="stat-value">${s.value}</div></div>`).join("")}
+  </div>
+  <table>
+    <thead><tr>${fields.map(f=>`<th>${f.label}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r=>`<tr>${fields.map(f=>{
+      let v = r[f.key]; if (v==null) v="—";
+      if (f.money) v = typeof v === "number" ? "$"+v.toLocaleString("en-US",{maximumFractionDigits:0}) : v;
+      else if (f.type==="date" && v && v !== "—") v = new Date(v).toLocaleDateString();
+      return `<td>${String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;")}</td>`;
+    }).join("")}</tr>`).join("")}</tbody>
+  </table>
+  <div class="footer">${rows.length} row${rows.length===1?"":"s"} · NexCRM</div>
+  <script>setTimeout(()=>window.print(),300);</script>
+</body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) return false;
+  w.document.write(html); w.document.close();
+  return true;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REPORTS (Pipeline, Activity, Forecasting + Custom Reports tabs)
+// ═══════════════════════════════════════════════════════════════════════════════
+function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,tasks,allNotes,meetings=[],timeEntries=[],invoices=[],customReports=[],addReport,updateReport,deleteReport,duplicateReport,showToast}){
   const [reportType,setReportType]=useState("pipeline");
-  const [shared,setShared]=useState(false);
-  const pipeTotal=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
-  const wonTotal=ed.filter(d=>d.stage==="Won").reduce((s,d)=>s+(d.value||0),0);
-  const lostTotal=ed.filter(d=>d.stage==="Lost").reduce((s,d)=>s+(d.value||0),0);
-  const closed=ed.filter(d=>["Won","Lost"].includes(d.stage));
-  const closeRate=closed.length?Math.round((ed.filter(d=>d.stage==="Won").length/closed.length)*100):0;
-  const avgDeal=ed.length?Math.round(ed.reduce((s,d)=>s+(d.value||0),0)/ed.length):0;
-  const weighted=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
-  const stageData=stagesFor(entity).map(st=>({stage:st,count:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)}));
-  const sourceData=SOURCES.map(src=>({source:src,count:ec.filter(c=>c.source===src).length})).filter(d=>d.count>0);
-  // Forecast: 6 months
+  const [pipeRange,setPipeRange]=useState("all");
+  const [pipeFrom,setPipeFrom]=useState("");
+  const [pipeTo,setPipeTo]=useState("");
+  const [confidence,setConfidence]=useState(50); // weighted-pipeline % adjustment
+  const [forecastView,setForecastView]=useState("monthly"); // monthly | quarterly
+  const [activeReport,setActiveReport]=useState(null); // currently rendered custom report
+  const [editingReport,setEditingReport]=useState(null); // report under edit (or new)
+  const eMeetings=(meetings||[]).filter(m=>m.entityId===entity?.id);
+  const eTime=(timeEntries||[]).filter(t=>t.entityId===entity?.id);
+  const eInvoices=(invoices||[]).filter(i=>i.entityId===entity?.id);
+  // Date-filtered deals for the Pipeline tab
+  const { from:pipeFromD, to:pipeToD } = dateRangeBounds(pipeRange, pipeFrom, pipeTo);
+  const edFiltered = pipeRange === "all" ? ed : ed.filter(d => inDateRange(d.createdAt, pipeFromD, pipeToD) || inDateRange(d.closeDate, pipeFromD, pipeToD));
+  const pipeTotal=edFiltered.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
+  const wonTotal=edFiltered.filter(d=>d.stage==="Won").reduce((s,d)=>s+(d.value||0),0);
+  const lostTotal=edFiltered.filter(d=>d.stage==="Lost").reduce((s,d)=>s+(d.value||0),0);
+  const closed=edFiltered.filter(d=>["Won","Lost"].includes(d.stage));
+  const closeRate=closed.length?Math.round((edFiltered.filter(d=>d.stage==="Won").length/closed.length)*100):0;
+  const avgDeal=edFiltered.length?Math.round(edFiltered.reduce((s,d)=>s+(d.value||0),0)/edFiltered.length):0;
+  const weighted=edFiltered.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
+  const stageData=stagesFor(entity).map(st=>({stage:st,count:edFiltered.filter(d=>d.stage===st).length,value:edFiltered.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)}));
+  // Win/loss analytics
+  const wonDeals=edFiltered.filter(d=>d.stage==="Won");
+  const lostDeals=edFiltered.filter(d=>d.stage==="Lost");
+  const avgWon=wonDeals.length?wonDeals.reduce((s,d)=>s+(+d.value||0),0)/wonDeals.length:0;
+  const avgLost=lostDeals.length?lostDeals.reduce((s,d)=>s+(+d.value||0),0)/lostDeals.length:0;
+  const lostReasons=lostDeals.reduce((acc,d)=>{const r=(d.lostReason||"No reason given").trim()||"No reason given";acc[r]=(acc[r]||0)+1;return acc;},{});
+  const lostReasonRows=Object.entries(lostReasons).map(([reason,count])=>({reason,count})).sort((a,b)=>b.count-a.count);
+  const winRateByStage=stagesFor(entity).map(st=>{
+    const ds=edFiltered.filter(d=>d.stage==="Won"||(d.stageHistory||[]).some(h=>h.from===st)||d.stage===st);
+    const totalThatPassedThrough=ds.length;
+    const wonAfter=ds.filter(d=>d.stage==="Won").length;
+    return { stage:st, total:totalThatPassedThrough, won:wonAfter, rate:totalThatPassedThrough?Math.round(wonAfter/totalThatPassedThrough*100):0 };
+  });
+  // Stage conversion (% of deals advancing from each stage to a later one)
+  const stageList=stagesFor(entity);
+  const stageConversion=stageList.map((st,i)=>{
+    const dealsAtOrPast=edFiltered.filter(d=>{
+      const idx=stageList.indexOf(d.stage);
+      return idx>=i || (d.stageHistory||[]).some(h=>h.from===st);
+    });
+    const advanced=edFiltered.filter(d=>{
+      const idx=stageList.indexOf(d.stage);
+      return idx>i || (d.stageHistory||[]).some(h=>h.from===st);
+    });
+    return { stage:st, count:dealsAtOrPast.length, advanced:advanced.length, rate:dealsAtOrPast.length?Math.round(advanced.length/dealsAtOrPast.length*100):0 };
+  });
+  // Velocity (avg days in each stage)
+  const stageVelocity=stageList.map(st=>{
+    const samples=[];
+    edFiltered.forEach(d=>{
+      (d.stageHistory||[]).forEach((h,i,arr)=>{
+        if(h.from===st){
+          const prev=i===0?d.createdAt:arr[i-1].at;
+          const days=(new Date(h.at).getTime()-new Date(prev).getTime())/86400000;
+          if(days>=0)samples.push(days);
+        }
+      });
+      // Also include current stage occupancy
+      if(d.stage===st){
+        const last=(d.stageHistory||[]).slice(-1)[0];
+        const since=last?new Date(last.at):new Date(d.createdAt);
+        const days=(Date.now()-since.getTime())/86400000;
+        if(days>=0)samples.push(days);
+      }
+    });
+    const avg=samples.length?samples.reduce((s,n)=>s+n,0)/samples.length:0;
+    return { stage:st, avgDays:Math.round(avg) };
+  });
+  const topDeals=[...edFiltered].sort((a,b)=>(+b.value||0)-(+a.value||0)).slice(0,10);
+
+  // Activity analytics
+  const sourceAttribution=SOURCES.map(src=>{
+    const cs=ec.filter(c=>c.source===src);
+    const ids=new Set(cs.map(c=>c.id));
+    const ds=ed.filter(d=>ids.has(d.contactId));
+    const won=ds.filter(d=>d.stage==="Won").reduce((s,d)=>s+(+d.value||0),0);
+    return { source:src, contacts:cs.length, deals:ds.length, revenue:won };
+  }).filter(d=>d.contacts>0||d.revenue>0);
+  // Contact growth — last 6 months
+  const contactGrowth=Array.from({length:6},(_,i)=>{
+    const mDate=new Date();mDate.setMonth(mDate.getMonth()-(5-i));mDate.setDate(1);
+    const next=new Date(mDate);next.setMonth(next.getMonth()+1);
+    const count=ec.filter(c=>{const d=new Date(c.createdAt);return d>=mDate&&d<next;}).length;
+    return { month:mDate.toLocaleString("default",{month:"short",year:"2-digit"}), count };
+  });
+  const taskCompletionByPriority=[
+    { priority:"high", total:et.filter(t=>t.priority==="high").length, done:et.filter(t=>t.priority==="high"&&t.completed).length },
+    { priority:"medium", total:et.filter(t=>t.priority==="medium").length, done:et.filter(t=>t.priority==="medium"&&t.completed).length },
+    { priority:"low", total:et.filter(t=>t.priority==="low").length, done:et.filter(t=>t.priority==="low"&&t.completed).length },
+  ].map(r=>({...r,rate:r.total?Math.round(r.done/r.total*100):0}));
+  const meetingsTotal=eMeetings.length;
+  const avgMeetingDuration=eMeetings.length?Math.round(eMeetings.reduce((s,m)=>s+(m.duration||30),0)/eMeetings.length):0;
+
+  // Forecast — months and quarterly rollup
   const now=new Date();
   const forecastMonths=Array.from({length:6},(_,i)=>{
     const monthDate=new Date(now.getFullYear(),now.getMonth()+i,1);
     const label=monthDate.toLocaleString("default",{month:"short",year:"2-digit"});
-    const inMonth=(deal)=>{
-      if(!deal.closeDate)return false;
-      const cd=new Date(deal.closeDate);
-      return cd.getMonth()===monthDate.getMonth()&&cd.getFullYear()===monthDate.getFullYear();
-    };
+    const inMonth=(deal)=>{ if(!deal.closeDate)return false; const cd=new Date(deal.closeDate); return cd.getMonth()===monthDate.getMonth()&&cd.getFullYear()===monthDate.getFullYear(); };
     const won=ed.filter(deal=>deal.stage==="Won"&&inMonth(deal)).reduce((s,deal)=>s+(deal.value||0),0);
-    const pipe=ed.filter(deal=>!["Won","Lost"].includes(deal.stage)&&inMonth(deal)).reduce((s,deal)=>s+((deal.value||0)*(deal.probability||50)/100),0);
-    return {month:label,won,weighted:pipe,total:won+pipe};
+    const baseWeighted=ed.filter(deal=>!["Won","Lost"].includes(deal.stage)&&inMonth(deal)).reduce((s,deal)=>s+((deal.value||0)*(deal.probability||50)/100),0);
+    const adjusted=baseWeighted * (confidence/50); // confidence=50 → 1× base, slider scales
+    const best=baseWeighted * 1.5;
+    const worst=baseWeighted * 0.5;
+    return { month:label, won, weighted:adjusted, expected:adjusted, best, worst, total:won+adjusted };
   });
-  const handleShare=()=>{const r={entity:entity?.name,type:reportType,data:{pipeTotal,wonTotal,closeRate,avgDeal,deals:ed.length,contacts:ec.length}};navigator.clipboard?.writeText(`${window.location.href}?report=${btoa(JSON.stringify(r))}`).catch(()=>{});showToast("Share link copied!");setShared(true);setTimeout(()=>setShared(false),3000);};
-  const handleExport=()=>{const data=reportType==="pipeline"?{summary:{pipeTotal,wonTotal,lostTotal,closeRate,avgDeal,weighted},byStage:stageData,deals:ed}:reportType==="forecast"?{forecast:forecastMonths,deals:ed}:{contacts:ec,sources:sourceData,tasks:et,notes};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`${entity?.name}_${reportType}_report.json`;a.click();showToast("Report exported!");};
+  // Quarterly rollup
+  const quarterMap={};
+  forecastMonths.forEach(m=>{
+    const dt=new Date(`1 ${m.month.replace(" ","-20")}`); // approximate
+    const q=Math.floor(new Date().getMonth()/3); // not pinpoint accurate, but stable rollup
+    const key=`${dt.getFullYear()}-Q${q+1}`;
+    quarterMap[key]=quarterMap[key]||{quarter:key,won:0,weighted:0,best:0,worst:0,total:0};
+    quarterMap[key].won+=m.won;quarterMap[key].weighted+=m.weighted;quarterMap[key].best+=m.best;quarterMap[key].worst+=m.worst;quarterMap[key].total+=m.total;
+  });
+  const quarterRollup=Object.values(quarterMap);
+
+  const handleShare=()=>{const url=`${window.location.href}?report=${reportType}`;navigator.clipboard?.writeText(url).catch(()=>{});showToast("Share link copied!");};
+  const handleExport=()=>{
+    if(reportType==="custom"&&activeReport){
+      const ctx={contacts,companies,deals,tasks,notes:allNotes,timeEntries,invoices,activeEntityId:entity?.id};
+      const { rows, fields } = runReportRows(activeReport,ctx);
+      exportReportCSV(activeReport,fields,rows);
+      return;
+    }
+    showToast("Use the per-tab Export buttons inside Custom Reports for full CSV/PDF support");
+  };
+
+  // Saved reports — entity-scoped
+  const eReports=customReports.filter(r=>r.entityId===entity?.id);
   return(
     <div>
       <PageHeader title="Reports" sub={`${entity?.name} · Generated ${fmtDate(new Date())}`}>
         <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
-          {[["pipeline","Pipeline"],["activity","Activity"],["forecast","Forecast"]].map(([v,l])=>(
-            <button key={v} style={{...S.btnGhost,padding:"5px 14px",background:reportType===v?"#1D4ED8":"transparent",color:reportType===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>setReportType(v)}>{l}</button>
+          {[["pipeline","Pipeline"],["activity","Activity"],["forecast","Forecast"],["custom","Custom Reports"]].map(([v,l])=>(
+            <button key={v} style={{...S.btnGhost,padding:"5px 14px",background:reportType===v?"#1D4ED8":"transparent",color:reportType===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>{setReportType(v);setActiveReport(null);setEditingReport(null);}}>{l}</button>
           ))}
         </div>
-        <button style={S.btnSecondary} onClick={handleExport}><Ic d={I.dl} size={14}/>Export</button>
-        <button style={{...S.btnPrimary,background:shared?"#10B981":"#1D4ED8"}} onClick={handleShare}><Ic d={shared?I.ok:I.share} size={14}/>{shared?"Copied!":"Share"}</button>
+        {reportType!=="custom"&&<button style={S.btnSecondary} onClick={handleShare}><Ic d={I.share} size={14}/>Share</button>}
       </PageHeader>
+
       {reportType==="pipeline"&&(
         <div>
+          {/* Date range filter */}
+          <div style={{...S.card({padding:14}),marginBottom:16,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,fontWeight:700,color:"#64748B"}}>DATE RANGE:</span>
+            <select style={{...S.select,width:"auto"}} value={pipeRange} onChange={e=>setPipeRange(e.target.value)}>
+              {REPORT_DATE_RANGES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>
+            {pipeRange==="custom"&&<>
+              <input type="date" style={{...S.input,width:160}} value={pipeFrom} onChange={e=>setPipeFrom(e.target.value)}/>
+              <span style={{color:"#94A3B8"}}>to</span>
+              <input type="date" style={{...S.input,width:160}} value={pipeTo} onChange={e=>setPipeTo(e.target.value)}/>
+            </>}
+            <span style={{fontSize:11,color:"#94A3B8",marginLeft:"auto"}}>{edFiltered.length} deals match</span>
+          </div>
+
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
             <StatCard label="Active Pipeline" value={fmt$(pipeTotal)} color="#1D4ED8" icon={I.dollar}/>
             <StatCard label="Won Revenue" value={fmt$(wonTotal)} color="#10B981" icon={I.ok}/>
@@ -1434,46 +1784,74 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
             <StatCard label="Avg Deal Size" value={fmt$(avgDeal)} color="#8B5CF6" icon={I.dollar}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:20}}>
-            <StatCard label="Total Deals" value={ed.length} sub="All time" color="#06B6D4" icon={I.layers}/>
+            <StatCard label="Total Deals" value={edFiltered.length} sub="In range" color="#06B6D4" icon={I.layers}/>
             <StatCard label="Weighted Pipeline" value={fmt$(weighted)} sub="By probability" color="#EC4899" icon={I.bar}/>
             <StatCard label="Lost Revenue" value={fmt$(lostTotal)} sub="Lost deals" color="#EF4444" icon={I.x}/>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
-            <div style={S.card({padding:20})}>
-              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Deal Count by Stage</div>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={stageData} barSize={30}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
-                  <XAxis dataKey="stage" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v.split(" ")[0]}/>
-                  <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
-                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
-                  <Bar dataKey="count" radius={[4,4,0,0]}>{stageData.map((d,i)=><Cell key={i} fill={stageColor(entity,d.stage)}/>)}</Bar>
-                </BarChart>
-              </ResponsiveContainer>
+
+          {/* Win/Loss Analysis */}
+          <div style={{...S.card({padding:20}),marginBottom:20}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Win / Loss Analysis</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:14}}>
+              <div><div style={{fontSize:11,color:"#64748B"}}>Avg Won Deal</div><div style={{fontSize:18,fontWeight:800,color:"#10B981"}}>{fmt$(avgWon)}</div></div>
+              <div><div style={{fontSize:11,color:"#64748B"}}>Avg Lost Deal</div><div style={{fontSize:18,fontWeight:800,color:"#EF4444"}}>{fmt$(avgLost)}</div></div>
+              <div><div style={{fontSize:11,color:"#64748B"}}>Won-vs-Lost Count</div><div style={{fontSize:18,fontWeight:800,color:"#0F172A"}}>{wonDeals.length} / {lostDeals.length}</div></div>
             </div>
-            <div style={S.card({padding:20})}>
-              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Value by Stage ($)</div>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={stageData} barSize={30}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
-                  <XAxis dataKey="stage" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v.split(" ")[0]}/>
-                  <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
-                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={v=>fmt$(v)}/>
-                  <Bar dataKey="value" radius={[4,4,0,0]}>{stageData.map((d,i)=><Cell key={i} fill={stageColor(entity,d.stage)+"80"}/>)}</Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",marginTop:8,marginBottom:8}}>Top Lost Reasons</div>
+            {lostReasonRows.length===0?<div style={{fontSize:12,color:"#94A3B8"}}>No lost reasons recorded yet.</div>
+            :lostReasonRows.slice(0,5).map(r=>(
+              <div key={r.reason} style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0"}}>
+                <div style={{flex:1,fontSize:12,color:"#475569"}}>{r.reason}</div>
+                <div style={{flex:2,height:8,background:"#F1F5F9",borderRadius:4}}><div style={{width:`${(r.count/Math.max(...lostReasonRows.map(x=>x.count)))*100}%`,height:8,background:"#EF4444",borderRadius:4}}/></div>
+                <div style={{width:30,textAlign:"right",fontSize:12,fontWeight:700,color:"#0F172A"}}>{r.count}</div>
+              </div>
+            ))}
           </div>
-          <div style={S.card({overflow:"hidden"})}>
-            <div style={{padding:"14px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>All Deals</div>
+
+          {/* Stage Conversion Funnel */}
+          <div style={{...S.card({padding:20}),marginBottom:20}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Stage Conversion Funnel</div>
+            {stageConversion.map(c=>{
+              const max=Math.max(...stageConversion.map(x=>x.count))||1;
+              const w=Math.max(8,(c.count/max)*100);
+              return(
+                <div key={c.stage} style={{marginBottom:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginBottom:3}}>
+                    <span>{c.stage}</span>
+                    <span><strong>{c.count}</strong> · {c.rate}% advanced</span>
+                  </div>
+                  <div style={{height:18,background:"#F1F5F9",borderRadius:6,overflow:"hidden"}}>
+                    <div style={{width:`${w}%`,height:"100%",background:stageColor(entity,c.stage),borderRadius:6}}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Velocity */}
+          <div style={{...S.card({padding:20}),marginBottom:20}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Deal Velocity — Avg Days in Each Stage</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={stageVelocity} barSize={26}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+                <XAxis dataKey="stage" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v.split(" ")[0]}/>
+                <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`${v}d`}/>
+                <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={v=>`${v} days`}/>
+                <Bar dataKey="avgDays" radius={[4,4,0,0]}>{stageVelocity.map((d,i)=><Cell key={i} fill={stageColor(entity,d.stage)}/>)}</Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Top 10 Deals */}
+          <div style={S.card({overflow:"hidden",marginBottom:20})}>
+            <div style={{padding:"14px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Top 10 Deals by Value</div>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr>{["Deal","Value","Stage","Probability","Close Date"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>{ed.map(d=>(
+              <thead><tr>{["Deal","Value","Stage","Close Date"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{topDeals.map(d=>(
                 <tr key={d.id}>
                   <td style={S.td}><div style={{fontWeight:600,color:"#0F172A"}}>{d.title}</div></td>
                   <td style={{...S.td,fontWeight:700,color:stageColor(entity,d.stage)}}>{fmt$(d.value)}</td>
                   <td style={S.td}><span style={S.badge(stageColor(entity,d.stage))}>{d.stage}</span></td>
-                  <td style={S.td}>{d.probability||"—"}%</td>
                   <td style={S.td}>{fmtDate(d.closeDate)}</td>
                 </tr>
               ))}</tbody>
@@ -1481,40 +1859,61 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
           </div>
         </div>
       )}
+
       {reportType==="activity"&&(
         <div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
             <StatCard label="Total Contacts" value={ec.length} color="#1D4ED8" icon={I.users}/>
             <StatCard label="Notes Logged" value={notes.length} color="#8B5CF6" icon={I.note}/>
-            <StatCard label="Tasks Created" value={et.length} color="#F59E0B" icon={I.check}/>
+            <StatCard label="Meetings" value={meetingsTotal} sub={`avg ${avgMeetingDuration}min`} color="#06B6D4" icon={I.cal}/>
             <StatCard label="Tasks Done" value={et.filter(t=>t.completed).length} sub={`${et.length?Math.round(et.filter(t=>t.completed).length/et.length*100):0}% completion`} color="#10B981" icon={I.ok}/>
           </div>
+
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
             <div style={S.card({padding:20})}>
-              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Contacts by Source</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={sourceData} barSize={28}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Source Attribution — Contacts vs Won Revenue</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={sourceAttribution} barSize={18}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
                   <XAxis dataKey="source" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
-                  <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
-                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
-                  <Bar dataKey="count" fill="#1D4ED8" radius={[4,4,0,0]}/>
+                  <YAxis yAxisId="left" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+                  <YAxis yAxisId="right" orientation="right" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
+                  <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={(v,n)=>n==="revenue"?[fmt$(v),"Won Revenue"]:[v,n]}/>
+                  <Legend wrapperStyle={{fontSize:11,color:"#64748B"}}/>
+                  <Bar yAxisId="left" dataKey="contacts" fill="#1D4ED8" radius={[4,4,0,0]} name="Contacts"/>
+                  <Bar yAxisId="right" dataKey="revenue" fill="#10B981" radius={[4,4,0,0]} name="revenue"/>
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <div style={S.card({padding:20})}>
-              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Task Status</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={[{name:"Done",value:et.filter(t=>t.completed).length},{name:"Pending",value:et.filter(t=>!t.completed).length}]} cx="50%" cy="50%" innerRadius={55} outerRadius={80} dataKey="value" stroke="none">
-                    <Cell fill="#10B981"/><Cell fill="#EF4444"/>
-                  </Pie>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Contact Growth — Last 6 Months</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={contactGrowth} barSize={28}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+                  <XAxis dataKey="month" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+                  <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
                   <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
-                  <Legend wrapperStyle={{fontSize:12,color:"#64748B"}}/>
-                </PieChart>
+                  <Bar dataKey="count" fill="#8B5CF6" radius={[4,4,0,0]}/>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
+
+          <div style={{...S.card({padding:20}),marginBottom:20}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Task Completion Rate by Priority</div>
+            {taskCompletionByPriority.map(p=>(
+              <div key={p.priority} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#475569",marginBottom:4}}>
+                  <span style={{textTransform:"capitalize",fontWeight:600}}>{p.priority}</span>
+                  <span><strong>{p.done}</strong> of {p.total} done · {p.rate}%</span>
+                </div>
+                <div style={{height:10,background:"#F1F5F9",borderRadius:5,overflow:"hidden"}}>
+                  <div style={{width:`${p.rate}%`,height:"100%",background:{high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[p.priority]}}/>
+                </div>
+              </div>
+            ))}
+          </div>
+
           <div style={S.card({padding:20})}>
             <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>Recent Activity Log</div>
             {[...notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20).map(n=>{
@@ -1528,47 +1927,500 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
           </div>
         </div>
       )}
+
       {reportType==="forecast"&&(
         <div>
+          <div style={{...S.card({padding:14}),marginBottom:16,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,fontWeight:700,color:"#64748B"}}>VIEW:</span>
+            <div style={{display:"flex",gap:0,background:"#E2E8F0",padding:3,borderRadius:8}}>
+              {[["monthly","Monthly"],["quarterly","Quarterly"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setForecastView(v)} style={{...S.btnGhost,padding:"4px 14px",background:forecastView===v?"#1D4ED8":"transparent",color:forecastView===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12,fontWeight:600}}>{l}</button>
+              ))}
+            </div>
+            <div style={{flex:1,display:"flex",alignItems:"center",gap:10,minWidth:260}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#64748B",whiteSpace:"nowrap"}}>CONFIDENCE: {confidence}%</span>
+              <input type="range" min={10} max={100} value={confidence} onChange={e=>setConfidence(+e.target.value)} style={{flex:1,accentColor:"#1D4ED8"}}/>
+            </div>
+          </div>
+
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:20}}>
             <StatCard label="6-Month Won" value={fmt$(forecastMonths.reduce((s,m)=>s+m.won,0))} color="#10B981" icon={I.ok}/>
-            <StatCard label="6-Month Weighted" value={fmt$(forecastMonths.reduce((s,m)=>s+m.weighted,0))} color="#1D4ED8" icon={I.trending}/>
-            <StatCard label="Total Forecast" value={fmt$(forecastMonths.reduce((s,m)=>s+m.total,0))} color="#8B5CF6" icon={I.dollar}/>
+            <StatCard label="Expected Pipeline" value={fmt$(forecastMonths.reduce((s,m)=>s+m.expected,0))} sub={`Confidence ${confidence}%`} color="#1D4ED8" icon={I.trending}/>
+            <StatCard label="Best Case" value={fmt$(forecastMonths.reduce((s,m)=>s+m.best,0))} sub="1.5× weighted" color="#8B5CF6" icon={I.dollar}/>
           </div>
-          <div style={S.card({padding:20,marginBottom:20})}>
-            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>6-Month Revenue Forecast</div>
-            <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={forecastMonths}>
-                <defs>
-                  <linearGradient id="wonGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10B981" stopOpacity={0}/></linearGradient>
-                  <linearGradient id="pipeGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#1D4ED8" stopOpacity={0.2}/><stop offset="95%" stopColor="#1D4ED8" stopOpacity={0}/></linearGradient>
-                </defs>
+
+          <div style={{...S.card({padding:20}),marginBottom:20}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>6-Month Revenue Forecast — Worst / Expected / Best Case</div>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={forecastMonths}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
                 <XAxis dataKey="month" tick={{fill:"#64748B",fontSize:11}} axisLine={false} tickLine={false}/>
                 <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
                 <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={v=>fmt$(v)}/>
                 <Legend wrapperStyle={{fontSize:11,color:"#64748B"}}/>
-                <Area type="monotone" dataKey="won" stroke="#10B981" fill="url(#wonGrad)" strokeWidth={2} name="Won"/>
-                <Area type="monotone" dataKey="weighted" stroke="#1D4ED8" fill="url(#pipeGrad)" strokeWidth={2} name="Weighted Pipeline"/>
-              </AreaChart>
+                <Line type="monotone" dataKey="won" stroke="#10B981" strokeWidth={3} name="Won (closed)"/>
+                <Line type="monotone" dataKey="best" stroke="#8B5CF6" strokeWidth={2} strokeDasharray="3 3" name="Best Case"/>
+                <Line type="monotone" dataKey="expected" stroke="#1D4ED8" strokeWidth={3} name="Expected"/>
+                <Line type="monotone" dataKey="worst" stroke="#EF4444" strokeWidth={2} strokeDasharray="3 3" name="Worst Case"/>
+              </LineChart>
             </ResponsiveContainer>
           </div>
-          <div style={S.card({overflow:"hidden"})}>
-            <div style={{padding:"14px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Monthly Breakdown</div>
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr>{["Month","Won Revenue","Weighted Pipeline","Total Forecast"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>{forecastMonths.map(m=>(
-                <tr key={m.month}>
-                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{m.month}</td>
-                  <td style={{...S.td,color:"#10B981",fontWeight:600}}>{fmt$(m.won)}</td>
-                  <td style={{...S.td,color:"#1D4ED8",fontWeight:600}}>{fmt$(m.weighted)}</td>
-                  <td style={{...S.td,fontWeight:700,color:"#8B5CF6"}}>{fmt$(m.total)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
+
+          {forecastView==="monthly"?(
+            <div style={S.card({overflow:"hidden"})}>
+              <div style={{padding:"14px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Monthly Breakdown</div>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>{["Month","Won","Worst","Expected","Best"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <tbody>{forecastMonths.map(m=>(
+                  <tr key={m.month}>
+                    <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{m.month}</td>
+                    <td style={{...S.td,color:"#10B981",fontWeight:600}}>{fmt$(m.won)}</td>
+                    <td style={{...S.td,color:"#EF4444"}}>{fmt$(m.worst)}</td>
+                    <td style={{...S.td,color:"#1D4ED8",fontWeight:600}}>{fmt$(m.expected)}</td>
+                    <td style={{...S.td,color:"#8B5CF6",fontWeight:600}}>{fmt$(m.best)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          ):(
+            <div style={S.card({overflow:"hidden"})}>
+              <div style={{padding:"14px 16px",borderBottom:"1px solid #E9EEF6",fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Quarterly Rollup</div>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>{["Quarter","Won","Worst","Expected","Best"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <tbody>{quarterRollup.map(q=>(
+                  <tr key={q.quarter}>
+                    <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{q.quarter}</td>
+                    <td style={{...S.td,color:"#10B981",fontWeight:600}}>{fmt$(q.won)}</td>
+                    <td style={{...S.td,color:"#EF4444"}}>{fmt$(q.worst)}</td>
+                    <td style={{...S.td,color:"#1D4ED8",fontWeight:600}}>{fmt$(q.weighted)}</td>
+                    <td style={{...S.td,color:"#8B5CF6",fontWeight:600}}>{fmt$(q.best)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
+
+      {reportType==="custom"&&(
+        <CustomReportsPanel
+          reports={eReports}
+          activeReport={activeReport}
+          editingReport={editingReport}
+          setActiveReport={setActiveReport}
+          setEditingReport={setEditingReport}
+          addReport={addReport}
+          updateReport={updateReport}
+          deleteReport={deleteReport}
+          duplicateReport={duplicateReport}
+          contacts={contacts}
+          companies={companies}
+          deals={deals}
+          tasks={tasks}
+          notes={allNotes}
+          timeEntries={timeEntries}
+          invoices={invoices}
+          entity={entity}
+          entities={entities}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CUSTOM REPORTS PANEL — saved reports list, builder, viewer
+// ═══════════════════════════════════════════════════════════════════════════════
+function CustomReportsPanel({reports,activeReport,editingReport,setActiveReport,setEditingReport,addReport,updateReport,deleteReport,duplicateReport,contacts,companies,deals,tasks,notes,timeEntries,invoices,entity,entities,showToast}){
+  const ctx={contacts,companies,deals,tasks,notes,timeEntries,invoices,activeEntityId:entity?.id};
+
+  // ── Saved reports list view ──────────────────────────────────────────────
+  if(!activeReport && !editingReport){
+    return(
+      <div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#0F172A"}}>Your saved reports</div>
+          <button style={S.btnPrimary} onClick={()=>setEditingReport({type:"deal",fields:["title","companyName","stage","value","closeDate"],filters:{},sort:{field:"value",dir:"desc"},groupBy:null,name:"New Report"})}><Ic d={I.plus} size={14}/>New Report</button>
+        </div>
+
+        {reports.length>0&&(
+          <div style={{...S.card({overflow:"hidden"}),marginBottom:20}}>
+            {reports.map((r,i)=>(
+              <div key={r.id} style={{padding:"14px 18px",borderTop:i?"1px solid #E9EEF6":"none",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{r.name}</div>
+                  <div style={{fontSize:11,color:"#64748B"}}>{REPORT_TYPE_LABELS[r.type]||r.type} · {r.fields?.length||0} columns · last run {fmtTime(r.lastRunAt)}</div>
+                </div>
+                <button style={S.btnPrimary} onClick={()=>{setActiveReport(r);updateReport(r.id,{lastRunAt:new Date().toISOString()});}}>Run</button>
+                <button style={S.btnSecondary} onClick={()=>setEditingReport(r)}><Ic d={I.edit} size={12}/>Edit</button>
+                <button style={S.btnSecondary} onClick={()=>{duplicateReport(r.id);showToast?.("Report duplicated");}}><Ic d={I.copy} size={12}/></button>
+                <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm(`Delete "${r.name}"?`))deleteReport(r.id);}}><Ic d={I.trash} size={13}/></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{fontSize:14,fontWeight:700,color:"#0F172A",marginBottom:12}}>Templates — start with a pre-built report</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
+          {REPORT_TEMPLATES.map(t=>(
+            <div key={t.name} style={{...S.card({padding:14}),display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{t.name}</div>
+                <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{REPORT_TYPE_LABELS[t.type]} · {t.fields.length} columns{t.groupBy?` · grouped by ${t.groupBy}`:""}</div>
+              </div>
+              <button style={S.btnSecondary} onClick={()=>setActiveReport({...t})}>Run now</button>
+              <button style={S.btnPrimary} onClick={()=>setEditingReport({...t})}>Customize</button>
+            </div>
+          ))}
+        </div>
+
+        {reports.length===0&&(
+          <div style={{...S.card({padding:32}),textAlign:"center",color:"#64748B",marginTop:20,fontSize:13}}>
+            You haven't saved any custom reports yet. Pick a template above or click <strong>New Report</strong>.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Builder ──────────────────────────────────────────────────────────────
+  if(editingReport){
+    return(
+      <ReportBuilder
+        report={editingReport}
+        onCancel={()=>setEditingReport(null)}
+        onSave={(r)=>{
+          if(r.id){updateReport(r.id,r);showToast?.("Report saved");}
+          else{const created=addReport(r);showToast?.("Report created");setEditingReport(null);setActiveReport(created);return;}
+          setEditingReport(null);
+          setActiveReport(r);
+        }}
+        entities={entities}
+        entity={entity}
+      />
+    );
+  }
+
+  // ── Viewer ───────────────────────────────────────────────────────────────
+  return(
+    <ReportViewer report={activeReport} ctx={ctx} entity={entity} onBack={()=>setActiveReport(null)} onEdit={()=>{setEditingReport(activeReport);setActiveReport(null);}} showToast={showToast}/>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REPORT BUILDER (single page, scrollable, no modal)
+// ═══════════════════════════════════════════════════════════════════════════════
+function ReportBuilder({report,onCancel,onSave,entities,entity}){
+  const [name,setName]=useState(report.name||"Untitled report");
+  const [type,setType]=useState(report.type||"deal");
+  const [fields,setFields]=useState(report.fields||[]);
+  const [filters,setFilters]=useState(report.filters||{});
+  const [sortField,setSortField]=useState(report.sort?.field||"");
+  const [sortDir,setSortDir]=useState(report.sort?.dir||"desc");
+  const [groupBy,setGroupBy]=useState(report.groupBy||"");
+  const fieldset=REPORT_FIELDS[type]||REPORT_FIELDS.deal;
+  const moveField=(idx,delta)=>{
+    const arr=[...fields];const ni=idx+delta;
+    if(ni<0||ni>=arr.length)return;
+    [arr[idx],arr[ni]]=[arr[ni],arr[idx]];setFields(arr);
+  };
+  const toggleField=(k)=>setFields(prev=>prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]);
+  const toggleArrFilter=(key,val)=>setFilters(p=>({...p,[key]:(p[key]||[]).includes(val)?p[key].filter(v=>v!==val):[...(p[key]||[]),val]}));
+
+  return(
+    <div>
+      <button style={{...S.btnGhost,fontSize:12,marginBottom:12}} onClick={onCancel}><Ic d={I.arrow} size={12}/>Back to reports</button>
+      <div style={{...S.card({padding:20}),marginBottom:16}}>
+        <Field label="Report Name"><input style={S.input} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Q4 Pipeline Review"/></Field>
+        <Field label="Report Type">
+          <select style={S.select} value={type} onChange={e=>{setType(e.target.value);setFields([]);}}>
+            {Object.entries(REPORT_TYPE_LABELS).filter(([k])=>k!=="custom").map(([k,l])=><option key={k} value={k}>{l}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {/* Fields picker */}
+      <div style={{...S.card({padding:20}),marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Fields / Columns</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:14}}>
+          {fieldset.map(f=>(
+            <label key={f.key} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer",padding:"4px 0"}}>
+              <input type="checkbox" checked={fields.includes(f.key)} onChange={()=>toggleField(f.key)} style={{accentColor:"#1D4ED8"}}/>
+              {f.label}
+            </label>
+          ))}
+        </div>
+        {fields.length>0&&(
+          <div>
+            <div style={{fontSize:11,color:"#64748B",marginBottom:6,fontWeight:600}}>Column order (use ↑↓ to reorder):</div>
+            {fields.map((k,i)=>{
+              const f=fieldset.find(x=>x.key===k);
+              return(
+                <div key={k} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",background:"#F8FAFC",borderRadius:6,marginBottom:4}}>
+                  <span style={{flex:1,fontSize:12,color:"#0F172A",fontWeight:500}}>{f?.label||k}</span>
+                  <button style={S.btnGhost} onClick={()=>moveField(i,-1)} disabled={i===0}>↑</button>
+                  <button style={S.btnGhost} onClick={()=>moveField(i,1)} disabled={i===fields.length-1}>↓</button>
+                  <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>toggleField(k)}>×</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div style={{...S.card({padding:20}),marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Filters</div>
+        <div style={S.grid2}>
+          <Field label="Date Field"><select style={S.select} value={filters.dateField||"createdAt"} onChange={e=>setFilters({...filters,dateField:e.target.value})}>
+            <option value="createdAt">Created Date</option>
+            <option value="closeDate">Close Date</option>
+            <option value="lastContacted">Last Activity</option>
+            <option value="date">Date (time entries)</option>
+          </select></Field>
+          <Field label="Date Range"><select style={S.select} value={filters.dateRange||"all"} onChange={e=>setFilters({...filters,dateRange:e.target.value})}>
+            {REPORT_DATE_RANGES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+          </select></Field>
+        </div>
+        {filters.dateRange==="custom"&&(
+          <div style={S.grid2}>
+            <Field label="From"><input type="date" style={S.input} value={filters.dateFrom||""} onChange={e=>setFilters({...filters,dateFrom:e.target.value})}/></Field>
+            <Field label="To"><input type="date" style={S.input} value={filters.dateTo||""} onChange={e=>setFilters({...filters,dateTo:e.target.value})}/></Field>
+          </div>
+        )}
+        <Field label="Entity"><select style={S.select} multiple value={filters.entityIds||[]} onChange={e=>setFilters({...filters,entityIds:[...e.target.selectedOptions].map(o=>o.value)})}>
+          {entities.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+        </select></Field>
+        {(type==="deal")&&(
+          <div style={S.grid2}>
+            <Field label="Min Value"><input type="number" style={S.input} placeholder="0" value={filters.valueMin||""} onChange={e=>setFilters({...filters,valueMin:e.target.value})}/></Field>
+            <Field label="Max Value"><input type="number" style={S.input} placeholder="—" value={filters.valueMax||""} onChange={e=>setFilters({...filters,valueMax:e.target.value})}/></Field>
+          </div>
+        )}
+        {(type==="deal")&&(
+          <Field label="Stages">
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {stagesFor(entity).map(s=>(
+                <label key={s} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,padding:"3px 8px",background:(filters.stages||[]).includes(s)?"#EFF6FF":"#F1F5F9",borderRadius:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={(filters.stages||[]).includes(s)} onChange={()=>toggleArrFilter("stages",s)} style={{accentColor:"#1D4ED8"}}/>{s}
+                </label>
+              ))}
+            </div>
+          </Field>
+        )}
+        {(type==="contact")&&(<>
+          <Field label="Sources / Platforms">
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {SOURCES.map(s=>(
+                <label key={s} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,padding:"3px 8px",background:(filters.sources||[]).includes(s)?"#EFF6FF":"#F1F5F9",borderRadius:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={(filters.sources||[]).includes(s)} onChange={()=>toggleArrFilter("sources",s)} style={{accentColor:"#1D4ED8"}}/>{s}
+                </label>
+              ))}
+            </div>
+          </Field>
+          <Field label="ICP">
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {ICP_LEVELS.map(s=>(
+                <label key={s} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,padding:"3px 8px",background:(filters.icps||[]).includes(s)?"#EFF6FF":"#F1F5F9",borderRadius:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={(filters.icps||[]).includes(s)} onChange={()=>toggleArrFilter("icps",s)} style={{accentColor:"#1D4ED8"}}/>{s}
+                </label>
+              ))}
+            </div>
+          </Field>
+          <Field label="Active Status"><select style={S.select} value={filters.activeOnly==null?"":(filters.activeOnly?"active":"inactive")} onChange={e=>setFilters({...filters,activeOnly:e.target.value===""?null:e.target.value==="active"})}>
+            <option value="">All</option><option value="active">Active only</option><option value="inactive">Inactive only</option>
+          </select></Field>
+        </>)}
+      </div>
+
+      {/* Sort & Group */}
+      <div style={{...S.card({padding:20}),marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Sort & Group</div>
+        <div style={S.grid2}>
+          <Field label="Sort By"><select style={S.select} value={sortField} onChange={e=>setSortField(e.target.value)}>
+            <option value="">— None —</option>
+            {fieldset.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}
+          </select></Field>
+          <Field label="Direction"><select style={S.select} value={sortDir} onChange={e=>setSortDir(e.target.value)}>
+            <option value="desc">Descending</option><option value="asc">Ascending</option>
+          </select></Field>
+        </div>
+        <Field label="Group By"><select style={S.select} value={groupBy} onChange={e=>setGroupBy(e.target.value)}>
+          <option value="">— No grouping —</option>
+          <option value="stage">Stage (deals)</option>
+          <option value="companyName">Company</option>
+          <option value="source">Source / Platform (contacts)</option>
+          <option value="month">Month created</option>
+          <option value="icp">ICP (contacts)</option>
+          <option value="industry">Industry (companies)</option>
+          <option value="status">Status (invoices)</option>
+        </select></Field>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+        <button style={S.btnSecondary} onClick={onCancel}>Cancel</button>
+        <button style={S.btnPrimary} onClick={()=>{
+          if(!name.trim())return;
+          if(!fields.length)return;
+          onSave({...report,name:name.trim(),type,fields,filters,sort:sortField?{field:sortField,dir:sortDir}:null,groupBy:groupBy||null});
+        }}>{report.id?"Save Changes":"Save & Run"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REPORT VIEWER — renders a saved or template report
+// ═══════════════════════════════════════════════════════════════════════════════
+function ReportViewer({report,ctx,entity,onBack,onEdit,showToast}){
+  const [tableSort,setTableSort]=useState(null); // {field,dir} for inline sort
+  const { rows: baseRows, fields } = runReportRows(report,ctx);
+  const rows=tableSort?[...baseRows].sort((a,b)=>{
+    const av=a[tableSort.field],bv=b[tableSort.field];
+    if(av==null)return 1;if(bv==null)return -1;
+    if(typeof av==="number"&&typeof bv==="number")return (av-bv)*(tableSort.dir==="asc"?1:-1);
+    return String(av).localeCompare(String(bv))*(tableSort.dir==="asc"?1:-1);
+  }):baseRows;
+
+  // Summary stats
+  const summary=[{label:"Rows",value:String(rows.length)}];
+  fields.filter(f=>f.numeric).forEach(f=>{
+    const vals=rows.map(r=>+r[f.key]||0);
+    const total=vals.reduce((s,v)=>s+v,0);
+    summary.push({label:`Total ${f.label}`,value:f.money?fmt$(total):total.toLocaleString()});
+    if(rows.length>0)summary.push({label:`Avg ${f.label}`,value:f.money?fmt$(total/rows.length):Math.round(total/rows.length).toLocaleString()});
+  });
+
+  // Grouping
+  const groups=(()=>{
+    if(!report.groupBy)return null;
+    const g={};
+    rows.forEach(r=>{
+      let key="—";
+      if(report.groupBy==="month"&&r.__raw?.createdAt){
+        const d=new Date(r.__raw.createdAt);
+        key=`${d.toLocaleString("default",{month:"short",year:"numeric"})}`;
+      } else {
+        key=r[report.groupBy]||r.__raw?.[report.groupBy]||"—";
+      }
+      g[key]=g[key]||[];g[key].push(r);
+    });
+    return Object.entries(g).sort((a,b)=>b[1].length-a[1].length);
+  })();
+
+  // Auto-chart
+  const autoChart=(()=>{
+    if(report.type==="deal"){
+      const byStage={};
+      rows.forEach(r=>{const s=r.stage||"—";byStage[s]=(byStage[s]||0)+1;});
+      return { kind:"bar", data:Object.entries(byStage).map(([k,v])=>({label:k,value:v})), title:"Deals by Stage" };
+    }
+    if(report.type==="contact"){
+      const bySource={};
+      rows.forEach(r=>{const s=r.source||"Unknown";bySource[s]=(bySource[s]||0)+1;});
+      return { kind:"pie", data:Object.entries(bySource).map(([k,v])=>({label:k,value:v})), title:"Contacts by Source" };
+    }
+    if(report.type==="invoice"||report.type==="time"){
+      const byMonth={};
+      rows.forEach(r=>{const d=r.__raw?.date||r.__raw?.createdAt;if(!d)return;const m=new Date(d).toLocaleString("default",{month:"short",year:"2-digit"});byMonth[m]=(byMonth[m]||0)+1;});
+      return { kind:"bar", data:Object.entries(byMonth).map(([k,v])=>({label:k,value:v})), title:"Records by Month" };
+    }
+    return null;
+  })();
+  const chartColors=["#1D4ED8","#10B981","#F59E0B","#8B5CF6","#EC4899","#06B6D4","#F97316","#EF4444"];
+
+  const renderCell=(r,f)=>{
+    let v=r[f.key];if(v==null||v==="")return "—";
+    if(f.money)return typeof v==="number"?fmt$(v):v;
+    if(f.type==="date")return fmtDate(v);
+    return String(v);
+  };
+  const setSort=(k)=>setTableSort(prev=>prev&&prev.field===k?(prev.dir==="asc"?{field:k,dir:"desc"}:null):{field:k,dir:"asc"});
+
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+        <button style={{...S.btnGhost,fontSize:12}} onClick={onBack}><Ic d={I.arrow} size={12}/>Back to reports</button>
+        <div style={{display:"flex",gap:8}}>
+          {onEdit&&report.id&&<button style={S.btnSecondary} onClick={onEdit}><Ic d={I.edit} size={13}/>Edit</button>}
+          <button style={S.btnSecondary} onClick={()=>exportReportCSV(report,fields,rows)}><Ic d={I.dl} size={13}/>Export CSV</button>
+          <button style={S.btnPrimary} onClick={()=>{const ok=exportReportPDF(report,fields,rows,summary,entity,(()=>{const f=report.filters||{};const parts=[];if(f.dateRange&&f.dateRange!=="all")parts.push(`Range: ${REPORT_DATE_RANGES.find(([v])=>v===f.dateRange)?.[1]}`);if(f.stages?.length)parts.push(`Stages: ${f.stages.join(", ")}`);if(f.statuses?.length)parts.push(`Status: ${f.statuses.join(", ")}`);return parts.join(" · ");})());if(!ok)showToast?.("Allow pop-ups to export PDF","error");}}><Ic d={I.share} size={13}/>Export PDF</button>
+        </div>
+      </div>
+
+      <div style={{...S.card({padding:18}),marginBottom:16}}>
+        <div style={{fontSize:18,fontWeight:800,color:"#0F172A",marginBottom:4}}>{report.name}</div>
+        <div style={{fontSize:12,color:"#64748B"}}>{REPORT_TYPE_LABELS[report.type]||report.type} · {entity?.name} · Generated {fmtTime(new Date())}</div>
+      </div>
+
+      {/* Summary stats */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:16}}>
+        {summary.map((s,i)=>(
+          <div key={i} style={S.card({padding:14})}>
+            <div style={{fontSize:11,color:"#64748B",fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>{s.label}</div>
+            <div style={{fontSize:18,fontWeight:800,color:"#0F172A",marginTop:4}}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Auto-chart */}
+      {autoChart&&autoChart.data.length>0&&(
+        <div style={{...S.card({padding:20}),marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:14}}>{autoChart.title}</div>
+          <ResponsiveContainer width="100%" height={220}>
+            {autoChart.kind==="bar"?(
+              <BarChart data={autoChart.data} barSize={28}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
+                <XAxis dataKey="label" tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fill:"#64748B",fontSize:10}} axisLine={false} tickLine={false}/>
+                <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
+                <Bar dataKey="value" fill="#1D4ED8" radius={[4,4,0,0]}/>
+              </BarChart>
+            ):(
+              <PieChart>
+                <Pie data={autoChart.data} cx="50%" cy="50%" innerRadius={45} outerRadius={80} dataKey="value" stroke="none">
+                  {autoChart.data.map((_,i)=><Cell key={i} fill={chartColors[i%chartColors.length]}/>)}
+                </Pie>
+                <Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}}/>
+                <Legend wrapperStyle={{fontSize:11}}/>
+              </PieChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Table (with optional grouping) */}
+      <div style={S.card({overflow:"hidden"})}>
+        {rows.length===0?<div style={{padding:48,textAlign:"center",color:"#94A3B8",fontSize:13}}>No records match this report's filters.</div>
+        :groups?(
+          groups.map(([groupName,groupRows])=>{
+            const numericTotals={};
+            fields.filter(f=>f.numeric).forEach(f=>{numericTotals[f.key]=groupRows.reduce((s,r)=>s+(+r[f.key]||0),0);});
+            return(
+              <div key={groupName}>
+                <div style={{padding:"10px 16px",background:"#EFF6FF",color:"#1E3A8A",fontSize:13,fontWeight:700,borderBottom:"1px solid #BFDBFE",display:"flex",justifyContent:"space-between"}}>
+                  <span>{groupName} <span style={{color:"#64748B",fontWeight:500,marginLeft:6}}>({groupRows.length})</span></span>
+                  <span style={{fontSize:11,color:"#475569"}}>{fields.filter(f=>f.numeric).map(f=>`${f.label}: ${f.money?fmt$(numericTotals[f.key]):numericTotals[f.key].toLocaleString()}`).join(" · ")}</span>
+                </div>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  {groupName===groups[0][0]&&<thead><tr>{fields.map(f=><th key={f.key} style={{...S.th,cursor:"pointer"}} onClick={()=>setSort(f.key)}>{f.label}{tableSort?.field===f.key?(tableSort.dir==="asc"?" ↑":" ↓"):""}</th>)}</tr></thead>}
+                  <tbody>{groupRows.map(r=>(
+                    <tr key={r.__id}>{fields.map(f=><td key={f.key} style={S.td}>{renderCell(r,f)}</td>)}</tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            );
+          })
+        ):(
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>{fields.map(f=><th key={f.key} style={{...S.th,cursor:"pointer"}} onClick={()=>setSort(f.key)}>{f.label}{tableSort?.field===f.key?(tableSort.dir==="asc"?" ↑":" ↓"):""}</th>)}</tr></thead>
+            <tbody>{rows.map(r=>(
+              <tr key={r.__id}>{fields.map(f=><td key={f.key} style={S.td}>{renderCell(r,f)}</td>)}</tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
@@ -3948,6 +4800,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [availability,setAvailability]=useState(D.availability);
   const [invoiceCounter,setInvoiceCounter]=useState(D.invoiceCounter);
   const [signatures,setSignatures]=useState([]);
+  const [customReports,setCustomReports]=useState([]);
   // UI state
   const [view,setView]=useState("dashboard");
   const [selContact,setSelContact]=useState(null);
@@ -3985,7 +4838,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           if(r?.value)setter(JSON.parse(r.value));
         }catch(e){console.error("[Persistence] load failed for",key,e);}
       };
-      const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures]];
+      const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures],["crm:customReports",setCustomReports]];
       for(const [k,s] of keys)await load(k,s);
       try{
         const r=await window.storage?.get("crm:activeEntityId");
@@ -4070,6 +4923,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   useEffect(()=>{save("crm:availability",availability);},[availability]);
   useEffect(()=>{save("crm:invoiceCounter",invoiceCounter);},[invoiceCounter]);
   useEffect(()=>{save("crm:signatures",signatures);},[signatures]);
+  useEffect(()=>{save("crm:customReports",customReports);},[customReports]);
   useEffect(()=>{save("crm:activeEntityId",activeEntityId);},[activeEntityId]);
 
   const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
@@ -4279,6 +5133,12 @@ export default function App({session,onLogout,demoMode=false}={}){
   const addSignature=(data)=>{setSignatures(p=>[...p,{id:uid(),...data}]);addDoc({...data.doc,status:"Signed"},true);};
   const deleteSignature=(id)=>setSignatures(p=>p.filter(x=>x.id!==id));
 
+  // ─── CUSTOM REPORTS ───────────────────────────────────────────────────────
+  const addReport=(data)=>{const r={id:uid(),entityId:activeEntityId,createdAt:new Date().toISOString(),lastRunAt:new Date().toISOString(),...data};setCustomReports(p=>[...p,r]);return r;};
+  const updateReport=(id,data)=>setCustomReports(p=>p.map(r=>r.id===id?{...r,...data,lastRunAt:new Date().toISOString()}:r));
+  const deleteReport=(id)=>setCustomReports(p=>p.filter(r=>r.id!==id));
+  const duplicateReport=(id)=>{const orig=customReports.find(r=>r.id===id);if(!orig)return;addReport({...orig,id:undefined,name:`${orig.name} (copy)`,createdAt:undefined,lastRunAt:undefined});};
+
   // ─── ENTITY ───────────────────────────────────────────────────────────────
   const addEntity=(data)=>{const e={id:uid(),...data};setEntities(p=>[...p,e]);setActiveEntityId(e.id);setView("dashboard");showToast(`Switched to ${e.name}`);};
 
@@ -4423,7 +5283,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
-          {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} showToast={showToast}/>}
+          {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
           {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook}/>}
         </div>
       </div>
