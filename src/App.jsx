@@ -1084,19 +1084,35 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
   const [csvRows,setCsvRows]=useState([]);
   const [csvHeaders,setCsvHeaders]=useState([]);
   const [csvMapping,setCsvMapping]=useState({});
+  const [csvType,setCsvType]=useState("contact"); // "contact" | "company"
   const [importSource,setImportSource]=useState("HubSpot Import");
   const fileRef=useRef();
   const csvRef=useRef();
 
-  const CRM_FIELDS=["name","firstName","lastName","email","phone","title","companyName","source","notes"];
-  const FIELD_LABELS={name:"name",firstName:"name (first part)",lastName:"name (last part)",email:"email",phone:"phone",title:"title",companyName:"companyName",source:"source",notes:"notes"};
-  // HubSpot exports use API names in older flows and display names in the UI export — handle both.
-  const HUBSPOT_DEFAULTS={
+  // ─── CONTACT IMPORT ───────────────────────────────────────────────────────
+  const CONTACT_FIELDS=["name","firstName","lastName","email","phone","title","companyName","source","notes"];
+  const CONTACT_FIELD_LABELS={name:"name",firstName:"name (first part)",lastName:"name (last part)",email:"email",phone:"phone",title:"title",companyName:"companyName",source:"source",notes:"notes"};
+  const HUBSPOT_CONTACT_DEFAULTS={
     firstname:"firstName",lastname:"lastName",email:"email",phone:"phone",jobtitle:"title",company:"companyName","hs_analytics_source":"source",
     "First Name":"firstName","Last Name":"lastName","Email":"email","Phone Number":"phone","Job Title":"title","Company Name":"companyName","Lead Status":"source",
   };
-  const ZOHO_DEFAULTS={"First Name":"firstName","Last Name":"lastName",Email:"email",Phone:"phone",Title:"title",Account:"companyName","Lead Source":"source"};
-  const HUBSPOT_SKIP=new Set(["city","record id","contact owner","create date","last activity date"]);
+  const ZOHO_CONTACT_DEFAULTS={"First Name":"firstName","Last Name":"lastName",Email:"email",Phone:"phone",Title:"title",Account:"companyName","Lead Source":"source"};
+  const HUBSPOT_CONTACT_SKIP=new Set(["city","record id","contact owner","create date","last activity date"]);
+
+  // ─── COMPANY IMPORT ───────────────────────────────────────────────────────
+  const COMPANY_FIELDS=["name","website","industry","phone","email","employees","notes"];
+  const COMPANY_FIELD_LABELS={name:"name",website:"website",industry:"industry",phone:"phone",email:"email",employees:"employees",notes:"notes"};
+  const HUBSPOT_COMPANY_DEFAULTS={
+    // Display names (modern HubSpot UI export)
+    "Company name":"name","Company Name":"name","Company Domain Name":"website","Domain":"website",
+    "Industry":"industry","Phone Number":"phone","Number of Employees":"employees","Email":"email",
+    // API names (legacy)
+    name:"name",domain:"website",industry:"industry",phone:"phone",numberofemployees:"employees",email:"email",
+  };
+  const HUBSPOT_COMPANY_SKIP=new Set(["city","annual revenue","record id","company owner","create date","country","state","postal code","time zone"]);
+
+  const fieldsForType=(t)=>t==="company"?COMPANY_FIELDS:CONTACT_FIELDS;
+  const labelsForType=(t)=>t==="company"?COMPANY_FIELD_LABELS:CONTACT_FIELD_LABELS;
 
   // Minimal CSV parser that handles quoted fields containing commas
   const parseCsvLine=(line)=>{
@@ -1129,18 +1145,29 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
           const obj={};headers.forEach((h,i)=>obj[h]=vals[i]||"");return obj;
         }).filter(r=>Object.values(r).some(v=>v));
         setCsvHeaders(headers);setCsvRows(rows);
+        const lowered=headers.map(h=>h.toLowerCase().trim());
         // Auto-detect HubSpot vs Zoho — check both legacy API headers and modern display headers
-        const isHubspot=headers.some(h=>{
-          const l=h.toLowerCase();
-          return ["firstname","hs_analytics_source","hubspot_owner_id","record id","lead status"].includes(l)
-            ||(["first name","last name"].includes(l)&&headers.some(h2=>["phone number","job title","company name","record id","lead status"].includes(h2.toLowerCase())));
-        });
-        const isZoho=headers.some(h=>["lead source","account","salutation"].includes(h.toLowerCase()));
-        const defaults=isHubspot?HUBSPOT_DEFAULTS:isZoho?ZOHO_DEFAULTS:{};
+        const isHubspot=lowered.some(l=>["firstname","lastname","hs_analytics_source","hubspot_owner_id","record id","lead status","company domain name","number of employees"].includes(l))
+          ||(lowered.includes("first name")&&lowered.some(l=>["phone number","job title","company name","record id","lead status"].includes(l)))
+          ||(lowered.includes("company name")&&lowered.some(l=>["company domain name","number of employees","industry","record id"].includes(l)));
+        const isZoho=lowered.some(l=>["lead source","account","salutation"].includes(l));
+        // Detect Companies CSV vs Contacts CSV
+        const looksLikeCompany=
+          (lowered.includes("company name")||lowered.includes("company domain name")||lowered.includes("number of employees")||lowered.includes("annual revenue"))
+          && !lowered.includes("first name")
+          && !lowered.includes("last name")
+          && !lowered.includes("job title")
+          && !lowered.includes("lead status");
+        const detectedType=looksLikeCompany?"company":"contact";
+        setCsvType(detectedType);
+        const defaults=detectedType==="company"
+          ?(isHubspot?HUBSPOT_COMPANY_DEFAULTS:{})
+          :(isHubspot?HUBSPOT_CONTACT_DEFAULTS:isZoho?ZOHO_CONTACT_DEFAULTS:{});
+        const skipSet=detectedType==="company"?HUBSPOT_COMPANY_SKIP:HUBSPOT_CONTACT_SKIP;
         const mapping={};
         headers.forEach(h=>{
-          const lower=h.toLowerCase();
-          if(isHubspot&&HUBSPOT_SKIP.has(lower))return;
+          const lower=h.toLowerCase().trim();
+          if(isHubspot&&skipSet.has(lower))return;
           const match=Object.keys(defaults).find(k=>k.toLowerCase()===lower);
           if(match)mapping[h]=defaults[match];
         });
@@ -1214,17 +1241,43 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
     return contact;
   };
 
+  const buildCompanyFromRow=(row)=>{
+    const company={};
+    Object.keys(csvMapping).forEach(h=>{
+      const target=csvMapping[h];const val=row[h];
+      if(!target||!val)return;
+      if(target==="employees"){
+        const n=parseInt(String(val).replace(/[^0-9]/g,""),10);
+        if(!Number.isNaN(n))company.employees=n;
+      } else {
+        company[target]=val;
+      }
+    });
+    return company;
+  };
+
   const importCSVData=()=>{
     let count=0;let skipped=0;
-    csvRows.forEach(row=>{
-      const contact=buildContactFromRow(row);
-      if(!contact.name){skipped++;return;}
-      const dup=contact.email&&contacts.some(c=>c.email&&c.email.toLowerCase()===contact.email.toLowerCase()&&c.entityId===activeEntityId);
-      if(dup){skipped++;return;}
-      addContact(contact);count++;
-    });
-    showToast(`Imported ${count} contacts${skipped?` (${skipped} skipped as duplicates or missing name)`:""}`);
-    setCsvRows([]);setCsvHeaders([]);setFile(null);
+    if(csvType==="company"){
+      csvRows.forEach(row=>{
+        const co=buildCompanyFromRow(row);
+        if(!co.name){skipped++;return;}
+        const dup=companies.some(x=>x.name&&x.name.toLowerCase()===co.name.toLowerCase()&&x.entityId===activeEntityId);
+        if(dup){skipped++;return;}
+        addCompany(co);count++;
+      });
+      showToast(`Imported ${count} compan${count===1?"y":"ies"}${skipped?` (${skipped} skipped as duplicates or missing name)`:""}`);
+    } else {
+      csvRows.forEach(row=>{
+        const contact=buildContactFromRow(row);
+        if(!contact.name){skipped++;return;}
+        const dup=contact.email&&contacts.some(c=>c.email&&c.email.toLowerCase()===contact.email.toLowerCase()&&c.entityId===activeEntityId);
+        if(dup){skipped++;return;}
+        addContact(contact);count++;
+      });
+      showToast(`Imported ${count} contact${count===1?"":"s"}${skipped?` (${skipped} skipped as duplicates or missing name)`:""}`);
+    }
+    setCsvRows([]);setCsvHeaders([]);setCsvMapping({});setFile(null);
   };
 
   return(
@@ -1334,8 +1387,20 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
           {csvHeaders.length>0&&(
             <div>
               <div style={S.card({padding:20,marginBottom:20})}>
-                <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:14}}>Column Mapping ({csvRows.length} rows detected)</div>
-                {(()=>{
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>Column Mapping ({csvRows.length} rows detected)</div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={S.badge(csvType==="company"?"#7C3AED":"#1D4ED8")}>
+                      Detected: {csvType==="company"?"Companies":"Contacts"}
+                    </span>
+                    <div style={{display:"flex",gap:0,background:"#E2E8F0",padding:3,borderRadius:8}}>
+                      {[["contact","Contacts"],["company","Companies"]].map(([v,l])=>(
+                        <button key={v} onClick={()=>{setCsvType(v);setCsvMapping({});}} style={{...S.btnGhost,padding:"4px 10px",background:csvType===v?"#1D4ED8":"transparent",color:csvType===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:11,fontWeight:600}}>{l}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {csvType==="contact"&&(()=>{
                   const firstHdr=Object.entries(csvMapping).find(([,v])=>v==="firstName")?.[0];
                   const lastHdr=Object.entries(csvMapping).find(([,v])=>v==="lastName")?.[0];
                   if(!firstHdr&&!lastHdr)return null;
@@ -1359,7 +1424,7 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
                         <Ic d={I.arrow} size={14} c={isCombined?"#1D4ED8":"#CBD5E1"}/>
                         <select value={target||""} onChange={e=>setCsvMapping(p=>({...p,[h]:e.target.value}))} style={{...S.select,width:160,fontSize:12,...(isCombined?{borderColor:"#1D4ED8",color:"#1E3A8A",fontWeight:600}:{})}}>
                           <option value="">Skip</option>
-                          {CRM_FIELDS.map(f=><option key={f} value={f}>{FIELD_LABELS[f]||f}</option>)}
+                          {fieldsForType(csvType).map(f=><option key={f} value={f}>{labelsForType(csvType)[f]||f}</option>)}
                         </select>
                       </div>
                     );
@@ -1373,14 +1438,14 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
                 </div>
                 <div style={{overflowX:"auto"}}>
                   {(()=>{
-                    const firstHdr=Object.entries(csvMapping).find(([,v])=>v==="firstName")?.[0];
-                    const lastHdr=Object.entries(csvMapping).find(([,v])=>v==="lastName")?.[0];
+                    const firstHdr=csvType==="contact"?Object.entries(csvMapping).find(([,v])=>v==="firstName")?.[0]:null;
+                    const lastHdr=csvType==="contact"?Object.entries(csvMapping).find(([,v])=>v==="lastName")?.[0]:null;
                     const showCombined=!!(firstHdr||lastHdr);
                     return(
                       <table style={{width:"100%",borderCollapse:"collapse"}}>
                         <thead><tr>
                           {showCombined&&<th style={{...S.th,background:"#EFF6FF",color:"#1E3A8A"}}>combined name<span style={{color:"#1D4ED8",marginLeft:4}}>→ name</span></th>}
-                          {csvHeaders.slice(0,6).map(h=><th key={h} style={S.th}>{h}{csvMapping[h]&&<span style={{color:"#10B981",marginLeft:4}}>→{FIELD_LABELS[csvMapping[h]]||csvMapping[h]}</span>}</th>)}
+                          {csvHeaders.slice(0,6).map(h=><th key={h} style={S.th}>{h}{csvMapping[h]&&<span style={{color:"#10B981",marginLeft:4}}>→{labelsForType(csvType)[csvMapping[h]]||csvMapping[h]}</span>}</th>)}
                         </tr></thead>
                         <tbody>{csvRows.slice(0,5).map((row,i)=>{
                           const combined=[firstHdr?row[firstHdr]:"",lastHdr?row[lastHdr]:""].filter(Boolean).join(" ");
@@ -1398,7 +1463,7 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
               </div>
               <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
                 <button style={S.btnSecondary} onClick={()=>{setCsvRows([]);setCsvHeaders([]);setFile(null);}}>Cancel</button>
-                <button style={S.btnPrimary} onClick={importCSVData}><Ic d={I.import} size={14}/>Import {csvRows.length} Contacts</button>
+                <button style={S.btnPrimary} onClick={importCSVData}><Ic d={I.import} size={14}/>Import {csvRows.length} {csvType==="company"?(csvRows.length===1?"Company":"Companies"):(csvRows.length===1?"Contact":"Contacts")}</button>
               </div>
             </div>
           )}
