@@ -1074,7 +1074,7 @@ function ReportsView({ed,ec,et,notes,entity,showToast}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // AI IMPORT VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
-function ImportView({activeEntityId,contacts,companies,addContact,addCompany,addDeal,showToast}){
+function ImportView({activeEntityId,entity,contacts,companies,addContact,addCompany,addDeal,showToast}){
   const [tab,setTab]=useState("ai");
   const [file,setFile]=useState(null);
   const [fileContent,setFileContent]=useState("");
@@ -1111,8 +1111,31 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
   };
   const HUBSPOT_COMPANY_SKIP=new Set(["city","annual revenue","record id","company owner","create date","country","state","postal code","time zone"]);
 
-  const fieldsForType=(t)=>t==="company"?COMPANY_FIELDS:CONTACT_FIELDS;
-  const labelsForType=(t)=>t==="company"?COMPANY_FIELD_LABELS:CONTACT_FIELD_LABELS;
+  // ─── DEAL IMPORT ──────────────────────────────────────────────────────────
+  const DEAL_FIELDS=["title","value","closeDate","stage","companyName","contactName","probability","notes"];
+  const DEAL_FIELD_LABELS={title:"title",value:"value",closeDate:"closeDate",stage:"stage",companyName:"company (link by name)",contactName:"contact (link by name)",probability:"probability",notes:"notes"};
+  const HUBSPOT_DEAL_DEFAULTS={
+    "Deal Name":"title","Amount":"value","Close Date":"closeDate","Deal Stage":"stage","Pipeline":"",
+    "Associated Company":"companyName","Associated Companies":"companyName","Associated Contact":"contactName","Associated Contacts":"contactName",
+    "Deal Probability":"probability","Forecast Probability":"probability",
+    // legacy API names
+    dealname:"title",amount:"value",closedate:"closeDate",dealstage:"stage",pipeline:"",
+  };
+  const HUBSPOT_DEAL_SKIP=new Set(["deal description","record id","deal owner","create date","last modified date","deal type","forecast amount","weighted amount","days to close"]);
+  // HubSpot's default sales pipeline → NexCRM's default stages
+  const HUBSPOT_STAGE_MAP={
+    "appointment scheduled":"New Lead",
+    "qualified to buy":"Contacted",
+    "presentation scheduled":"Proposal Sent",
+    "decision maker bought-in":"Proposal Sent",
+    "decision maker bought in":"Proposal Sent",
+    "contract sent":"Proposal Sent",
+    "closed won":"Won",
+    "closed lost":"Lost",
+  };
+
+  const fieldsForType=(t)=>t==="deal"?DEAL_FIELDS:t==="company"?COMPANY_FIELDS:CONTACT_FIELDS;
+  const labelsForType=(t)=>t==="deal"?DEAL_FIELD_LABELS:t==="company"?COMPANY_FIELD_LABELS:CONTACT_FIELD_LABELS;
 
   // Full-text CSV parser: handles quoted fields with embedded commas AND newlines, BOM, CRLF/LF.
   const parseCsv=(text)=>{
@@ -1154,23 +1177,30 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
         setCsvHeaders(headers);setCsvRows(rows);
         const lowered=headers.map(h=>h.toLowerCase().trim());
         // Auto-detect HubSpot vs Zoho — check both legacy API headers and modern display headers
-        const isHubspot=lowered.some(l=>["firstname","lastname","hs_analytics_source","hubspot_owner_id","record id","lead status","company domain name","number of employees"].includes(l))
+        const isHubspot=lowered.some(l=>["firstname","lastname","hs_analytics_source","hubspot_owner_id","record id","lead status","company domain name","number of employees","deal name","deal stage","close date","amount","pipeline"].includes(l))
           ||(lowered.includes("first name")&&lowered.some(l=>["phone number","job title","company name","record id","lead status"].includes(l)))
-          ||(lowered.includes("company name")&&lowered.some(l=>["company domain name","number of employees","industry","record id"].includes(l)));
+          ||(lowered.includes("company name")&&lowered.some(l=>["company domain name","number of employees","industry","record id"].includes(l)))
+          ||(lowered.includes("deal name")||lowered.includes("deal stage"));
         const isZoho=lowered.some(l=>["lead source","account","salutation"].includes(l));
-        // Detect Companies CSV vs Contacts CSV
-        const looksLikeCompany=
+        // Detect type — order matters: Deals first (because Deals export contains "Associated Company" which would otherwise trip Companies detection)
+        const looksLikeDeal=
+          lowered.includes("deal name")||lowered.includes("deal stage")||lowered.includes("dealname")||lowered.includes("dealstage")
+          ||(lowered.includes("amount")&&lowered.includes("close date"))
+          ||(lowered.includes("amount")&&lowered.includes("pipeline"));
+        const looksLikeCompany=!looksLikeDeal&&
           (lowered.includes("company name")||lowered.includes("company domain name")||lowered.includes("number of employees")||lowered.includes("annual revenue"))
           && !lowered.includes("first name")
           && !lowered.includes("last name")
           && !lowered.includes("job title")
           && !lowered.includes("lead status");
-        const detectedType=looksLikeCompany?"company":"contact";
+        const detectedType=looksLikeDeal?"deal":looksLikeCompany?"company":"contact";
         setCsvType(detectedType);
-        const defaults=detectedType==="company"
+        const defaults=detectedType==="deal"
+          ?(isHubspot?HUBSPOT_DEAL_DEFAULTS:{})
+          :detectedType==="company"
           ?(isHubspot?HUBSPOT_COMPANY_DEFAULTS:{})
           :(isHubspot?HUBSPOT_CONTACT_DEFAULTS:isZoho?ZOHO_CONTACT_DEFAULTS:{});
-        const skipSet=detectedType==="company"?HUBSPOT_COMPANY_SKIP:HUBSPOT_CONTACT_SKIP;
+        const skipSet=detectedType==="deal"?HUBSPOT_DEAL_SKIP:detectedType==="company"?HUBSPOT_COMPANY_SKIP:HUBSPOT_CONTACT_SKIP;
         const mapping={};
         headers.forEach(h=>{
           const lower=h.toLowerCase().trim();
@@ -1263,17 +1293,78 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
     return company;
   };
 
+  const parseAmount=(s)=>{
+    if(s==null||s==="")return undefined;
+    const cleaned=String(s).replace(/[^0-9.\-]/g,"");
+    const n=parseFloat(cleaned);
+    return Number.isNaN(n)?undefined:n;
+  };
+  const parseDate=(s)=>{
+    if(!s)return undefined;
+    const t=Date.parse(s);
+    if(Number.isNaN(t))return undefined;
+    return new Date(t).toISOString().slice(0,10);
+  };
+  const eContactsForEntity=contacts.filter(c=>c.entityId===activeEntityId);
+  const eCompaniesForEntity=companies.filter(c=>c.entityId===activeEntityId);
+  const buildDealFromRow=(row,entityStages)=>{
+    const deal={};
+    let companyName="";let contactName="";
+    Object.keys(csvMapping).forEach(h=>{
+      const target=csvMapping[h];const val=row[h];
+      if(!target||!val)return;
+      if(target==="value"){const n=parseAmount(val);if(n!=null)deal.value=n;}
+      else if(target==="closeDate"){const d=parseDate(val);if(d)deal.closeDate=d;}
+      else if(target==="probability"){const n=parseAmount(val);if(n!=null)deal.probability=Math.max(0,Math.min(100,Math.round(n)));}
+      else if(target==="stage"){
+        const mapped=HUBSPOT_STAGE_MAP[String(val).toLowerCase().trim()];
+        const final=mapped||val;
+        // If the entity has a custom stages list and the mapped value isn't in it, fall back to first stage
+        if(entityStages&&entityStages.length&&!entityStages.includes(final)){deal.stage=entityStages[0];}
+        else deal.stage=final;
+      }
+      else if(target==="companyName")companyName=String(val).trim();
+      else if(target==="contactName")contactName=String(val).trim();
+      else deal[target]=val;
+    });
+    // Resolve linked records by case-insensitive name match within active entity
+    if(companyName){
+      const co=eCompaniesForEntity.find(c=>c.name&&c.name.toLowerCase()===companyName.toLowerCase());
+      if(co)deal.companyId=co.id;
+      deal.companyName=companyName; // keep original string for reference
+    }
+    if(contactName){
+      const ct=eContactsForEntity.find(c=>c.name&&c.name.toLowerCase()===contactName.toLowerCase());
+      if(ct)deal.contactId=ct.id;
+      deal.contactName=contactName;
+    }
+    return deal;
+  };
+
   const importCSVData=()=>{
-    console.log("[CSV Import] type:",csvType,"rows:",csvRows.length,"activeEntityId:",activeEntityId);
+    const activeEntity=activeEntityId; // captured for logs
+    const entityStages=entity?.stages;
+    console.log("[CSV Import] type:",csvType,"rows:",csvRows.length,"activeEntityId:",activeEntity);
     console.log("[CSV Import] mapping:",csvMapping);
     if(csvRows[0]){
       console.log("[CSV Import] first raw row:",csvRows[0]);
-      const built=csvType==="company"?buildCompanyFromRow(csvRows[0]):buildContactFromRow(csvRows[0]);
+      const built=csvType==="deal"?buildDealFromRow(csvRows[0],entityStages):csvType==="company"?buildCompanyFromRow(csvRows[0]):buildContactFromRow(csvRows[0]);
       console.log("[CSV Import] first built object:",built);
     }
-    let count=0;let skipped=0;const skipReasons=[];
+    let count=0;let skipped=0;const skipReasons=[];let linkedContacts=0;let linkedCompanies=0;
     const log=(reason)=>{skipped++;if(skipReasons.length<10)skipReasons.push(reason);};
-    if(csvType==="company"){
+    if(csvType==="deal"){
+      csvRows.forEach((row,idx)=>{
+        const deal=buildDealFromRow(row,entityStages);
+        if(!deal.title){log(`row ${idx+1}: missing title (raw=${JSON.stringify(row).slice(0,120)})`);return;}
+        if(deal.contactId)linkedContacts++;
+        if(deal.companyId)linkedCompanies++;
+        addDeal(deal);count++;
+      });
+      console.log("[CSV Import] created:",count,"skipped:",skipped,"linked to existing contact:",linkedContacts,"linked to existing company:",linkedCompanies);
+      if(skipReasons.length)console.log("[CSV Import] skip reasons (first 10):",skipReasons);
+      showToast(`Imported ${count} deal${count===1?"":"s"} · linked ${linkedContacts} contact${linkedContacts===1?"":"s"}, ${linkedCompanies} compan${linkedCompanies===1?"y":"ies"}${skipped?` (${skipped} skipped)`:""}`);
+    } else if(csvType==="company"){
       csvRows.forEach((row,idx)=>{
         const co=buildCompanyFromRow(row);
         if(!co.name){log(`row ${idx+1}: missing name (raw=${JSON.stringify(row).slice(0,120)})`);return;}
@@ -1409,11 +1500,11 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
                   <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>Column Mapping ({csvRows.length} rows detected)</div>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={S.badge(csvType==="company"?"#7C3AED":"#1D4ED8")}>
-                      Detected: {csvType==="company"?"Companies":"Contacts"}
+                    <span style={S.badge(csvType==="deal"?"#10B981":csvType==="company"?"#7C3AED":"#1D4ED8")}>
+                      Detected: {csvType==="deal"?"Deals":csvType==="company"?"Companies":"Contacts"}
                     </span>
                     <div style={{display:"flex",gap:0,background:"#E2E8F0",padding:3,borderRadius:8}}>
-                      {[["contact","Contacts"],["company","Companies"]].map(([v,l])=>(
+                      {[["contact","Contacts"],["company","Companies"],["deal","Deals"]].map(([v,l])=>(
                         <button key={v} onClick={()=>{setCsvType(v);setCsvMapping({});}} style={{...S.btnGhost,padding:"4px 10px",background:csvType===v?"#1D4ED8":"transparent",color:csvType===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:11,fontWeight:600}}>{l}</button>
                       ))}
                     </div>
@@ -1482,7 +1573,7 @@ function ImportView({activeEntityId,contacts,companies,addContact,addCompany,add
               </div>
               <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
                 <button style={S.btnSecondary} onClick={()=>{setCsvRows([]);setCsvHeaders([]);setFile(null);}}>Cancel</button>
-                <button style={S.btnPrimary} onClick={importCSVData}><Ic d={I.import} size={14}/>Import {csvRows.length} {csvType==="company"?(csvRows.length===1?"Company":"Companies"):(csvRows.length===1?"Contact":"Contacts")}</button>
+                <button style={S.btnPrimary} onClick={importCSVData}><Ic d={I.import} size={14}/>Import {csvRows.length} {csvType==="deal"?(csvRows.length===1?"Deal":"Deals"):csvType==="company"?(csvRows.length===1?"Company":"Companies"):(csvRows.length===1?"Contact":"Contacts")}</button>
               </div>
             </div>
           )}
@@ -3040,7 +3131,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
           {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} invoices={invoices} docs={docs} quotes={quotes} deals={deals} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} showToast={showToast} entity={entity} setView={setView}/>}
-          {view==="import"&&<ImportView activeEntityId={activeEntityId} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
+          {view==="import"&&<ImportView activeEntityId={activeEntityId} entity={entity} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
