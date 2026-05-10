@@ -23,6 +23,22 @@ const stagesForWithOrphans = (entity, deals) => {
   const orphans = used.filter(s => !base.includes(s));
   return [...base, ...orphans];
 };
+
+// One-time stage migration map for legacy/imported pipeline names.
+const STAGE_MIGRATION_MAP = {
+  "Outreach Sent": "Contacted",
+  "Responded/Interested": "Responded / Interested",
+  "Follow-up": "Follow-up / Discovery",
+  "Paying Subscriber": "Won",
+  "Appointment Scheduled": "New Lead",
+  "Qualified To Buy": "Contacted",
+  "Presentation Scheduled": "Proposal Sent",
+  "Decision Maker Bought-In": "Proposal Sent",
+  "Decision Maker Bought In": "Proposal Sent",
+  "Contract Sent": "Proposal Sent",
+  "Closed Won": "Won",
+  "Closed Lost": "Lost",
+};
 const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","BiggerPockets","HubSpot Import","Zoho Import","Other"];
 const PLATFORMS = SOURCES; // alias — "Source" is now also surfaced as "Platform"
 const ICP_LEVELS = ["Small","Medium","High","Very High"];
@@ -390,8 +406,13 @@ const PageHeader = ({title,sub,children})=>(
     <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>{children}</div>
   </div>
 );
-const StatCard = ({label,value,sub,color,icon})=>(
-  <div style={S.card({padding:20})}>
+const StatCard = ({label,value,sub,color,icon,onClick})=>(
+  <div
+    onClick={onClick}
+    onMouseEnter={onClick?(e)=>{e.currentTarget.style.boxShadow="0 6px 18px rgba(15,30,60,.10)";e.currentTarget.style.transform="translateY(-1px)";}:undefined}
+    onMouseLeave={onClick?(e)=>{e.currentTarget.style.boxShadow="";e.currentTarget.style.transform="";}:undefined}
+    style={{...S.card({padding:20}),cursor:onClick?"pointer":"default",transition:onClick?"box-shadow .15s, transform .15s":undefined}}
+  >
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
       <div style={{flex:1}}>
         <div style={{fontSize:11,color:"#64748B",fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>{label}</div>
@@ -415,7 +436,7 @@ const ScoreBadge = ({score})=>(
 // ═══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
-function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openModal}){
+function Dashboard({ed,ec,et,notes,contacts,companies=[],entity,setView,setSelContact,setSelCompany,setSelDeal,openModal}){
   const pipeVal=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
   const wonVal=ed.filter(d=>d.stage==="Won").reduce((s,d)=>s+(d.value||0),0);
   const closed=ed.filter(d=>["Won","Lost"].includes(d.stage));
@@ -439,20 +460,20 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
         <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>New Deal</button>
       </PageHeader>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
-        <StatCard label="Active Pipeline" value={fmt$(pipeVal)} sub={`${ed.filter(d=>!["Won","Lost"].includes(d.stage)).length} open deals`} color="#1D4ED8" icon={I.dollar}/>
-        <StatCard label="Weighted Pipeline" value={fmt$(weightedPipe)} sub="By probability" color="#8B5CF6" icon={I.layers}/>
-        <StatCard label="Won Revenue" value={fmt$(wonVal)} sub={`${ed.filter(d=>d.stage==="Won").length} deals closed`} color="#10B981" icon={I.ok}/>
-        <StatCard label="Close Rate" value={`${closeRate}%`} sub={`${closed.length} deals evaluated`} color="#F59E0B" icon={I.bar}/>
+        <StatCard label="Active Pipeline" value={fmt$(pipeVal)} sub={`${ed.filter(d=>!["Won","Lost"].includes(d.stage)).length} open deals`} color="#1D4ED8" icon={I.dollar} onClick={()=>setView("deals")}/>
+        <StatCard label="Weighted Pipeline" value={fmt$(weightedPipe)} sub="By probability" color="#8B5CF6" icon={I.layers} onClick={()=>setView("deals")}/>
+        <StatCard label="Won Revenue" value={fmt$(wonVal)} sub={`${ed.filter(d=>d.stage==="Won").length} deals closed`} color="#10B981" icon={I.ok} onClick={()=>setView("deals")}/>
+        <StatCard label="Close Rate" value={`${closeRate}%`} sub={`${closed.length} deals evaluated`} color="#F59E0B" icon={I.bar} onClick={()=>setView("reports")}/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
-        <StatCard label="Total Contacts" value={ec.length} sub="In this entity" color="#1D4ED8" icon={I.users}/>
-        <StatCard label="Tasks Pending" value={et.filter(t=>!t.completed).length} sub={`${et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length} overdue`} color="#EF4444" icon={I.check}/>
-        <StatCard label="Avg Deal Size" value={fmt$(ed.length?ed.reduce((s,d)=>s+(d.value||0),0)/ed.length:0)} sub="All deals" color="#F97316" icon={I.dollar}/>
-        <StatCard label="Activity Notes" value={notes.length} sub="Total logged" color="#EC4899" icon={I.note}/>
+        <StatCard label="Total Contacts" value={ec.length} sub="In this entity" color="#1D4ED8" icon={I.users} onClick={()=>setView("contacts")}/>
+        <StatCard label="Tasks Pending" value={et.filter(t=>!t.completed).length} sub={`${et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length} overdue`} color="#EF4444" icon={I.check} onClick={()=>setView("tasks")}/>
+        <StatCard label="Avg Deal Size" value={fmt$(ed.length?ed.reduce((s,d)=>s+(d.value||0),0)/ed.length:0)} sub="All deals" color="#F97316" icon={I.dollar} onClick={()=>setView("deals")}/>
+        <StatCard label="Activity Notes" value={notes.length} sub="Total logged" color="#EC4899" icon={I.note} onClick={()=>setView("contacts")}/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr",gap:16,marginBottom:20}}>
-        <div style={S.card({padding:20})}>
-          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Pipeline by Stage</div>
+        <div onClick={()=>setView("deals")} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 6px 18px rgba(15,30,60,.10)"} onMouseLeave={e=>e.currentTarget.style.boxShadow=""} style={{...S.card({padding:20}),cursor:"pointer",transition:"box-shadow .15s"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:16}}>Pipeline by Stage <span style={{color:"#94A3B8",fontWeight:500,textTransform:"none",fontSize:11,marginLeft:6}}>(click to open)</span></div>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={stageChart} barSize={28}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E9EEF6" vertical={false}/>
@@ -468,19 +489,19 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
         <div style={S.card({padding:20})}>
           <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Stage Breakdown</div>
           <ResponsiveContainer width="100%" height={120}>
-            <PieChart><Pie data={stagesFor(entity).map(st=>({name:st,value:ed.filter(d=>d.stage===st).length}))} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" stroke="none">
+            <PieChart><Pie data={stagesFor(entity).map(st=>({name:st,value:ed.filter(d=>d.stage===st).length}))} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" stroke="none" onClick={()=>setView("deals")} cursor="pointer">
               {stagesFor(entity).map((st,i)=><Cell key={i} fill={stageColor(entity,st)}/>)}
             </Pie><Tooltip contentStyle={{background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:8,fontSize:12}} formatter={(v,n)=>[v+" deals",n]}/></PieChart>
           </ResponsiveContainer>
           {stagesFor(entity).map(st=>(
-            <div key={st} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"2px 0"}}>
+            <div key={st} onClick={()=>setView("deals")} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"2px 0",cursor:"pointer"}}>
               <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:stageColor(entity,st)}}/><span style={{fontSize:11,color:"#475569"}}>{st}</span></div>
               <span style={{fontSize:12,fontWeight:700,color:"#0F172A"}}>{ed.filter(d=>d.stage===st).length}</span>
             </div>
           ))}
         </div>
-        <div style={S.card({padding:20})}>
-          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>3-Month Forecast</div>
+        <div onClick={()=>setView("reports")} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 6px 18px rgba(15,30,60,.10)"} onMouseLeave={e=>e.currentTarget.style.boxShadow=""} style={{...S.card({padding:20}),cursor:"pointer",transition:"box-shadow .15s"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>3-Month Forecast <span style={{color:"#94A3B8",fontWeight:500,textTransform:"none",fontSize:11,marginLeft:6}}>(view full report)</span></div>
           <ResponsiveContainer width="100%" height={120}>
             <BarChart data={months} barSize={20}>
               <XAxis dataKey="month" tick={{fill:"#64748B",fontSize:11}} axisLine={false} tickLine={false}/>
@@ -495,19 +516,19 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
           </div>
         </div>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
         <div style={S.card({padding:20})}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Recent Deals</div>
             <button style={{...S.btnGhost,fontSize:11}} onClick={()=>setView("deals")}>View All <Ic d={I.arrow} size={11}/></button>
           </div>
-          {recentDeals.map(deal=>{
+          {recentDeals.length===0?<p style={{color:"#475569",fontSize:13}}>No deals yet.</p>:recentDeals.map(deal=>{
             const contact=contacts.find(c=>c.id===deal.contactId);
-            return(<div key={deal.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E9EEF6"}}>
+            return(<div key={deal.id} onClick={()=>{if(setSelDeal)setSelDeal(deal.id);setView("deals");}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E9EEF6",cursor:"pointer",borderRadius:6,transition:"background .12s"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <Avatar name={contact?.name||"?"} size={28}/>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{deal.title}</div>
-                <div style={{fontSize:11,color:"#64748B"}}>{contact?.name} · {fmtDate(deal.createdAt)}</div>
+                <div style={{fontSize:11,color:"#64748B"}}>{contact?.name||"—"} · {fmtDate(deal.createdAt)}</div>
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
                 <div style={{fontSize:13,fontWeight:700,color:stageColor(entity,deal.stage)}}>{fmt$(deal.value)}</div>
@@ -524,15 +545,53 @@ function Dashboard({ed,ec,et,notes,contacts,entity,setView,setSelContact,openMod
           {pendingTasks.length===0?<p style={{color:"#475569",fontSize:13}}>All tasks complete! 🎉</p>:pendingTasks.map(t=>{
             const contact=contacts.find(c=>c.id===t.contactId);
             const overdue=new Date(t.dueDate)<new Date();
-            return(<div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #E9EEF6"}}>
+            return(<div key={t.id} onClick={()=>{if(contact){setSelContact(contact.id);setView("contacts");}else{setView("tasks");}}} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #E9EEF6",cursor:"pointer",borderRadius:6,transition:"background .12s"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{color:{high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority]}}><Ic d={I.bell} size={14}/></div>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:"#0F172A"}}>{t.title}</div>
-                <div style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)} · {contact?.name}</div>
+                <div style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)} · {contact?.name||"No contact"}</div>
               </div>
               <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority])}>{t.priority}</span>
             </div>);
           })}
+        </div>
+      </div>
+      {/* Recent Contacts + Recent Companies */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <div style={S.card({padding:20})}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Recent Contacts</div>
+            <button style={{...S.btnGhost,fontSize:11}} onClick={()=>setView("contacts")}>View All <Ic d={I.arrow} size={11}/></button>
+          </div>
+          {ec.length===0?<p style={{color:"#475569",fontSize:13}}>No contacts yet.</p>:[...ec].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,5).map(c=>(
+            <div key={c.id} onClick={()=>{setSelContact(c.id);setView("contacts");}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E9EEF6",cursor:"pointer",borderRadius:6,transition:"background .12s"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <Avatar name={c.name} size={28}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{c.name}</div>
+                <div style={{fontSize:11,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title||c.email||c.companyName||"—"}</div>
+              </div>
+              <span style={S.badge(c.active!==false?"#10B981":"#94A3B8")}>{c.active!==false?"Active":"Inactive"}</span>
+            </div>
+          ))}
+        </div>
+        <div style={S.card({padding:20})}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Recent Companies</div>
+            <button style={{...S.btnGhost,fontSize:11}} onClick={()=>setView("companies")}>View All <Ic d={I.arrow} size={11}/></button>
+          </div>
+          {(()=>{
+            const eCompanies=companies.filter(c=>c.entityId===entity?.id);
+            if(eCompanies.length===0)return <p style={{color:"#475569",fontSize:13}}>No companies yet.</p>;
+            return [...eCompanies].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,5).map(c=>(
+              <div key={c.id} onClick={()=>{if(setSelCompany)setSelCompany(c.id);setView("companies");}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E9EEF6",cursor:"pointer",borderRadius:6,transition:"background .12s"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <div style={{width:28,height:28,background:"#EEF2FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:avColor(c.name),flexShrink:0}}>{c.name?.[0]||"?"}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{c.name}</div>
+                  <div style={{fontSize:11,color:"#64748B"}}>{c.industry||"Other"}{c.lifecycleStage?` · ${c.lifecycleStage}`:""}</div>
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       </div>
     </div>
@@ -1175,7 +1234,7 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
         </div>
       )}
       <div style={{display:"flex",gap:14,overflowX:"auto",paddingBottom:16,alignItems:"flex-start"}}>
-        {stagesForWithOrphans(entity,ed).map(stage=>{
+        {stagesFor(entity).map(stage=>{
           const sDeals=ed.filter(d=>d.stage===stage);
           const sVal=sDeals.reduce((s,d)=>s+(d.value||0),0);
           const isOver=dragOver===stage;
@@ -3940,6 +3999,33 @@ export default function App({session,onLogout,demoMode=false}={}){
     return()=>{cancelled=true;};
   },[demoMode]);
 
+  // ─── ONE-TIME STAGE MIGRATION ────────────────────────────────────────────
+  // After the initial load completes, remap any deal whose stage isn't part
+  // of its entity's pipeline. Uses STAGE_MIGRATION_MAP for known legacy
+  // names; falls back to the entity's first stage for anything unrecognized.
+  const stageMigrationRanRef=useRef(false);
+  useEffect(()=>{
+    if(demoMode||stageMigrationRanRef.current)return;
+    if(!loadedRef.current)return;
+    stageMigrationRanRef.current=true;
+    const byEntity={};
+    entities.forEach(ent=>{byEntity[ent.id]=ent;});
+    let changed=0;
+    const migrated=deals.map(d=>{
+      const ent=byEntity[d.entityId];
+      const allowed=(ent?.stages?.length?ent.stages:STAGES);
+      if(!d.stage||allowed.includes(d.stage))return d;
+      const fallback=allowed[0]||"New Lead";
+      const remapped=allowed.includes(STAGE_MIGRATION_MAP[d.stage])?STAGE_MIGRATION_MAP[d.stage]:fallback;
+      changed++;
+      return {...d,stage:remapped};
+    });
+    if(changed>0){
+      setDeals(migrated);
+      console.log(`[Migration] remapped ${changed} deal${changed===1?"":"s"} from legacy stage names to current pipeline`);
+    }
+  },[deals,entities,demoMode]);
+
   const [saveStatus,setSaveStatus]=useState({state:"idle",lastSavedAt:null,lastError:null});
   const inFlightRef=useRef(0);
   const save=async(key,val)=>{
@@ -4320,7 +4406,7 @@ export default function App({session,onLogout,demoMode=false}={}){
 
         {/* Content */}
         <div style={{flex:1,overflowY:"auto",padding:20}}>
-          {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} entity={entity} setView={setView} setSelContact={setSelContact} openModal={openModal}/>}
+          {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} companies={companies} entity={entity} setView={setView} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
           {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
