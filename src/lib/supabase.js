@@ -145,6 +145,106 @@ export async function deletePortalSnapshot(token) {
   }
 }
 
+// ─── PORTAL ADMIN (calls Netlify Functions, auth header from current owner) ─
+async function bearerHeader() {
+  const { data } = await supabase.auth.getSession()
+  const token = data?.session?.access_token
+  if (!token) throw new Error('Not authenticated')
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+}
+
+async function postFn(name, body) {
+  const headers = await bearerHeader()
+  const res = await fetch(`/.netlify/functions/${name}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body || {}),
+  })
+  const text = await res.text()
+  let data
+  try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
+  if (!res.ok) {
+    const msg = data?.error || `${name} failed (${res.status})`
+    throw new Error(msg)
+  }
+  return data
+}
+
+export async function adminCreatePortal({ email, scope, scopeId, entityId, payload, settings }) {
+  return postFn('portal-create', { email, scope, scopeId, entityId, payload, settings })
+}
+
+export async function adminRegeneratePortalPassword({ userId, token }) {
+  return postFn('portal-regenerate', { userId, token })
+}
+
+export async function adminRevokePortal({ userId, token }) {
+  return postFn('portal-revoke', { userId, token })
+}
+
+// ─── PORTAL CLIENT — runtime helpers used by the portal pages ────────────────
+export async function portalSignIn(email, password) {
+  return supabase.auth.signInWithPassword({ email, password })
+}
+
+export async function portalSignOut() {
+  return supabase.auth.signOut()
+}
+
+export async function portalUpdatePassword(newPassword) {
+  return supabase.auth.updateUser({ password: newPassword })
+}
+
+export async function portalSendPasswordReset(email) {
+  const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/portal/login` : undefined
+  return supabase.auth.resetPasswordForEmail(email, { redirectTo })
+}
+
+export async function portalGetClientRow() {
+  const { data: sess } = await supabase.auth.getSession()
+  const userId = sess?.session?.user?.id
+  if (!userId) return null
+  const { data, error } = await supabase
+    .from('portal_clients')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) { console.error('[portalGetClientRow]', error); return null }
+  return data
+}
+
+export async function portalMarkSignedIn(userId) {
+  try {
+    await supabase
+      .from('portal_clients')
+      .update({ first_login: false, last_accessed: new Date().toISOString() })
+      .eq('user_id', userId)
+  } catch (e) { console.error('[portalMarkSignedIn]', e) }
+}
+
+export async function portalListMessages(token) {
+  const { data, error } = await supabase
+    .from('portal_messages')
+    .select('*')
+    .eq('token', token)
+    .order('created_at', { ascending: true })
+  if (error) { console.error('[portalListMessages]', error); return [] }
+  return data || []
+}
+
+export async function portalSendMessage(token, sender_type, sender_name, content) {
+  return supabase.from('portal_messages').insert({ token, sender_type, sender_name, content })
+}
+
+export async function portalMarkMessagesRead(token, sender_type) {
+  return supabase
+    .from('portal_messages')
+    .update({ read: true })
+    .eq('token', token)
+    .eq('sender_type', sender_type)
+    .eq('read', false)
+}
+
 export async function signUp(email, password) {
   return supabase.auth.signUp({ email, password })
 }

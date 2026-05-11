@@ -3859,78 +3859,194 @@ function InvoicesView({invoices,contacts,products,timeEntries=[],activeEntityId,
 // ═══════════════════════════════════════════════════════════════════════════════
 // CLIENT PORTAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function ClientPortalView({portalTokens,contacts,activeEntityId,addPortalToken,deletePortalToken,refreshPortalSnapshot,showToast,entity,setView}){
+function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],activeEntityId,addPortalToken,deletePortalToken,refreshPortalSnapshot,showToast,entity,setView}){
+  const [tab,setTab]=useState("contact"); // contact | company
+  const [generating,setGenerating]=useState(null); // {scope, scopeId, email, name} when generating
+  const [credModal,setCredModal]=useState(null); // {email, password, portalUrl} after creation
   const eTokens=(portalTokens||[]).filter(t=>t.entityId===activeEntityId);
   const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
-  const [generating,setGenerating]=useState(false);
-  const [contactId,setContactId]=useState("");
-  const linkFor=tok=>`${typeof window!=="undefined"?window.location.origin:""}/portal/${tok.token}`;
-  const generate=()=>{
-    if(!contactId){showToast?.("Pick a contact","error");return;}
-    const tok={entityId:activeEntityId,contactId,token:genToken(),createdAt:new Date().toISOString()};
-    addPortalToken(tok);
-    setContactId("");
-    setGenerating(false);
-    showToast?.("Portal link created");
+  const eCompanies=companies.filter(c=>c.entityId===activeEntityId);
+  const linkFor=tok=>`${typeof window!=="undefined"?window.location.origin:""}/portal/login?token=${tok.token}`;
+
+  const buildPayloadFor=(scope,scopeId,settings)=>{
+    const ent=entity;
+    if(scope==="contact"){
+      const ct=contacts.find(c=>c.id===scopeId);
+      const cInvoices=invoices.filter(i=>i.entityId===activeEntityId&&i.contactId===scopeId).map(i=>({number:i.number,createdAt:i.createdAt,dueDate:i.dueDate,status:i.status,total:(i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0),items:i.items}));
+      const cDocs=docs.filter(d=>d.entityId===activeEntityId&&d.contactId===scopeId).map(d=>({id:d.id,name:d.name,status:d.status,createdAt:d.createdAt}));
+      const cQuotes=quotes.filter(q=>q.entityId===activeEntityId&&q.contactId===scopeId).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
+      const cDeals=deals.filter(d=>d.entityId===activeEntityId&&d.contactId===scopeId).map(d=>({id:d.id,title:d.title,stage:d.stage,value:d.value,closeDate:d.closeDate,probability:d.probability,stageNote:d.stageNote}));
+      const cTasks=tasks.filter(t=>t.entityId===activeEntityId&&t.contactId===scopeId&&t.clientVisible!==false).map(t=>({id:t.id,title:t.title,dueDate:t.dueDate,completed:!!t.completed}));
+      return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:ct?{name:ct.name,email:ct.email,companyName:ct.companyName}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,settings};
+    }
+    // company scope
+    const co=companies.find(c=>c.id===scopeId);
+    const ctIds=new Set(contacts.filter(c=>c.companyId===scopeId).map(c=>c.id));
+    const cInvoices=invoices.filter(i=>i.entityId===activeEntityId&&ctIds.has(i.contactId)).map(i=>({number:i.number,createdAt:i.createdAt,dueDate:i.dueDate,status:i.status,total:(i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0),items:i.items}));
+    const cDocs=docs.filter(d=>d.entityId===activeEntityId&&ctIds.has(d.contactId)).map(d=>({id:d.id,name:d.name,status:d.status,createdAt:d.createdAt}));
+    const cQuotes=quotes.filter(q=>q.entityId===activeEntityId&&ctIds.has(q.contactId)).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
+    const cDeals=deals.filter(d=>d.entityId===activeEntityId&&d.companyId===scopeId).map(d=>({id:d.id,title:d.title,stage:d.stage,value:d.value,closeDate:d.closeDate,probability:d.probability,stageNote:d.stageNote}));
+    const cTasks=tasks.filter(t=>t.entityId===activeEntityId&&ctIds.has(t.contactId)&&t.clientVisible!==false).map(t=>({id:t.id,title:t.title,dueDate:t.dueDate,completed:!!t.completed}));
+    return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:co?{name:co.name,email:co.email}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,settings};
   };
-  const copy=async(t)=>{try{await navigator.clipboard.writeText(linkFor(t));showToast?.("Link copied");}catch{showToast?.("Could not copy","error");}};
-  const startGenerate=()=>{
-    if(eContacts.length===0){showToast?.("Add a contact first","error");return;}
-    setGenerating(true);
+
+  const startGenerate=(scope,scopeId)=>{
+    const rec=scope==="contact"?eContacts.find(c=>c.id===scopeId):eCompanies.find(c=>c.id===scopeId);
+    if(!rec){showToast?.("Pick a record first","error");return;}
+    setGenerating({scope,scopeId,email:rec.email||"",name:rec.name,welcome:`Welcome to your portal — your account manager will keep your invoices, documents, and proposals here.`,enabledTabs:{overview:true,invoices:true,documents:true,proposals:true,projects:true,messages:true,tasks:true},color:entity?.color||"#1D4ED8"});
   };
+
+  const handleCreate=async(form)=>{
+    if(!form.email){showToast?.("Email required","error");return;}
+    try{
+      const settings={welcome:form.welcome,enabledTabs:form.enabledTabs,color:form.color};
+      const payload=buildPayloadFor(form.scope,form.scopeId,settings);
+      const { adminCreatePortal } = await import("./lib/supabase.js");
+      const res=await adminCreatePortal({email:form.email,scope:form.scope,scopeId:form.scopeId,entityId:activeEntityId,payload,settings});
+      // Mirror to local CRM state for the reports/list views
+      addPortalToken({entityId:activeEntityId,scope:form.scope,scopeId:form.scopeId,scopeName:form.name,email:form.email,token:res.token,userId:res.userId,createdAt:new Date().toISOString()});
+      setGenerating(null);
+      setCredModal({email:res.email,password:res.password,portalUrl:res.portalUrl||linkFor({token:res.token})});
+    }catch(e){showToast?.(e.message||"Could not create portal","error");}
+  };
+
+  const handleRegenerate=async(t)=>{
+    try{
+      const { adminRegeneratePortalPassword } = await import("./lib/supabase.js");
+      const res=await adminRegeneratePortalPassword({userId:t.userId,token:t.token});
+      setCredModal({email:t.email,password:res.password,portalUrl:linkFor(t),title:"New temporary password"});
+    }catch(e){showToast?.(e.message||"Could not regenerate","error");}
+  };
+
+  const handleRevoke=async(t)=>{
+    if(!confirm(`Revoke portal access for ${t.email||t.scopeName||"this client"}? Their login will be deleted immediately.`))return;
+    try{
+      const { adminRevokePortal } = await import("./lib/supabase.js");
+      await adminRevokePortal({userId:t.userId,token:t.token});
+      deletePortalToken(t.id);
+      showToast?.("Portal revoked");
+    }catch(e){showToast?.(e.message||"Could not revoke","error");}
+  };
+
+  const copy=async(text,msg="Link copied")=>{try{await navigator.clipboard.writeText(text);showToast?.(msg);}catch{showToast?.("Could not copy","error");}};
+
+  const tokensByScope=eTokens.filter(t=>t.scope===tab||(!t.scope&&tab==="contact"));
+
   return(
     <div>
-      <PageHeader title="Client Portal" sub={eTokens.length===0?`Give clients of ${entity?.name||"this workspace"} a private link`:`${eTokens.length} active link${eTokens.length===1?"":"s"}`}>
-        {eTokens.length>0&&!generating&&<button style={S.btnPrimary} onClick={startGenerate}><Ic d={I.plus} size={14}/>New portal link</button>}
-      </PageHeader>
-      {generating&&(
-        <div style={{...S.card({padding:18}),marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>Generate a portal link</div>
-          <Field label="Contact"><select style={S.select} value={contactId} onChange={e=>setContactId(e.target.value)}><option value="">Select contact…</option>{eContacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.companyName?` — ${c.companyName}`:""}</option>)}</select></Field>
-          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:6}}>
-            <button style={S.btnSecondary} onClick={()=>setGenerating(false)}>Cancel</button>
-            <button style={S.btnPrimary} onClick={generate}>Generate link</button>
-          </div>
+      <PageHeader title="Client Portal" sub={`${eTokens.length} active portal${eTokens.length===1?"":"s"}`}>
+        <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
+          {[["contact","Contact Portals"],["company","Company Portals"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setTab(v)} style={{...S.btnGhost,padding:"5px 14px",background:tab===v?"#1D4ED8":"transparent",color:tab===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}}>{l}</button>
+          ))}
         </div>
-      )}
-      {eTokens.length===0&&!generating?(
-        eContacts.length===0?(
-          <EmptyState
-            icon={I.link}
-            title="No client portal links yet"
-            message="You'll need at least one contact before you can generate a portal link. Add a contact, then come back here to share a private link they can use to view their invoices, quotes, and documents."
-            ctaLabel="Add a contact"
-            onCta={()=>setView?.("contacts")}
-          />
-        ):(
-          <EmptyState
-            icon={I.link}
-            title="No client portal links yet"
-            message="Generate a private link for a client so they can view their invoices, quotes, and documents in one place."
-            ctaLabel="Generate your first link"
-            onCta={startGenerate}
-          />
-        )
+      </PageHeader>
+
+      {/* Generator card */}
+      <div style={{...S.card({padding:18}),marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:8}}>Generate a {tab} portal</div>
+        <div style={{fontSize:12,color:"#64748B",marginBottom:12}}>Pick a {tab}, set up their login, choose what they can see, then send them their credentials.</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <select style={{...S.select,flex:1}} onChange={e=>{if(e.target.value)startGenerate(tab,e.target.value);e.target.value="";}}>
+            <option value="">Select a {tab} to generate a portal for…</option>
+            {(tab==="contact"?eContacts:eCompanies).filter(r=>!eTokens.some(t=>t.scope===tab&&t.scopeId===r.id)).map(r=>(
+              <option key={r.id} value={r.id}>{r.name}{r.email?` — ${r.email}`:""}</option>
+            ))}
+          </select>
+        </div>
+        {(tab==="contact"?eContacts:eCompanies).length===0&&(
+          <div style={{fontSize:12,color:"#94A3B8",marginTop:8}}>No {tab}s in this workspace yet. <button style={{background:"none",border:"none",color:"#1D4ED8",cursor:"pointer",fontSize:12,padding:0,textDecoration:"underline"}} onClick={()=>setView?.(tab==="contact"?"contacts":"companies")}>Add one →</button></div>
+        )}
+      </div>
+
+      {/* Active portals list */}
+      {tokensByScope.length===0?(
+        <EmptyState icon={I.link} title={`No ${tab} portals yet`} message={`Pick a ${tab} above to generate their first portal login.`}/>
       ):(
         <div style={S.card({overflow:"hidden"})}>
-          {eTokens.map((t,i)=>{
-            const c=contacts.find(x=>x.id===t.contactId);
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #E9EEF6",fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,display:"grid",gridTemplateColumns:"2fr 2fr 1fr 1fr 220px",gap:12}}>
+            <div>Client</div><div>Email / Portal URL</div><div>Created</div><div>Last access</div><div style={{textAlign:"right"}}>Actions</div>
+          </div>
+          {tokensByScope.map((t,i)=>{
+            const rec=tab==="contact"?contacts.find(c=>c.id===t.scopeId):companies.find(c=>c.id===t.scopeId);
+            const url=linkFor(t);
             return(
-              <div key={t.id} style={{padding:"14px 18px",borderTop:i?"1px solid #E9EEF6":"none",display:"flex",alignItems:"center",gap:12}}>
-                <Avatar name={c?.name||"?"} size={32}/>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{c?.name||"Unknown contact"}</div>
-                  <div style={{fontSize:12,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{linkFor(t)}</div>
+              <div key={t.id} style={{padding:"14px 16px",borderTop:i?"1px solid #E9EEF6":"none",display:"grid",gridTemplateColumns:"2fr 2fr 1fr 1fr 220px",gap:12,alignItems:"center"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                  <Avatar name={rec?.name||"?"} size={28}/>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rec?.name||t.scopeName||"Unknown"}</div>
+                    <div style={{fontSize:10,color:"#94A3B8",textTransform:"uppercase"}}>{t.scope||"contact"}</div>
+                  </div>
                 </div>
-                <button style={S.btnSecondary} onClick={()=>copy(t)}><Ic d={I.copy} size={12}/>Copy</button>
-                {refreshPortalSnapshot&&<button style={S.btnSecondary} title="Refresh portal data" onClick={()=>refreshPortalSnapshot(t.id)}><Ic d={I.bar||I.share} size={12}/>Refresh</button>}
-                <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm("Revoke link?"))deletePortalToken(t.id);}}><Ic d={I.trash} size={13}/></button>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:12,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.email||"—"}</div>
+                  <div style={{fontSize:11,color:"#94A3B8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{url}</div>
+                </div>
+                <div style={{fontSize:11,color:"#475569"}}>{fmtDate(t.createdAt)}</div>
+                <div style={{fontSize:11,color:"#475569"}}>{t.lastAccessed?fmtDate(t.lastAccessed):"never"}</div>
+                <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
+                  <button style={S.btnSecondary} title="Copy link" onClick={()=>copy(url)}><Ic d={I.copy} size={12}/></button>
+                  <button style={S.btnSecondary} title="Preview portal in new tab" onClick={()=>window.open(url,"_blank")}><Ic d={I.share} size={12}/></button>
+                  <button style={S.btnSecondary} title="Regenerate password" onClick={()=>handleRegenerate(t)}><Ic d={I.zap} size={12}/></button>
+                  <button style={{...S.btnGhost,color:"#EF4444"}} title="Revoke" onClick={()=>handleRevoke(t)}><Ic d={I.trash} size={13}/></button>
+                </div>
               </div>
             );
           })}
         </div>
       )}
+
+      {generating&&<GeneratePortalModal initial={generating} onCancel={()=>setGenerating(null)} onSubmit={handleCreate}/>}
+      {credModal&&<PortalCredentialsModal info={credModal} onClose={()=>setCredModal(null)} copy={copy}/>}
     </div>
+  );
+}
+
+function GeneratePortalModal({initial,onCancel,onSubmit}){
+  const [form,setForm]=useState(initial);
+  const toggleTab=(k)=>setForm(p=>({...p,enabledTabs:{...p.enabledTabs,[k]:!p.enabledTabs[k]}}));
+  return(
+    <Modal title={`Generate portal for ${initial.name}`} onClose={onCancel} wide>
+      <Field label="Client email *"><input style={S.input} type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="client@company.com"/></Field>
+      <Field label="Welcome message"><textarea style={S.textarea} rows={2} value={form.welcome} onChange={e=>setForm({...form,welcome:e.target.value})}/></Field>
+      <Field label="Accent color"><input type="color" value={form.color} onChange={e=>setForm({...form,color:e.target.value})} style={{width:60,height:36,border:"1px solid #E2E8F0",borderRadius:6,cursor:"pointer"}}/></Field>
+      <Field label="Sections to enable">
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
+          {Object.keys(form.enabledTabs).filter(k=>k!=="overview").map(k=>(
+            <label key={k} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer",padding:"6px 10px",background:"#F8FAFC",borderRadius:6}}>
+              <input type="checkbox" checked={form.enabledTabs[k]} onChange={()=>toggleTab(k)} style={{accentColor:"#1D4ED8"}}/>
+              <span style={{textTransform:"capitalize"}}>{k}</span>
+            </label>
+          ))}
+        </div>
+      </Field>
+      <div style={{fontSize:11,color:"#94A3B8",background:"#F8FAFC",padding:10,borderRadius:6,marginBottom:14}}>A temporary password will be generated automatically. You'll see it once after creation — copy and send it to the client. They'll be forced to change it on first login.</div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+        <button style={S.btnSecondary} onClick={onCancel}>Cancel</button>
+        <button style={S.btnPrimary} onClick={()=>onSubmit(form)}>Create portal & generate password</button>
+      </div>
+    </Modal>
+  );
+}
+
+function PortalCredentialsModal({info,onClose,copy}){
+  const text=`Portal URL: ${info.portalUrl}\nEmail: ${info.email}\nTemporary password: ${info.password}`;
+  return(
+    <Modal title={info.title||"Portal credentials"} onClose={onClose}>
+      <div style={{fontSize:13,color:"#475569",marginBottom:14}}>Share these credentials with your client. The temporary password is shown only once.</div>
+      <div style={{...S.card({padding:14,background:"#F8FAFC"}),marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,fontSize:13}}>
+          <div style={{color:"#94A3B8"}}>Portal URL</div><div style={{color:"#0F172A",wordBreak:"break-all"}}>{info.portalUrl}</div>
+          <div style={{color:"#94A3B8"}}>Email</div><div style={{color:"#0F172A"}}>{info.email}</div>
+          <div style={{color:"#94A3B8"}}>Password</div><div style={{color:"#0F172A",fontFamily:"monospace",fontSize:14,fontWeight:700}}>{info.password}</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button style={S.btnSecondary} onClick={onClose}>Close</button>
+        <button style={S.btnPrimary} onClick={()=>copy(text,"Credentials copied")}><Ic d={I.copy} size={13}/>Copy credentials</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -5278,7 +5394,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="scheduler"&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
-          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} invoices={invoices} docs={docs} quotes={quotes} deals={deals} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} showToast={showToast} entity={entity} setView={setView}/>}
+          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} showToast={showToast} entity={entity} setView={setView}/>}
           {view==="import"&&<ImportView activeEntityId={activeEntityId} entity={entity} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}

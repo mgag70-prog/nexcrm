@@ -7,7 +7,8 @@ import Portal from './Portal.jsx'
 
 const path = typeof window !== 'undefined' ? window.location.pathname : ''
 const isDemoRoute = path.startsWith('/demo')
-const isPortalRoute = path.startsWith('/portal/')
+// Portal routes: /portal, /portal/login, /portal/dashboard, /portal/:token
+const isPortalRoute = path === '/portal' || path === '/portal/' || path.startsWith('/portal/')
 
 function AuthGate() {
   const [status, setStatus] = useState('loading')
