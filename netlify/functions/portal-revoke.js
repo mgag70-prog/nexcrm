@@ -23,13 +23,18 @@ export async function handler(event) {
     userId = data?.user_id
   }
 
+  // Each call is wrapped in try/catch — Supabase query builders aren't vanilla Promises
+  // and don't have .catch(); they reject the awaited promise normally.
+  const safe = async (label, fn) => {
+    try { await fn() } catch (e) { console.error('[portal-revoke]', label, e?.message || e) }
+  }
   if (token) {
-    await admin.from('portal_messages').delete().eq('token', token).catch(() => {})
-    await admin.from('portal_snapshots').delete().eq('token', token).catch(() => {})
+    await safe('delete portal_messages', () => admin.from('portal_messages').delete().eq('token', token))
+    await safe('delete portal_snapshots', () => admin.from('portal_snapshots').delete().eq('token', token))
   }
   if (userId) {
-    await admin.from('portal_clients').delete().eq('user_id', userId).catch(() => {})
-    await admin.auth.admin.deleteUser(userId).catch(() => {})
+    await safe('delete portal_clients', () => admin.from('portal_clients').delete().eq('user_id', userId))
+    await safe('delete auth user', () => admin.auth.admin.deleteUser(userId))
   }
   return ok({ revoked: true })
 }

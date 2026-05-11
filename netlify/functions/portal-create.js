@@ -51,7 +51,7 @@ export async function handler(event) {
   })
   if (clientErr) {
     // Roll back the auth user to avoid orphan
-    await admin.auth.admin.deleteUser(userId).catch(() => {})
+    try { await admin.auth.admin.deleteUser(userId) } catch (e) { console.error('[portal-create] rollback deleteUser failed:', e?.message || e) }
     return bad(500, `portal_clients insert failed: ${clientErr.message}`)
   }
 
@@ -66,8 +66,8 @@ export async function handler(event) {
     created_at: new Date().toISOString(),
   })
   if (snapErr) {
-    await admin.from('portal_clients').delete().eq('user_id', userId).catch(() => {})
-    await admin.auth.admin.deleteUser(userId).catch(() => {})
+    try { await admin.from('portal_clients').delete().eq('user_id', userId) } catch (e) { console.error('[portal-create] rollback portal_clients failed:', e?.message || e) }
+    try { await admin.auth.admin.deleteUser(userId) } catch (e) { console.error('[portal-create] rollback deleteUser failed:', e?.message || e) }
     return bad(500, `portal_snapshots insert failed: ${snapErr.message}`)
   }
 
