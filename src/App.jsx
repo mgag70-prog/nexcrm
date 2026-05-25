@@ -16,15 +16,12 @@ const SC = {
 };
 
 // ─── FIELD SERVICE ────────────────────────────────────────────────────────────
-const FS_STAGES = ["New Lead","Contacted","Responded / Interested","Follow-up / Discovery","Demo Scheduled","Estimate Sent","Won","In Progress","Completed","Lost"];
+const FS_STAGES = ["New Lead","Contacted","Estimate Sent","Won / Scheduled","In Progress","Completed","Lost"];
 const FS_SC = {
   "New Lead":"#94A3B8",
   "Contacted":"#3B82F6",
-  "Responded / Interested":"#06B6D4",
-  "Follow-up / Discovery":"#8B5CF6",
-  "Demo Scheduled":"#F97316",
   "Estimate Sent":"#F59E0B",
-  "Won":"#10B981",
+  "Won / Scheduled":"#10B981",
   "In Progress":"#F97316",
   "Completed":"#14B8A6",
   "Lost":"#EF4444",
@@ -98,8 +95,12 @@ const STAGE_MIGRATION_MAP = {
   "Contract Sent": "Proposal Sent",
   "Closed Won": "Won",
   "Closed Lost": "Lost",
-  // Field Service rename: when a non-FS entity gets converted to FS, "Proposal Sent" maps to "Estimate Sent".
+  // Field Service: "Proposal Sent" → "Estimate Sent". Sales-only stages collapse to "Contacted" / "Estimate Sent" for FS.
   "Proposal Sent": "Estimate Sent",
+  "Demo Scheduled": "Estimate Sent",
+  "Responded / Interested": "Contacted",
+  "Follow-up / Discovery": "Contacted",
+  "Won": "Won / Scheduled",
 };
 const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","BiggerPockets","HubSpot Import","Zoho Import","Other"];
 const PLATFORMS = SOURCES; // alias — "Source" is now also surfaced as "Platform"
@@ -113,6 +114,8 @@ const PRIORITIES = ["low","medium","high"];
 const INDUSTRIES = [
   // Generic
   "Technology","SaaS","Finance","Healthcare","Retail","Manufacturing","Real Estate","Legal","Education",
+  // Field Service
+  "Construction","Landscaping","Electrical","HVAC","Plumbing","Roofing","Painting","Pest Control","Cleaning Services","Property Management",
   // Fairway Circuit
   "Indoor Golf Facility","Outdoor League","Tech Vendor","Golf Vendor","Golf Trip Organizer",
   // Crestfolio
@@ -208,7 +211,7 @@ const DEMO_FULL = {
   entities:[
     {id:"e1",name:"Apex Ventures LLC",type:"LLC",color:"#3B82F6",industry:"Technology"},
     {id:"e2",name:"GreenPath Foundation",type:"Non-Profit",color:"#10B981",industry:"Education"},
-    {id:"e5",name:"GreenScape Pro",type:"Field Service Business",color:"#059669",industry:"Other",website:"greenscapepro.com"},
+    {id:"e5",name:"GreenScape Pro",type:"Field Service Business",color:"#059669",industry:"Landscaping",website:"greenscapepro.com"},
   ],
   contacts:[
     {id:"c1",entityId:"e1",name:"Sarah Johnson",email:"sarah@techcorp.com",phone:"+1 555-0101",companyName:"TechCorp",source:"LinkedIn",title:"VP of Engineering",createdAt:new Date(Date.now()-5*864e5).toISOString()},
@@ -314,15 +317,22 @@ const DEMO_FULL = {
   timeClockEntries:(()=>{
     const out=[];
     const day=(daysAgo,h,m=0)=>{const d=new Date();d.setDate(d.getDate()-daysAgo);d.setHours(h,m,0,0);return d.toISOString();};
-    // Past week of work
+    // Past week of work — d 3-5 approved (settled), d 1-2 pending (needs supervisor review)
     [1,2,3,4,5].forEach(d=>{
-      out.push({id:`tc_${d}_1`,entityId:"e5",employeeId:"emp1",jobId:d%2?"jb1":"jb5",clockIn:day(d,7,30),clockOut:day(d,15,30),hours:8,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10)});
-      out.push({id:`tc_${d}_2`,entityId:"e5",employeeId:"emp2",jobId:d%2?"jb1":"jb5",clockIn:day(d,7,45),clockOut:day(d,15,30),hours:7.75,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10)});
-      out.push({id:`tc_${d}_3`,entityId:"e5",employeeId:"emp3",jobId:d%2?"jb1":"jb12",clockIn:day(d,8,0),clockOut:day(d,15,0),hours:7,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10)});
+      const status=d<=2?"pending":"approved";
+      // Make Mike have a 9.5-hour day to demo daily OT badge
+      const mikeHrs=d===2?9.5:8;
+      const mikeOut=d===2?day(d,17,0):day(d,15,30);
+      out.push({id:`tc_${d}_1`,entityId:"e5",employeeId:"emp1",jobId:d%2?"jb1":"jb5",clockIn:day(d,7,30),clockOut:mikeOut,hours:mikeHrs,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10),status});
+      out.push({id:`tc_${d}_2`,entityId:"e5",employeeId:"emp2",jobId:d%2?"jb1":"jb5",clockIn:day(d,7,45),clockOut:day(d,15,30),hours:7.75,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10),status});
+      out.push({id:`tc_${d}_3`,entityId:"e5",employeeId:"emp3",jobId:d%2?"jb1":"jb12",clockIn:day(d,8,0),clockOut:day(d,15,0),hours:7,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10),status});
     });
+    // Tyler flagged Day-1 entry for correction — supervisor needs to review
+    const tyler1=out.find(e=>e.id==="tc_1_3");
+    if(tyler1){tyler1.correctionRequested=true;tyler1.correctionNote="I worked until 4pm not 3pm — finishing the Maple Ridge backyard took longer than expected.";tyler1.correctionRequestedAt=new Date().toISOString();}
     // Today: Mike + Carlos clocked in, not out yet
-    out.push({id:"tc_today_1",entityId:"e5",employeeId:"emp1",jobId:"jb3",clockIn:day(0,7,30),clockOut:null,hours:null,gpsNote:"Location recorded",date:new Date().toISOString().slice(0,10)});
-    out.push({id:"tc_today_2",entityId:"e5",employeeId:"emp2",jobId:"jb3",clockIn:day(0,7,45),clockOut:null,hours:null,gpsNote:"Location recorded",date:new Date().toISOString().slice(0,10)});
+    out.push({id:"tc_today_1",entityId:"e5",employeeId:"emp1",jobId:"jb3",clockIn:day(0,7,30),clockOut:null,hours:null,gpsNote:"Location recorded",date:new Date().toISOString().slice(0,10),status:"open"});
+    out.push({id:"tc_today_2",entityId:"e5",employeeId:"emp2",jobId:"jb3",clockIn:day(0,7,45),clockOut:null,hours:null,gpsNote:"Location recorded",date:new Date().toISOString().slice(0,10),status:"open"});
     return out;
   })(),
   fsSettings:{e5:{defaultDepositPct:30,defaultLaborRate:65,serviceArea:"Greater Boston · 25-mile radius",businessHours:"Mon-Sat 7am-5pm",logo:""}},
@@ -352,14 +362,14 @@ const DEMO_FULL = {
   DEMO_FULL.deals.push(
     {id:"jb1",entityId:FS,contactId:"gc3",companyId:"gco1",title:"Maple Ridge weekly grounds maintenance",value:1850,stage:"In Progress",closeDate:dayOffset(-1),probability:100,jobSiteAddress:"45 Maple Ridge Dr, Newton MA 02458",serviceType:"Lawn Maintenance",crewAssigned:["emp1","emp2","emp3"],materialsCost:120,recurring:true,frequency:"Weekly",nextOccurrence:dayOffset(6),depositRequired:false,createdAt:new Date(Date.now()-90*864e5).toISOString()},
     {id:"jb2",entityId:FS,contactId:"gc2",title:"Brennan residence spring cleanup",value:680,stage:"Completed",closeDate:dayOffset(-7),probability:100,jobSiteAddress:"47 Oak Ridge Dr, Newton MA 02458",serviceType:"Spring Cleanup",crewAssigned:["emp2","emp3"],materialsCost:45,recurring:false,depositRequired:true,depositAmount:200,depositPaid:true,depositPaidDate:dayOffset(-14),completionNotes:"Hauled away 14 bags of leaves and debris. Edged all beds and applied pre-emergent.",createdAt:new Date(Date.now()-21*864e5).toISOString()},
-    {id:"jb3",entityId:FS,contactId:"gc5",companyId:"gco2",title:"Riverside Apts patio hardscape — building 4",value:18400,stage:"Won",closeDate:dayOffset(0),probability:100,jobSiteAddress:"122 Riverside Ave, Cambridge MA 02141",serviceType:"Hardscaping",crewAssigned:["emp1","emp2"],materialsCost:6200,recurring:false,depositRequired:true,depositAmount:5520,depositPaid:true,depositPaidDate:dayOffset(-7),createdAt:new Date(Date.now()-30*864e5).toISOString()},
+    {id:"jb3",entityId:FS,contactId:"gc5",companyId:"gco2",title:"Riverside Apts patio hardscape — building 4",value:18400,stage:"Won / Scheduled",closeDate:dayOffset(0),probability:100,jobSiteAddress:"122 Riverside Ave, Cambridge MA 02141",serviceType:"Hardscaping",crewAssigned:["emp1","emp2"],materialsCost:6200,recurring:false,depositRequired:true,depositAmount:5520,depositPaid:true,depositPaidDate:dayOffset(-7),createdAt:new Date(Date.now()-30*864e5).toISOString()},
     {id:"jb4",entityId:FS,contactId:"gc6",companyId:"gco3",title:"Oak Hills aeration & overseed (fall)",value:4200,stage:"Estimate Sent",closeDate:dayOffset(60),probability:60,jobSiteAddress:"Oak Hills Estates common areas, Brookline MA",serviceType:"Aeration",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:1260,depositPaid:false,createdAt:new Date(Date.now()-3*864e5).toISOString()},
     {id:"jb5",entityId:FS,contactId:"gc7",companyId:"gco4",title:"Sunset Plaza bi-weekly grounds",value:2400,stage:"In Progress",closeDate:dayOffset(-2),probability:100,jobSiteAddress:"500 Sunset Plaza, Watertown MA 02472",serviceType:"Lawn Maintenance",crewAssigned:["emp1","emp2"],materialsCost:0,recurring:true,frequency:"Bi-Weekly",nextOccurrence:dayOffset(12),depositRequired:false,createdAt:new Date(Date.now()-180*864e5).toISOString()},
     {id:"jb6",entityId:FS,contactId:"gc1",title:"Walsh residence mulch refresh",value:520,stage:"New Lead",closeDate:dayOffset(10),probability:30,jobSiteAddress:"234 Pine St, Newton MA 02458",serviceType:"Mulching",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:false,createdAt:new Date(Date.now()-2*864e5).toISOString()},
     {id:"jb7",entityId:FS,contactId:"gc4",title:"Henderson tree pruning — front oaks",value:850,stage:"Contacted",closeDate:dayOffset(7),probability:50,jobSiteAddress:"88 Willow Way, Brookline MA 02446",serviceType:"Tree/Shrub Care",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:false,createdAt:new Date(Date.now()-5*864e5).toISOString()},
-    {id:"jb8",entityId:FS,contactId:null,companyId:"gco5",title:"Greenfield Park snow removal contract (winter 26-27)",value:22000,stage:"Won",closeDate:dayOffset(150),probability:100,jobSiteAddress:"1 Greenfield Way, Waltham MA 02451",serviceType:"Snow Removal",crewAssigned:["emp1","emp2","emp3"],materialsCost:0,recurring:false,depositRequired:true,depositAmount:5500,depositPaid:true,depositPaidDate:dayOffset(-15),createdAt:new Date(Date.now()-45*864e5).toISOString()},
-    {id:"jb9",entityId:FS,contactId:"gc3",companyId:"gco1",title:"Maple Ridge entrance landscape redesign",value:9500,stage:"Demo Scheduled",closeDate:dayOffset(14),probability:65,jobSiteAddress:"45 Maple Ridge Dr (entry monument), Newton MA",serviceType:"Landscape Design",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:2850,depositPaid:false,createdAt:new Date(Date.now()-10*864e5).toISOString()},
-    {id:"jb10",entityId:FS,contactId:"gc5",companyId:"gco2",title:"Riverside drip irrigation install — courtyard",value:6800,stage:"Follow-up / Discovery",closeDate:dayOffset(25),probability:45,jobSiteAddress:"122 Riverside Ave, Cambridge MA 02141",serviceType:"Irrigation",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:2040,depositPaid:false,createdAt:new Date(Date.now()-12*864e5).toISOString()},
+    {id:"jb8",entityId:FS,contactId:null,companyId:"gco5",title:"Greenfield Park snow removal contract (winter 26-27)",value:22000,stage:"Won / Scheduled",closeDate:dayOffset(150),probability:100,jobSiteAddress:"1 Greenfield Way, Waltham MA 02451",serviceType:"Snow Removal",crewAssigned:["emp1","emp2","emp3"],materialsCost:0,recurring:false,depositRequired:true,depositAmount:5500,depositPaid:true,depositPaidDate:dayOffset(-15),createdAt:new Date(Date.now()-45*864e5).toISOString()},
+    {id:"jb9",entityId:FS,contactId:"gc3",companyId:"gco1",title:"Maple Ridge entrance landscape redesign",value:9500,stage:"Estimate Sent",closeDate:dayOffset(14),probability:65,jobSiteAddress:"45 Maple Ridge Dr (entry monument), Newton MA",serviceType:"Landscape Design",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:2850,depositPaid:false,createdAt:new Date(Date.now()-10*864e5).toISOString()},
+    {id:"jb10",entityId:FS,contactId:"gc5",companyId:"gco2",title:"Riverside drip irrigation install — courtyard",value:6800,stage:"Contacted",closeDate:dayOffset(25),probability:45,jobSiteAddress:"122 Riverside Ave, Cambridge MA 02141",serviceType:"Irrigation",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:2040,depositPaid:false,createdAt:new Date(Date.now()-12*864e5).toISOString()},
     {id:"jb11",entityId:FS,contactId:"gc8",title:"Foster residence fall cleanup",value:540,stage:"Completed",closeDate:dayOffset(-3),probability:100,jobSiteAddress:"12 Birch Lane, Newton MA 02465",serviceType:"Fall Cleanup",crewAssigned:["emp3"],materialsCost:0,recurring:false,depositRequired:false,completionNotes:"Single-crew job. Hauled 9 bags off-site. Customer paid by check on completion.",createdAt:new Date(Date.now()-30*864e5).toISOString()},
     {id:"jb12",entityId:FS,contactId:"gc7",companyId:"gco4",title:"Robert Chen residence weekly lawn (executive perk)",value:240,stage:"In Progress",closeDate:dayOffset(-3),probability:100,jobSiteAddress:"77 Sunset Dr, Watertown MA 02472",serviceType:"Lawn Maintenance",crewAssigned:["emp3"],materialsCost:0,recurring:true,frequency:"Weekly",nextOccurrence:dayOffset(4),depositRequired:false,createdAt:new Date(Date.now()-60*864e5).toISOString()},
   );
@@ -4302,7 +4312,7 @@ function PortalCredentialsModal({info,onClose,copy}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // FIELD SERVICE — MOBILE FIELD VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
-function FieldView({entity,activeEntityId,deals,contacts,companies,employees,timeClockEntries,notes,updateDeal,addNote,clockInEmployee,clockOutEmployee,onExit,recentJobId,setRecentJobId,showToast,_tab,_setTab,_selJobId,_setSelJobId}){
+function FieldView({entity,activeEntityId,deals,contacts,companies,employees,timeClockEntries,notes,updateDeal,addNote,clockInEmployee,clockOutEmployee,requestTimeCorrection,onExit,recentJobId,setRecentJobId,showToast,_tab,_setTab,_selJobId,_setSelJobId}){
   const tab=_tab||"jobs";
   const selJobId=_selJobId||null;
   const setSelJobId=_setSelJobId||(()=>{});
@@ -4411,7 +4421,7 @@ function FieldView({entity,activeEntityId,deals,contacts,companies,employees,tim
   // ── TIME CLOCK (worker PIN inside field view) ──
   if(tab==="timeclock"){
     return(
-      <WorkerPinView entity={entity} eEmps={eEmps} eDeals={eDeals} todayStr={todayStr} openEntry={(id)=>timeClockEntries.find(e=>e.entityId===activeEntityId&&e.employeeId===id&&!e.clockOut)} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setTab("jobs")} showToast={showToast}/>
+      <WorkerPinView entity={entity} eEmps={eEmps} eDeals={eDeals} eEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} todayStr={todayStr} openEntry={(id)=>timeClockEntries.find(e=>e.entityId===activeEntityId&&e.employeeId===id&&!e.clockOut)} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} requestTimeCorrection={requestTimeCorrection} onExit={()=>setTab("jobs")} showToast={showToast}/>
     );
   }
 
@@ -4471,7 +4481,7 @@ function FieldView({entity,activeEntityId,deals,contacts,companies,employees,tim
   );
 }
 
-function FieldViewShell({entity,activeEntityId,deals,contacts,companies,employees,timeClockEntries,notes,updateDeal,addNote,clockInEmployee,clockOutEmployee,onExit,recentJobId,setRecentJobId,showToast}){
+function FieldViewShell({entity,activeEntityId,deals,contacts,companies,employees,timeClockEntries,notes,updateDeal,addNote,clockInEmployee,clockOutEmployee,requestTimeCorrection,onExit,recentJobId,setRecentJobId,showToast}){
   const [tab,setTab]=useState("jobs");
   const [selJobId,setSelJobId]=useState(null);
   const showTabBar = !selJobId && tab!=="timeclock";
@@ -4493,7 +4503,7 @@ function FieldViewShell({entity,activeEntityId,deals,contacts,companies,employee
         <button style={{background:"rgba(255,255,255,0.18)",border:"none",color:"#fff",padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}} onClick={onExit}>Exit</button>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"18px 14px",paddingBottom:showTabBar?80:18}}>
-        <FieldView entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} timeClockEntries={timeClockEntries} notes={notes} updateDeal={updateDeal} addNote={addNote} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={onExit} recentJobId={recentJobId} setRecentJobId={setRecentJobId} showToast={showToast} _tab={tab} _setTab={setTab} _selJobId={selJobId} _setSelJobId={setSelJobId}/>
+        <FieldView entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} timeClockEntries={timeClockEntries} notes={notes} updateDeal={updateDeal} addNote={addNote} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} requestTimeCorrection={requestTimeCorrection} onExit={onExit} recentJobId={recentJobId} setRecentJobId={setRecentJobId} showToast={showToast} _tab={tab} _setTab={setTab} _selJobId={selJobId} _setSelJobId={setSelJobId}/>
       </div>
       {showTabBar&&(
         <div style={{position:"absolute",left:0,right:0,bottom:0,display:"flex",background:"#FFFFFF",borderTop:"1px solid #E2E8F0",boxShadow:"0 -2px 8px rgba(15,30,60,0.06)"}}>
@@ -4510,8 +4520,13 @@ function FieldViewShell({entity,activeEntityId,deals,contacts,companies,employee
 // ═══════════════════════════════════════════════════════════════════════════════
 // FIELD SERVICE — TIME CLOCK
 // ═══════════════════════════════════════════════════════════════════════════════
-function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,clockInEmployee,clockOutEmployee,addTimeClockEntry,updateTimeClockEntry,deleteTimeClockEntry,showToast,initialMode}){
+function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,clockInEmployee,clockOutEmployee,addTimeClockEntry,updateTimeClockEntry,deleteTimeClockEntry,approveTimeEntry,rejectTimeEntry,resolveTimeCorrection,requestTimeCorrection,showToast,initialMode}){
   const [mode,setMode]=useState(initialMode||"supervisor"); // supervisor | worker
+  const [rejecting,setRejecting]=useState(null); // entry being rejected
+  const [rejectReason,setRejectReason]=useState("");
+  const [photoOpen,setPhotoOpen]=useState(null); // dataUrl to view
+  const [editing,setEditing]=useState(null); // entry being edited via correction
+  const [editForm,setEditForm]=useState({});
   // Re-render every 30s for live "duration" display
   const [,setTick]=useState(0);
   useEffect(()=>{const id=setInterval(()=>setTick(t=>t+1),30000);return()=>clearInterval(id);},[]);
@@ -4525,7 +4540,7 @@ function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,c
   // Week boundaries (Mon-Sun)
   const weekBounds=()=>{
     const d=new Date();
-    const day=d.getDay()||7; // 1..7 Mon..Sun
+    const day=d.getDay()||7;
     const mon=new Date(d);mon.setDate(d.getDate()-(day-1));mon.setHours(0,0,0,0);
     const sun=new Date(mon);sun.setDate(mon.getDate()+6);sun.setHours(23,59,59,999);
     return{mon,sun};
@@ -4533,56 +4548,114 @@ function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,c
   const {mon,sun}=weekBounds();
   const weekDays=Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;});
 
+  const completed=(e)=>e.clockOut&&e.hours!=null;
+  const inWeek=e=>{const dt=new Date(e.date);return dt>=mon&&dt<=sun;};
+  const statusOf=e=>e.status||(completed(e)?"pending":"open");
   const hoursForEmpDay=(empId,d)=>{
     const ds=d.toISOString().slice(0,10);
-    return eEntries.filter(e=>e.employeeId===empId&&e.date===ds&&e.clockOut).reduce((s,e)=>s+(e.hours||0),0);
+    return eEntries.filter(e=>e.employeeId===empId&&e.date===ds&&completed(e)&&statusOf(e)!=="rejected").reduce((s,e)=>s+(e.hours||0),0);
   };
-  const todayHours=(empId)=>eEntries.filter(e=>e.employeeId===empId&&e.date===todayStr&&e.clockOut).reduce((s,e)=>s+(e.hours||0),0);
+  const todayHours=(empId)=>eEntries.filter(e=>e.employeeId===empId&&e.date===todayStr&&completed(e)&&statusOf(e)!=="rejected").reduce((s,e)=>s+(e.hours||0),0);
+  const weekHoursFor=(empId)=>weekDays.reduce((s,d)=>s+hoursForEmpDay(empId,d),0);
   const openEntry=(empId)=>eEntries.find(e=>e.employeeId===empId&&!e.clockOut);
 
+  // Counts (this week, completed only)
+  const weekEntries=eEntries.filter(e=>completed(e)&&inWeek(e));
+  const pendingCount=weekEntries.filter(e=>statusOf(e)==="pending").length;
+  const approvedCount=weekEntries.filter(e=>statusOf(e)==="approved").length;
+  const rejectedCount=weekEntries.filter(e=>statusOf(e)==="rejected").length;
+  const correctionCount=weekEntries.filter(e=>e.correctionRequested).length;
+  const overtimeEmployees=eEmps.filter(emp=>weekHoursFor(emp.id)>40).length;
+  const approachingOT=eEmps.filter(emp=>{const h=weekHoursFor(emp.id);return h>=36&&h<=40;}).length;
+
   const exportWeekCSV=()=>{
+    // Only approved entries
     const rows=[["Employee Name","Date","Job Name","Clock In","Clock Out","Hours"]];
-    eEntries.filter(e=>{const dt=new Date(e.date);return dt>=mon&&dt<=sun&&e.clockOut;}).forEach(e=>{
+    weekEntries.filter(e=>statusOf(e)==="approved").forEach(e=>{
       const emp=eEmps.find(x=>x.id===e.employeeId);
       const job=eDeals.find(d=>d.id===e.jobId);
       rows.push([emp?.name||"—",e.date,job?.title||"—",fmtClock(e.clockIn),fmtClock(e.clockOut),(e.hours||0).toFixed(2)]);
     });
+    if(rows.length===1){showToast?.("No approved entries this week to export","error");return;}
     const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
     const blob=new Blob([csv],{type:"text/csv"});
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`timeclock-week-${mon.toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(a.href);
-    showToast?.("Week exported as CSV");
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`timeclock-approved-${mon.toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(a.href);
+    showToast?.(`Exported ${rows.length-1} approved entries`);
+  };
+  const approveAllWeek=()=>{
+    const pend=weekEntries.filter(e=>statusOf(e)==="pending");
+    if(pend.length===0){showToast?.("Nothing to approve");return;}
+    if(!confirm(`Approve all ${pend.length} pending entries for the week?`))return;
+    pend.forEach(e=>approveTimeEntry(e.id));
+    showToast?.(`Approved ${pend.length} entries`);
+  };
+  const startEdit=(entry)=>{
+    setEditing(entry.id);
+    setEditForm({clockIn:entry.clockIn?.slice(0,16),clockOut:entry.clockOut?.slice(0,16),jobId:entry.jobId||"",notes:""});
+  };
+  const saveEdit=()=>{
+    const e=eEntries.find(x=>x.id===editing);
+    if(!e)return;
+    const ci=editForm.clockIn?new Date(editForm.clockIn).toISOString():e.clockIn;
+    const co=editForm.clockOut?new Date(editForm.clockOut).toISOString():e.clockOut;
+    const hrs=ci&&co?Math.max(0,(new Date(co)-new Date(ci))/3600000):e.hours;
+    updateTimeClockEntry(e.id,{clockIn:ci,clockOut:co,hours:hrs,jobId:editForm.jobId||null});
+    resolveTimeCorrection(e.id);
+    setEditing(null);
+    showToast?.("Entry corrected & resolved");
   };
 
   // ── WORKER VIEW ──
   if(mode==="worker"){
-    return <WorkerPinView entity={entity} eEmps={eEmps} eDeals={eDeals} todayStr={todayStr} openEntry={openEntry} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setMode("supervisor")} showToast={showToast}/>;
+    return <WorkerPinView entity={entity} eEmps={eEmps} eDeals={eDeals} eEntries={eEntries} todayStr={todayStr} openEntry={openEntry} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} requestTimeCorrection={requestTimeCorrection} onExit={()=>setMode("supervisor")} showToast={showToast}/>;
   }
 
   // ── SUPERVISOR VIEW ──
   const clockedIn=eEmps.filter(e=>openEntry(e.id));
   const clockedOut=eEmps.filter(e=>!openEntry(e.id));
+  const reviewQueue=weekEntries.filter(e=>statusOf(e)==="pending"||e.correctionRequested||statusOf(e)==="rejected").sort((a,b)=>new Date(b.clockIn)-new Date(a.clockIn));
+
+  const StatusBadge=({e})=>{
+    if(e.correctionRequested) return <span style={S.badge("#F59E0B")}><Ic d={I.bell} size={9}/>Correction requested</span>;
+    const s=statusOf(e);
+    if(s==="approved") return <span style={S.badge("#10B981")}><Ic d={I.ok} size={9}/>Approved</span>;
+    if(s==="rejected") return <span style={S.badge("#EF4444")}><Ic d={I.x} size={9}/>Rejected</span>;
+    if(s==="open") return <span style={S.badge("#1D4ED8")}><Ic d={I.clock} size={9}/>Open</span>;
+    return <span style={S.badge("#64748B")}>Pending</span>;
+  };
+
   return(
     <div>
-      <PageHeader title="Time Clock" sub={`${clockedIn.length} clocked in · ${eEmps.length} employees`}>
-        <button style={S.btnSecondary} onClick={exportWeekCSV}><Ic d={I.dl} size={13}/>Export Week</button>
+      <PageHeader title="Time Clock" sub={`${clockedIn.length} clocked in · ${eEmps.length} employees · ${pendingCount} pending review`}>
+        <button style={S.btnSecondary} onClick={exportWeekCSV}><Ic d={I.dl} size={13}/>Export Week (approved)</button>
+        <button style={{...S.btnSecondary,background:"#DCFCE7",borderColor:"#10B981",color:"#065F46"}} disabled={pendingCount===0} onClick={approveAllWeek}><Ic d={I.ok} size={13}/>Approve All ({pendingCount})</button>
         <button style={S.btnPrimary} onClick={()=>setMode("worker")}><Ic d={I.eye} size={13}/>Worker View</button>
       </PageHeader>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:12}}>
         <StatCard label="Clocked in" value={clockedIn.length} sub="Right now" color="#10B981" icon={I.clock}/>
-        <StatCard label="On break / out" value={clockedOut.length} sub="Not clocked in" color="#94A3B8" icon={I.users}/>
-        <StatCard label="Hours today" value={eEmps.reduce((s,e)=>s+todayHours(e.id),0).toFixed(1)} sub="All employees" color="#1D4ED8" icon={I.bar}/>
-        <StatCard label="Hours this week" value={eEmps.reduce((s,e)=>s+weekDays.reduce((ss,d)=>ss+hoursForEmpDay(e.id,d),0),0).toFixed(1)} sub="Mon–Sun" color="#8B5CF6" icon={I.cal}/>
+        <StatCard label="Pending review" value={pendingCount} sub={`${approvedCount} approved · ${rejectedCount} rejected`} color="#F59E0B" icon={I.bell}/>
+        <StatCard label="Hours this week" value={eEmps.reduce((s,e)=>s+weekHoursFor(e.id),0).toFixed(1)} sub="Approved + pending" color="#1D4ED8" icon={I.cal}/>
+        <StatCard label="Overtime" value={`${overtimeEmployees} over`} sub={`${approachingOT} approaching 40h`} color={overtimeEmployees>0?"#EF4444":approachingOT>0?"#F59E0B":"#94A3B8"} icon={I.bar}/>
       </div>
+      {correctionCount>0&&(
+        <div style={{...S.card({padding:12}),marginBottom:12,background:"#FFFBEB",borderColor:"#F59E0B"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#92400E",display:"flex",alignItems:"center",gap:6}}><Ic d={I.bell} size={13}/>{correctionCount} correction request{correctionCount===1?"":"s"} awaiting review — see the review queue below.</div>
+        </div>
+      )}
+
       <div style={{...S.card({padding:18}),marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>Live status</div>
         {eEmps.length===0?(
           <div style={{textAlign:"center",padding:24,color:"#94A3B8",fontSize:13}}>No employees yet. Add them in Settings → Employees.</div>
         ):(
           <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead><tr>{["Employee","Role","Status","At job","Since","Today","Actions"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <thead><tr>{["Employee","Role","Status","At job","Since","Today","Week","Actions"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>{eEmps.map(emp=>{
               const open=openEntry(emp.id);
               const job=open&&eDeals.find(d=>d.id===open.jobId);
+              const wkH=weekHoursFor(emp.id);
+              const wkColor=wkH>40?"#EF4444":wkH>=36?"#F59E0B":"#0F172A";
+              const today=todayHours(emp.id);
               return(
                 <tr key={emp.id}>
                   <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{emp.name}</td>
@@ -4590,7 +4663,8 @@ function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,c
                   <td style={S.td}>{open?<span style={S.badge("#10B981")}><span style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>Clocked in</span>:<span style={S.badge("#94A3B8")}>Out</span>}</td>
                   <td style={S.td}>{job?.title||(open?"(no job)":"—")}</td>
                   <td style={S.td}>{open?`${fmtClock(open.clockIn)} · ${liveDuration(open.clockIn)}`:"—"}</td>
-                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{todayHours(emp.id).toFixed(2)} hr</td>
+                  <td style={{...S.td,fontWeight:600,color:today>8?"#F97316":"#0F172A"}}>{today.toFixed(2)} hr {today>8&&<span style={{...S.badge("#F97316"),fontSize:9,marginLeft:4}}>OT</span>}</td>
+                  <td style={{...S.td,fontWeight:700,color:wkColor}}>{wkH.toFixed(2)} hr {wkH>40&&<span style={{...S.badge("#EF4444"),fontSize:9,marginLeft:4}}>OT</span>}{wkH>=36&&wkH<=40&&<span style={{...S.badge("#F59E0B"),fontSize:9,marginLeft:4}}>Near OT</span>}</td>
                   <td style={S.td}>
                     {open?(
                       <button style={{...S.btnSecondary,padding:"4px 10px",fontSize:12}} onClick={()=>{clockOutEmployee(emp.id);showToast?.(`${emp.name} clocked out`);}}>Clock out</button>
@@ -4607,10 +4681,65 @@ function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,c
           </table>
         )}
       </div>
+
+      {/* REVIEW QUEUE — pending entries + correction requests + rejected */}
+      <div style={{...S.card({padding:18}),marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>Entries to review</div>
+          <div style={{fontSize:11,color:"#64748B"}}>Pending, rejected, and correction requests · approved entries hidden</div>
+        </div>
+        {reviewQueue.length===0?(
+          <div style={{textAlign:"center",padding:24,color:"#94A3B8",fontSize:13}}>All caught up — no entries waiting on review.</div>
+        ):(
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>{["Status","Employee","Date","Job","Clock in/out","Hours","Photo","Actions"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{reviewQueue.map(e=>{
+              const emp=eEmps.find(x=>x.id===e.employeeId);
+              const job=eDeals.find(d=>d.id===e.jobId);
+              const dayOT=(e.hours||0)>8;
+              return(
+                <tr key={e.id} style={{background:e.correctionRequested?"#FEF3C7":undefined}}>
+                  <td style={S.td}><StatusBadge e={e}/></td>
+                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{emp?.name||"—"}</td>
+                  <td style={S.td}>{e.date}</td>
+                  <td style={S.td}>{job?.title.slice(0,32)||"—"}</td>
+                  <td style={S.td}>{fmtClock(e.clockIn)} → {fmtClock(e.clockOut)}</td>
+                  <td style={{...S.td,fontWeight:700,color:dayOT?"#F97316":"#0F172A"}}>{(e.hours||0).toFixed(2)} {dayOT&&<span style={{...S.badge("#F97316"),fontSize:9,marginLeft:4}}>OT</span>}</td>
+                  <td style={S.td}>{e.verificationPhoto?<button style={{...S.btnGhost,padding:0}} onClick={()=>setPhotoOpen(e.verificationPhoto)}><img src={e.verificationPhoto} alt="" style={{width:32,height:32,objectFit:"cover",borderRadius:6,border:"1px solid #E2E8F0"}}/></button>:<span style={{color:"#CBD5E1",fontSize:11}}>—</span>}</td>
+                  <td style={S.td}>
+                    {statusOf(e)==="pending"&&!e.correctionRequested&&(<>
+                      <button style={{...S.btnGhost,color:"#10B981",fontSize:11}} onClick={()=>{approveTimeEntry(e.id);showToast?.("Approved");}}><Ic d={I.ok} size={11}/>Approve</button>
+                      <button style={{...S.btnGhost,color:"#EF4444",fontSize:11}} onClick={()=>{setRejecting(e.id);setRejectReason("");}}><Ic d={I.x} size={11}/>Reject</button>
+                    </>)}
+                    {e.correctionRequested&&(<>
+                      <button style={{...S.btnGhost,color:"#1D4ED8",fontSize:11}} onClick={()=>startEdit(e)}><Ic d={I.edit} size={11}/>Edit & resolve</button>
+                      <button style={{...S.btnGhost,fontSize:11}} onClick={()=>{resolveTimeCorrection(e.id);showToast?.("Correction dismissed");}}>Dismiss</button>
+                    </>)}
+                    {statusOf(e)==="rejected"&&(
+                      <button style={{...S.btnGhost,color:"#10B981",fontSize:11}} onClick={()=>{approveTimeEntry(e.id);showToast?.("Approved");}}><Ic d={I.ok} size={11}/>Approve anyway</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        )}
+        {reviewQueue.filter(e=>e.correctionRequested).map(e=>(
+          <div key={"note_"+e.id} style={{marginTop:10,padding:"10px 12px",background:"#FFFBEB",borderRadius:8,border:"1px solid #F59E0B40",fontSize:12,color:"#92400E"}}>
+            <strong>{eEmps.find(x=>x.id===e.employeeId)?.name}</strong> says: {e.correctionNote||"(no note)"}
+          </div>
+        ))}
+        {reviewQueue.filter(e=>statusOf(e)==="rejected"&&e.rejectedReason).map(e=>(
+          <div key={"rej_"+e.id} style={{marginTop:10,padding:"10px 12px",background:"#FEF2F2",borderRadius:8,border:"1px solid #FCA5A5",fontSize:12,color:"#7F1D1D"}}>
+            Rejected: <strong>{eEmps.find(x=>x.id===e.employeeId)?.name}</strong> · {e.rejectedReason}
+          </div>
+        ))}
+      </div>
+
       <div style={S.card({padding:18})}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>Weekly hours — {mon.toLocaleDateString("en-US",{month:"short",day:"numeric"})} to {sun.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
-          <button style={{...S.btnGhost,fontSize:12}} onClick={exportWeekCSV}><Ic d={I.dl} size={12}/>Download CSV</button>
+          <button style={{...S.btnGhost,fontSize:12}} onClick={exportWeekCSV}><Ic d={I.dl} size={12}/>Download approved CSV</button>
         </div>
         <table style={{width:"100%",borderCollapse:"collapse"}}>
           <thead><tr>
@@ -4621,29 +4750,77 @@ function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,c
           <tbody>{eEmps.map(emp=>{
             const cells=weekDays.map(d=>hoursForEmpDay(emp.id,d));
             const total=cells.reduce((s,h)=>s+h,0);
+            const totColor=total>40?"#EF4444":total>=36?"#F59E0B":"#0F172A";
             return(
               <tr key={emp.id}>
                 <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{emp.name}</td>
-                {cells.map((h,i)=><td key={i} style={S.td}>{h>0?h.toFixed(2):"—"}</td>)}
-                <td style={{...S.td,fontWeight:700,color:"#0F172A"}}>{total.toFixed(2)}</td>
+                {cells.map((h,i)=><td key={i} style={{...S.td,color:h>8?"#F97316":undefined,fontWeight:h>8?700:undefined}}>{h>0?(h.toFixed(2)+(h>8?" 🔶":"")):"—"}</td>)}
+                <td style={{...S.td,fontWeight:800,color:totColor}}>{total.toFixed(2)}{total>40&&" 🔴"}{total>=36&&total<=40&&" ⚠️"}</td>
               </tr>
             );
           })}</tbody>
         </table>
+        <div style={{marginTop:10,display:"flex",gap:14,fontSize:11,color:"#64748B"}}>
+          <span><span style={{color:"#F97316"}}>🔶</span> Daily &gt; 8 hr</span>
+          <span><span style={{color:"#F59E0B"}}>⚠️</span> Approaching 40 hr (≥36)</span>
+          <span><span style={{color:"#EF4444"}}>🔴</span> Over 40 hr</span>
+        </div>
       </div>
+
+      {/* REJECT REASON MODAL */}
+      {rejecting&&(
+        <Modal title="Reject entry" onClose={()=>setRejecting(null)}>
+          <div style={{fontSize:13,color:"#475569",marginBottom:10}}>Tell the employee why this entry was rejected. They will see this when reviewing their hours.</div>
+          <textarea rows={3} style={S.textarea} value={rejectReason} onChange={e=>setRejectReason(e.target.value)} placeholder="e.g. Clocked out without ending the shift — please re-enter."/>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:10}}>
+            <button style={S.btnSecondary} onClick={()=>setRejecting(null)}>Cancel</button>
+            <button style={{...S.btnPrimary,background:"#EF4444"}} onClick={()=>{rejectTimeEntry(rejecting,rejectReason);setRejecting(null);showToast?.("Entry rejected");}}>Reject</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* CORRECTION EDIT MODAL */}
+      {editing&&(()=>{
+        const e=eEntries.find(x=>x.id===editing);
+        const emp=e&&eEmps.find(x=>x.id===e.employeeId);
+        return(
+          <Modal title={`Edit entry — ${emp?.name||""}`} onClose={()=>setEditing(null)} wide>
+            {e?.correctionNote&&<div style={{padding:10,background:"#FFFBEB",borderRadius:8,border:"1px solid #F59E0B40",fontSize:12,color:"#92400E",marginBottom:12}}>Worker note: {e.correctionNote}</div>}
+            <div style={S.grid2}>
+              <Field label="Clock in"><input type="datetime-local" style={S.input} value={editForm.clockIn||""} onChange={ev=>setEditForm(f=>({...f,clockIn:ev.target.value}))}/></Field>
+              <Field label="Clock out"><input type="datetime-local" style={S.input} value={editForm.clockOut||""} onChange={ev=>setEditForm(f=>({...f,clockOut:ev.target.value}))}/></Field>
+              <Field label="Job"><select style={S.select} value={editForm.jobId||""} onChange={ev=>setEditForm(f=>({...f,jobId:ev.target.value}))}><option value="">— None —</option>{eDeals.map(d=><option key={d.id} value={d.id}>{d.title.slice(0,40)}</option>)}</select></Field>
+            </div>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:10}}>
+              <button style={S.btnSecondary} onClick={()=>setEditing(null)}>Cancel</button>
+              <button style={S.btnPrimary} onClick={saveEdit}>Save & resolve</button>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* PHOTO VIEWER */}
+      {photoOpen&&(
+        <Modal title="Verification photo" onClose={()=>setPhotoOpen(null)} wide>
+          <img src={photoOpen} alt="" style={{width:"100%",borderRadius:10}}/>
+        </Modal>
+      )}
     </div>
   );
 }
 
 // Worker PIN clock-in/out flow
-function WorkerPinView({entity,eEmps,eDeals,todayStr,openEntry,clockInEmployee,clockOutEmployee,onExit,showToast}){
+function WorkerPinView({entity,eEmps,eDeals,eEntries=[],todayStr,openEntry,clockInEmployee,clockOutEmployee,requestTimeCorrection,onExit,showToast}){
   const [pin,setPin]=useState("");
-  const [stage,setStage]=useState("pin"); // pin | menu | pickJob | confirmIn | confirmOut
+  const [stage,setStage]=useState("pin"); // pin | menu | pickJob | photo | confirmIn | confirmOut | myhours | correction
   const [employee,setEmployee]=useState(null);
   const [pickedJob,setPickedJob]=useState(null);
   const [lastResult,setLastResult]=useState(null);
+  const [photoData,setPhotoData]=useState(null);
+  const [correctionTarget,setCorrectionTarget]=useState(null);
+  const [correctionNote,setCorrectionNote]=useState("");
 
-  const reset=()=>{setPin("");setStage("pin");setEmployee(null);setPickedJob(null);setLastResult(null);};
+  const reset=()=>{setPin("");setStage("pin");setEmployee(null);setPickedJob(null);setLastResult(null);setPhotoData(null);setCorrectionTarget(null);setCorrectionNote("");};
   const tryPin=(p)=>{
     const emp=eEmps.find(e=>e.pin===p&&e.active!==false);
     if(emp){setEmployee(emp);setStage("menu");}
@@ -4657,22 +4834,48 @@ function WorkerPinView({entity,eEmps,eDeals,todayStr,openEntry,clockInEmployee,c
   };
 
   const empOpenEntry=employee?openEntry(employee.id):null;
-  const todaysJobs=employee?eDeals.filter(d=>(d.crewAssigned||[]).includes(employee.id)||["In Progress","Won"].includes(d.stage)):[];
+  const todaysJobs=employee?eDeals.filter(d=>(d.crewAssigned||[]).includes(employee.id)||["In Progress","Won / Scheduled"].includes(d.stage)):[];
 
-  const handleClockIn=(job)=>{
-    clockInEmployee(employee.id,job?.id||null);
+  // ── Week's entries for this employee ──
+  const weekBounds=()=>{const d=new Date();const day=d.getDay()||7;const m=new Date(d);m.setDate(d.getDate()-(day-1));m.setHours(0,0,0,0);const su=new Date(m);su.setDate(m.getDate()+6);su.setHours(23,59,59,999);return{m,su};};
+  const {m:weekStart,su:weekEnd}=weekBounds();
+  const myWeekEntries=employee?eEntries.filter(e=>e.employeeId===employee.id&&e.clockOut&&new Date(e.date)>=weekStart&&new Date(e.date)<=weekEnd).sort((a,b)=>new Date(b.clockIn)-new Date(a.clockIn)):[];
+  const myWeekTotal=myWeekEntries.reduce((s,e)=>s+(e.hours||0),0);
+
+  const finishClockIn=(job,photo)=>{
+    clockInEmployee(employee.id,job?.id||null,photo?{verificationPhoto:photo}:{});
     setLastResult({action:"in",time:new Date(),job});
     setStage("confirmIn");
+  };
+  const handleClockIn=(job)=>{
+    setPickedJob(job);
+    setPhotoData(null);
+    setStage("photo");
   };
   const handleClockOut=()=>{
     const closed=clockOutEmployee(employee.id);
     setLastResult({action:"out",time:new Date(),hours:closed?.hours||0});
     setStage("confirmOut");
   };
+  const submitCorrection=()=>{
+    if(!correctionTarget)return;
+    requestTimeCorrection?.(correctionTarget,correctionNote);
+    setCorrectionTarget(null);setCorrectionNote("");
+    setStage("myhours");
+    showToast?.("Correction request sent to supervisor");
+  };
+
+  const StatusBadge=({e})=>{
+    if(e.correctionRequested) return <span style={S.badge("#F59E0B")}>Correction sent</span>;
+    const s=e.status||"pending";
+    if(s==="approved") return <span style={S.badge("#10B981")}>Approved</span>;
+    if(s==="rejected") return <span style={S.badge("#EF4444")}>Rejected</span>;
+    return <span style={S.badge("#64748B")}>Pending</span>;
+  };
 
   return(
     <div style={{minHeight:"calc(100vh - 100px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,background:"linear-gradient(135deg,#0F2044 0%,#1D4ED8 100%)",borderRadius:14}}>
-      <div style={{maxWidth:420,width:"100%"}}>
+      <div style={{maxWidth:440,width:"100%"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <div style={{color:"#fff",fontFamily:"'Sora',sans-serif",fontSize:24,fontWeight:800}}>{entity?.name}</div>
           <button style={{...S.btnGhost,color:"#94A3B8",fontSize:11}} onClick={onExit}>← Exit worker view</button>
@@ -4703,8 +4906,9 @@ function WorkerPinView({entity,eEmps,eDeals,todayStr,openEntry,clockInEmployee,c
             ):(
               <button style={{width:"100%",background:"#EF4444",color:"#fff",border:"none",borderRadius:14,padding:"22px 0",fontSize:22,fontWeight:800,cursor:"pointer",marginBottom:10}} onClick={handleClockOut}>CLOCK OUT</button>
             )}
+            <button style={{width:"100%",background:"#1D4ED8",color:"#fff",border:"none",borderRadius:14,padding:"16px 0",fontSize:18,fontWeight:700,cursor:"pointer",marginBottom:14}} onClick={()=>setStage("myhours")}><Ic d={I.bar} size={16}/> My Hours</button>
             {todaysJobs.length>0&&!empOpenEntry&&(
-              <div style={{marginTop:14,padding:"12px 14px",background:"#F8FAFC",borderRadius:10,textAlign:"left"}}>
+              <div style={{padding:"12px 14px",background:"#F8FAFC",borderRadius:10,textAlign:"left"}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Today's jobs assigned to you</div>
                 {todaysJobs.slice(0,5).map(j=>(
                   <div key={j.id} style={{fontSize:13,color:"#334155",padding:"4px 0",borderBottom:"1px solid #E2E8F0"}}>{j.title}</div>
@@ -4731,6 +4935,26 @@ function WorkerPinView({entity,eEmps,eDeals,todayStr,openEntry,clockInEmployee,c
             <button style={{...S.btnSecondary,width:"100%",marginTop:14,justifyContent:"center"}} onClick={()=>setStage("menu")}>Back</button>
           </div>
         )}
+        {stage==="photo"&&employee&&(
+          <div style={{background:"#FFFFFF",borderRadius:16,padding:24,textAlign:"center"}}>
+            <div style={{fontSize:14,color:"#64748B",marginBottom:6}}>Optional · Verification Photo</div>
+            <div style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",marginBottom:6}}>{pickedJob?pickedJob.title:"No job"}</div>
+            <div style={{fontSize:12,color:"#94A3B8",marginBottom:18}}>Snap a photo to confirm you're on-site. You can skip this step.</div>
+            {photoData?(
+              <div style={{marginBottom:14}}><img src={photoData} alt="" style={{width:"100%",maxHeight:220,objectFit:"cover",borderRadius:12,border:"1px solid #E2E8F0"}}/></div>
+            ):(
+              <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,background:"#F1F5F9",borderRadius:14,padding:"22px 0",cursor:"pointer",marginBottom:10,fontWeight:700,color:"#1D4ED8"}}>
+                <Ic d={I.camera} size={20}/>Take Photo
+                <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{
+                  const f=e.target.files?.[0];if(!f)return;
+                  const r=new FileReader();r.onload=()=>setPhotoData(r.result);r.readAsDataURL(f);
+                }}/>
+              </label>
+            )}
+            <button style={{width:"100%",background:"#10B981",color:"#fff",border:"none",borderRadius:14,padding:"18px 0",fontSize:18,fontWeight:800,cursor:"pointer",marginBottom:10}} onClick={()=>finishClockIn(pickedJob,photoData)}>{photoData?"Confirm clock in":"Skip & clock in"}</button>
+            <button style={{...S.btnSecondary,width:"100%",justifyContent:"center"}} onClick={()=>setStage("pickJob")}>Back</button>
+          </div>
+        )}
         {(stage==="confirmIn"||stage==="confirmOut")&&lastResult&&(
           <div style={{background:"#FFFFFF",borderRadius:16,padding:28,textAlign:"center"}}>
             <div style={{width:64,height:64,borderRadius:"50%",background:stage==="confirmIn"?"#10B98120":"#1D4ED820",margin:"0 auto 14px",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic d={I.ok} size={32} c={stage==="confirmIn"?"#10B981":"#1D4ED8"}/></div>
@@ -4739,6 +4963,49 @@ function WorkerPinView({entity,eEmps,eDeals,todayStr,openEntry,clockInEmployee,c
             {stage==="confirmIn"&&<div style={{fontSize:13,color:"#475569",marginBottom:14}}>{lastResult.job?lastResult.job.title:"(no job selected)"}<div style={{fontSize:11,color:"#94A3B8",marginTop:4}}>Location recorded</div></div>}
             {stage==="confirmOut"&&<div style={{fontSize:13,color:"#475569",marginBottom:14}}>{(lastResult.hours||0).toFixed(2)} hrs this session</div>}
             <button style={{width:"100%",background:"#1D4ED8",color:"#fff",border:"none",borderRadius:12,padding:"14px 0",fontSize:14,fontWeight:700,cursor:"pointer"}} onClick={reset}>Done</button>
+          </div>
+        )}
+        {stage==="myhours"&&employee&&(
+          <div style={{background:"#FFFFFF",borderRadius:16,padding:22}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{fontSize:14,color:"#64748B"}}>This week · {weekStart.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–{weekEnd.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
+              <div style={{fontFamily:"'Sora',sans-serif",fontSize:22,fontWeight:800,color:"#0F172A"}}>{myWeekTotal.toFixed(2)} hr</div>
+            </div>
+            <div style={{maxHeight:340,overflowY:"auto",marginBottom:14}}>
+              {myWeekEntries.length===0?(
+                <div style={{textAlign:"center",color:"#94A3B8",fontSize:13,padding:24}}>No completed entries this week yet.</div>
+              ):myWeekEntries.map(e=>{
+                const job=eDeals.find(d=>d.id===e.jobId);
+                return(
+                  <div key={e.id} style={{padding:"12px 0",borderBottom:"1px solid #F1F5F9"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"#0F172A"}}>{e.date}</div>
+                      <StatusBadge e={e}/>
+                    </div>
+                    <div style={{fontSize:12,color:"#475569",marginTop:2}}>{job?.title||"(no job)"}</div>
+                    <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{new Date(e.clockIn).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})} → {new Date(e.clockOut).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})} · <strong style={{color:"#0F172A"}}>{(e.hours||0).toFixed(2)} hr</strong></div>
+                    {e.status==="rejected"&&e.rejectedReason&&<div style={{fontSize:11,color:"#7F1D1D",marginTop:4}}>Reason: {e.rejectedReason}</div>}
+                    {e.correctionRequested?(
+                      <div style={{fontSize:11,color:"#92400E",marginTop:6}}>Correction request sent</div>
+                    ):(
+                      <button style={{...S.btnGhost,fontSize:11,marginTop:4,padding:"2px 0"}} onClick={()=>{setCorrectionTarget(e.id);setCorrectionNote("");setStage("correction");}}><Ic d={I.edit} size={11}/>Request correction</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <button style={{...S.btnSecondary,width:"100%",justifyContent:"center"}} onClick={()=>setStage("menu")}>Back</button>
+          </div>
+        )}
+        {stage==="correction"&&employee&&correctionTarget&&(
+          <div style={{background:"#FFFFFF",borderRadius:16,padding:22}}>
+            <div style={{fontSize:14,color:"#64748B",marginBottom:6}}>Request correction</div>
+            <div style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",marginBottom:14}}>What's wrong with this entry?</div>
+            <textarea rows={4} style={{...S.textarea,fontSize:14}} value={correctionNote} onChange={e=>setCorrectionNote(e.target.value)} placeholder="e.g. I clocked out an hour late but the system recorded the wrong time."/>
+            <div style={{display:"flex",gap:8,marginTop:14}}>
+              <button style={{...S.btnSecondary,flex:1,justifyContent:"center"}} onClick={()=>{setCorrectionTarget(null);setStage("myhours");}}>Cancel</button>
+              <button style={{...S.btnPrimary,flex:1,justifyContent:"center"}} disabled={!correctionNote.trim()} onClick={submitCorrection}>Send to supervisor</button>
+            </div>
           </div>
         )}
       </div>
@@ -5892,6 +6159,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [view,setView]=useState("dashboard");
   const [fieldView,setFieldView]=useState(false);
   const [recentJobId,setRecentJobId]=useState(null);
+  const [isOffline,setIsOffline]=useState(typeof navigator!=="undefined"?!navigator.onLine:false);
   const [selContact,setSelContact]=useState(null);
   const [selCompany,setSelCompany]=useState(null);
   const [selDeal,setSelDeal]=useState(null);
@@ -6017,6 +6285,22 @@ export default function App({session,onLogout,demoMode=false}={}){
   useEffect(()=>{save("crm:timeClockEntries",timeClockEntries);},[timeClockEntries]);
   useEffect(()=>{save("crm:fsSettings",fsSettings);},[fsSettings]);
   useEffect(()=>{save("crm:activeEntityId",activeEntityId);},[activeEntityId]);
+
+  // ─── OFFLINE SYNC ─────────────────────────────────────────────────────────
+  useEffect(()=>{
+    const onUp=()=>{
+      setIsOffline(false);
+      // Force a fresh write so any state changes made while offline get persisted.
+      if(loadedRef.current&&!demoMode){
+        save("crm:timeClockEntries",timeClockEntries);
+        flushOfflineQueue();
+      }
+    };
+    const onDown=()=>setIsOffline(true);
+    window.addEventListener("online",onUp);
+    window.addEventListener("offline",onDown);
+    return()=>{window.removeEventListener("online",onUp);window.removeEventListener("offline",onDown);};
+  },[timeClockEntries,demoMode]);
 
   const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
 
@@ -6237,12 +6521,25 @@ export default function App({session,onLogout,demoMode=false}={}){
   const deleteEmployee=(id)=>setEmployees(p=>p.filter(x=>x.id!==id));
 
   // ─── TIME CLOCK (Field Service) ───────────────────────────────────────────
-  const clockInEmployee=(employeeId,jobId)=>{
+  // Offline queue helpers — queue actions while offline so they survive page reload.
+  const queueOfflineAction=(action)=>{
+    if(demoMode)return;
+    try{
+      const q=JSON.parse(localStorage.getItem("crm:tcQueue")||"[]");
+      q.push({...action,queuedAt:new Date().toISOString()});
+      localStorage.setItem("crm:tcQueue",JSON.stringify(q));
+    }catch(e){console.error("[offline queue] push failed",e);}
+  };
+  const flushOfflineQueue=async()=>{
+    if(demoMode)return;
+    try{localStorage.removeItem("crm:tcQueue");}catch{}
+  };
+  const clockInEmployee=(employeeId,jobId,extra={})=>{
     const now=new Date().toISOString();
-    // Auto-close any open punch for this employee (rare but defensive)
-    setTimeClockEntries(p=>p.map(e=>(e.employeeId===employeeId&&!e.clockOut)?{...e,clockOut:now,hours:Math.max(0,(new Date(now)-new Date(e.clockIn))/3600000)}:e));
-    const entry={id:uid(),entityId:activeEntityId,employeeId,jobId:jobId||null,clockIn:now,clockOut:null,hours:null,gpsNote:"Location recorded",date:now.slice(0,10)};
+    setTimeClockEntries(p=>p.map(e=>(e.employeeId===employeeId&&!e.clockOut)?{...e,clockOut:now,hours:Math.max(0,(new Date(now)-new Date(e.clockIn))/3600000),status:e.status||"pending"}:e));
+    const entry={id:uid(),entityId:activeEntityId,employeeId,jobId:jobId||null,clockIn:now,clockOut:null,hours:null,gpsNote:"Location recorded",date:now.slice(0,10),status:"open",...extra};
     setTimeClockEntries(p=>[...p,entry]);
+    if(!navigator.onLine)queueOfflineAction({type:"clockIn",entry});
     return entry;
   };
   const clockOutEmployee=(employeeId)=>{
@@ -6251,16 +6548,21 @@ export default function App({session,onLogout,demoMode=false}={}){
     setTimeClockEntries(p=>p.map(e=>{
       if(e.employeeId===employeeId&&!e.clockOut){
         const hrs=Math.max(0,(new Date(now)-new Date(e.clockIn))/3600000);
-        closed={...e,clockOut:now,hours:hrs};
+        closed={...e,clockOut:now,hours:hrs,status:"pending"};
         return closed;
       }
       return e;
     }));
+    if(closed&&!navigator.onLine)queueOfflineAction({type:"clockOut",entryId:closed.id,clockOut:now,hours:closed.hours});
     return closed;
   };
-  const addTimeClockEntry=(data)=>setTimeClockEntries(p=>[...p,{id:uid(),entityId:activeEntityId,gpsNote:"Manual entry",...data}]);
+  const addTimeClockEntry=(data)=>setTimeClockEntries(p=>[...p,{id:uid(),entityId:activeEntityId,gpsNote:"Manual entry",status:"approved",...data}]);
   const updateTimeClockEntry=(id,data)=>setTimeClockEntries(p=>p.map(x=>x.id===id?{...x,...data}:x));
   const deleteTimeClockEntry=(id)=>setTimeClockEntries(p=>p.filter(x=>x.id!==id));
+  const approveTimeEntry=(id)=>updateTimeClockEntry(id,{status:"approved",approvedAt:new Date().toISOString(),rejectedReason:undefined});
+  const rejectTimeEntry=(id,reason)=>updateTimeClockEntry(id,{status:"rejected",rejectedReason:reason||"",rejectedAt:new Date().toISOString()});
+  const requestTimeCorrection=(id,note)=>updateTimeClockEntry(id,{correctionRequested:true,correctionNote:note||"",correctionRequestedAt:new Date().toISOString()});
+  const resolveTimeCorrection=(id)=>updateTimeClockEntry(id,{correctionRequested:false,correctionResolvedAt:new Date().toISOString()});
 
   // ─── FS SETTINGS ──────────────────────────────────────────────────────────
   const updateFsSettings=(entityId,patch)=>setFsSettings(p=>({...p,[entityId]:{...(p[entityId]||{}),...patch}}));
@@ -6301,6 +6603,12 @@ export default function App({session,onLogout,demoMode=false}={}){
           <span style={{background:"rgba(0,0,0,0.18)",padding:"2px 9px",borderRadius:4,fontSize:11,fontWeight:800,letterSpacing:1}}>DEMO MODE</span>
           <span style={{fontWeight:500}}>Sample data — your changes are session-only and won't be saved.</span>
           <a href="/" style={{marginLeft:8,background:"#FFFFFF",color:"#0B1E3F",padding:"5px 12px",borderRadius:6,textDecoration:"none",fontSize:12,fontWeight:700}}>Sign up to save your work</a>
+        </div>
+      )}
+      {isOffline&&!demoMode&&(
+        <div style={{flexShrink:0,background:"#7F1D1D",color:"#FFFFFF",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"center",gap:10,fontSize:13,fontWeight:600}}>
+          <span style={{width:8,height:8,borderRadius:"50%",background:"#FCA5A5"}}/>
+          Offline — time entries will sync when connection is restored
         </div>
       )}
       <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden"}}>
@@ -6396,7 +6704,7 @@ export default function App({session,onLogout,demoMode=false}={}){
         {/* Content */}
         {fieldView&&fs?(
           <div style={{flex:1,overflow:"hidden",position:"relative"}}>
-            <FieldViewShell entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} timeClockEntries={timeClockEntries} notes={notes} updateDeal={updateDeal} addNote={addNote} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setFieldView(false)} recentJobId={recentJobId} setRecentJobId={setRecentJobId} showToast={showToast}/>
+            <FieldViewShell entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} timeClockEntries={timeClockEntries} notes={notes} updateDeal={updateDeal} addNote={addNote} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setFieldView(false)} recentJobId={recentJobId} setRecentJobId={setRecentJobId} showToast={showToast} requestTimeCorrection={requestTimeCorrection}/>
           </div>
         ):(
         <div style={{flex:1,overflowY:"auto",padding:20}}>
@@ -6411,7 +6719,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
           {view==="scheduler"&&!fs&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
           {view==="scheduler"&&fs&&<JobScheduler entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} updateDeal={updateDeal} setSelDeal={setSelDeal} setView={setView} showToast={showToast}/>}
-          {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} showToast={showToast}/>}
+          {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} approveTimeEntry={approveTimeEntry} rejectTimeEntry={rejectTimeEntry} resolveTimeCorrection={resolveTimeCorrection} requestTimeCorrection={requestTimeCorrection} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
           {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} showToast={showToast} entity={entity} setView={setView}/>}
