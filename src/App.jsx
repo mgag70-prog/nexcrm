@@ -14,8 +14,68 @@ const SC = {
   "Won":"#10B981",
   "Lost":"#EF4444",
 };
-const stagesFor = e => Array.isArray(e?.stages) && e.stages.length ? e.stages : STAGES;
-const stageColor = (e, s) => e?.stageColors?.[s] || SC[s] || "#64748B";
+
+// ─── FIELD SERVICE ────────────────────────────────────────────────────────────
+const FS_STAGES = ["New Lead","Contacted","Responded / Interested","Follow-up / Discovery","Demo Scheduled","Estimate Sent","Won","In Progress","Completed","Lost"];
+const FS_SC = {
+  "New Lead":"#94A3B8",
+  "Contacted":"#3B82F6",
+  "Responded / Interested":"#06B6D4",
+  "Follow-up / Discovery":"#8B5CF6",
+  "Demo Scheduled":"#F97316",
+  "Estimate Sent":"#F59E0B",
+  "Won":"#10B981",
+  "In Progress":"#F97316",
+  "Completed":"#14B8A6",
+  "Lost":"#EF4444",
+};
+const SERVICE_TYPES = ["Lawn Maintenance","Mulching","Aeration","Spring Cleanup","Fall Cleanup","Hardscaping","Tree/Shrub Care","Snow Removal","Irrigation","Landscape Design","Other"];
+const EMPLOYEE_ROLES = ["Crew Lead","Crew Member","Foreman","Supervisor","Admin"];
+const RECURRING_FREQUENCIES = ["Weekly","Bi-Weekly","Monthly","Seasonal"];
+const isFieldService = e => e?.type === "Field Service Business";
+// Terminology overrides for Field Service entities. Keys are stable; UI calls t(entity, key).
+const FS_TERMS = {
+  deal:"Job", deals:"Jobs",
+  Deal:"Job", Deals:"Jobs",
+  pipeline:"Job Board",
+  addDeal:"Add Job", editDeal:"Edit Job",
+  dealName:"Job Name", dealTitle:"Job Title",
+  closeDate:"Scheduled Date",
+  value:"Job Value",
+  contactsLabel:"Customers",
+  proposalSent:"Estimate Sent",
+};
+const DEFAULT_TERMS = {
+  deal:"deal", deals:"deals",
+  Deal:"Deal", Deals:"Deals",
+  pipeline:"Pipeline",
+  addDeal:"Add Deal", editDeal:"Edit Deal",
+  dealName:"Deal Title", dealTitle:"Deal Title",
+  closeDate:"Close Date",
+  value:"Value",
+  contactsLabel:"Contacts",
+  proposalSent:"Proposal Sent",
+};
+const t = (entity, key) => (isFieldService(entity) ? FS_TERMS[key] : null) || DEFAULT_TERMS[key] || key;
+// Date-frequency math for recurring jobs
+const advanceDate = (iso, freq) => {
+  const base = iso ? new Date(iso) : new Date();
+  if(isNaN(base.getTime())) return null;
+  const d = new Date(base);
+  if(freq==="Weekly") d.setDate(d.getDate()+7);
+  else if(freq==="Bi-Weekly") d.setDate(d.getDate()+14);
+  else if(freq==="Monthly") d.setMonth(d.getMonth()+1);
+  else if(freq==="Seasonal") d.setMonth(d.getMonth()+3);
+  else return null;
+  return d.toISOString().slice(0,10);
+};
+
+const stagesFor = e => {
+  if(Array.isArray(e?.stages) && e.stages.length) return e.stages;
+  if(isFieldService(e)) return FS_STAGES;
+  return STAGES;
+};
+const stageColor = (e, s) => e?.stageColors?.[s] || (isFieldService(e) ? FS_SC[s] : null) || SC[s] || "#64748B";
 // Returns the entity's pipeline + any orphan stages found in the deals (so legacy/imported stages still render).
 const stagesForWithOrphans = (entity, deals) => {
   const base = stagesFor(entity);
@@ -38,6 +98,8 @@ const STAGE_MIGRATION_MAP = {
   "Contract Sent": "Proposal Sent",
   "Closed Won": "Won",
   "Closed Lost": "Lost",
+  // Field Service rename: when a non-FS entity gets converted to FS, "Proposal Sent" maps to "Estimate Sent".
+  "Proposal Sent": "Estimate Sent",
 };
 const SOURCES = ["Website","Referral","LinkedIn","Cold Outreach","Event","Partner","BiggerPockets","HubSpot Import","Zoho Import","Other"];
 const PLATFORMS = SOURCES; // alias — "Source" is now also surfaced as "Platform"
@@ -46,7 +108,7 @@ const LIFECYCLE_STAGES = ["Lead","Prospect","Opportunity","Customer","Churned"];
 const LEAD_STATUSES = ["New","Open","In Progress","Qualified","Unqualified"];
 const DEAL_TYPES = ["New Business","Existing Business","Renewal","Upsell"];
 const DEAL_PRIORITIES = ["Low","Medium","High"];
-const ETYPES = ["LLC","Corporation","Non-Profit","Partnership","Sole Proprietor","S-Corp","Trust"];
+const ETYPES = ["LLC","Corporation","Non-Profit","Partnership","Sole Proprietor","S-Corp","Trust","Field Service Business"];
 const PRIORITIES = ["low","medium","high"];
 const INDUSTRIES = [
   // Generic
@@ -137,12 +199,16 @@ const DEMO = {
   emailThreads:[],
   availability:{},
   invoiceCounter:1,
+  employees:[],
+  timeClockEntries:[],
+  fsSettings:{},
 };
 
 const DEMO_FULL = {
   entities:[
     {id:"e1",name:"Apex Ventures LLC",type:"LLC",color:"#3B82F6",industry:"Technology"},
     {id:"e2",name:"GreenPath Foundation",type:"Non-Profit",color:"#10B981",industry:"Education"},
+    {id:"e5",name:"GreenScape Pro",type:"Field Service Business",color:"#059669",industry:"Other",website:"greenscapepro.com"},
   ],
   contacts:[
     {id:"c1",entityId:"e1",name:"Sarah Johnson",email:"sarah@techcorp.com",phone:"+1 555-0101",companyName:"TechCorp",source:"LinkedIn",title:"VP of Engineering",createdAt:new Date(Date.now()-5*864e5).toISOString()},
@@ -239,7 +305,65 @@ const DEMO_FULL = {
   ],
   availability:{},
   invoiceCounter:5,
+  employees:[
+    {id:"emp1",entityId:"e5",name:"Mike Castillo",role:"Foreman",phone:"+1 555-2001",hourlyRate:32,pin:"1234",active:true,startDate:"2024-03-15"},
+    {id:"emp2",entityId:"e5",name:"Carlos Reyes",role:"Crew Lead",phone:"+1 555-2002",hourlyRate:26,pin:"2345",active:true,startDate:"2024-06-01"},
+    {id:"emp3",entityId:"e5",name:"Tyler Brooks",role:"Crew Member",phone:"+1 555-2003",hourlyRate:20,pin:"3456",active:true,startDate:"2025-04-10"},
+    {id:"emp4",entityId:"e5",name:"Jenna Marks",role:"Admin",phone:"+1 555-2004",hourlyRate:24,pin:"4567",active:true,startDate:"2024-01-20"},
+  ],
+  timeClockEntries:(()=>{
+    const out=[];
+    const day=(daysAgo,h,m=0)=>{const d=new Date();d.setDate(d.getDate()-daysAgo);d.setHours(h,m,0,0);return d.toISOString();};
+    // Past week of work
+    [1,2,3,4,5].forEach(d=>{
+      out.push({id:`tc_${d}_1`,entityId:"e5",employeeId:"emp1",jobId:d%2?"jb1":"jb5",clockIn:day(d,7,30),clockOut:day(d,15,30),hours:8,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10)});
+      out.push({id:`tc_${d}_2`,entityId:"e5",employeeId:"emp2",jobId:d%2?"jb1":"jb5",clockIn:day(d,7,45),clockOut:day(d,15,30),hours:7.75,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10)});
+      out.push({id:`tc_${d}_3`,entityId:"e5",employeeId:"emp3",jobId:d%2?"jb1":"jb12",clockIn:day(d,8,0),clockOut:day(d,15,0),hours:7,gpsNote:"Location recorded",date:new Date(Date.now()-d*864e5).toISOString().slice(0,10)});
+    });
+    // Today: Mike + Carlos clocked in, not out yet
+    out.push({id:"tc_today_1",entityId:"e5",employeeId:"emp1",jobId:"jb3",clockIn:day(0,7,30),clockOut:null,hours:null,gpsNote:"Location recorded",date:new Date().toISOString().slice(0,10)});
+    out.push({id:"tc_today_2",entityId:"e5",employeeId:"emp2",jobId:"jb3",clockIn:day(0,7,45),clockOut:null,hours:null,gpsNote:"Location recorded",date:new Date().toISOString().slice(0,10)});
+    return out;
+  })(),
+  fsSettings:{e5:{defaultDepositPct:30,defaultLaborRate:65,serviceArea:"Greater Boston · 25-mile radius",businessHours:"Mon-Sat 7am-5pm",logo:""}},
 };
+// GreenScape Pro demo data (Field Service entity e5) — merged into DEMO_FULL after declaration to keep shape sane.
+(function seedGreenscape(){
+  const FS = "e5";
+  const today = new Date();
+  const dayOffset = (n)=>{const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);};
+  DEMO_FULL.companies.push(
+    {id:"gco1",entityId:FS,name:"Maple Ridge HOA",industry:"Other",website:"mapleridgehoa.org",phone:"+1 555-3101",email:"board@mapleridgehoa.org",employees:0,city:"Newton",state:"MA",createdAt:new Date().toISOString()},
+    {id:"gco2",entityId:FS,name:"Riverside Property Management",industry:"Real Estate",website:"riverside-pm.com",phone:"+1 555-3102",email:"info@riverside-pm.com",employees:45,city:"Cambridge",state:"MA",createdAt:new Date().toISOString()},
+    {id:"gco3",entityId:FS,name:"Oak Hills Estates HOA",industry:"Other",website:"oakhillsestates.com",phone:"+1 555-3103",email:"hoa@oakhillsestates.com",employees:0,city:"Brookline",state:"MA",createdAt:new Date().toISOString()},
+    {id:"gco4",entityId:FS,name:"Sunset Plaza Properties",industry:"Real Estate",website:"sunsetplaza.com",phone:"+1 555-3104",email:"facilities@sunsetplaza.com",employees:22,city:"Watertown",state:"MA",createdAt:new Date().toISOString()},
+    {id:"gco5",entityId:FS,name:"Greenfield Corporate Park",industry:"Real Estate",website:"greenfieldpark.com",phone:"+1 555-3105",email:"ops@greenfieldpark.com",employees:120,city:"Waltham",state:"MA",createdAt:new Date().toISOString()},
+  );
+  DEMO_FULL.contacts.push(
+    {id:"gc1",entityId:FS,name:"Jennifer Walsh",email:"jen.walsh@gmail.com",phone:"+1 555-4101",title:"Homeowner",companyName:"",source:"Referral",createdAt:new Date(Date.now()-8*864e5).toISOString()},
+    {id:"gc2",entityId:FS,name:"Tom Brennan",email:"tbrennan@gmail.com",phone:"+1 555-4102",title:"Homeowner",companyName:"",source:"Website",createdAt:new Date(Date.now()-20*864e5).toISOString()},
+    {id:"gc3",entityId:FS,name:"Patricia Liu",email:"pliu@mapleridgehoa.org",phone:"+1 555-4103",title:"HOA Board President",companyName:"Maple Ridge HOA",companyId:"gco1",source:"Referral",createdAt:new Date(Date.now()-120*864e5).toISOString()},
+    {id:"gc4",entityId:FS,name:"Mark Henderson",email:"mhenderson@yahoo.com",phone:"+1 555-4104",title:"Homeowner",companyName:"",source:"LinkedIn",createdAt:new Date(Date.now()-15*864e5).toISOString()},
+    {id:"gc5",entityId:FS,name:"Carlos Mendoza",email:"cmendoza@riverside-pm.com",phone:"+1 555-4105",title:"Property Manager",companyName:"Riverside Property Management",companyId:"gco2",source:"Cold Outreach",createdAt:new Date(Date.now()-60*864e5).toISOString()},
+    {id:"gc6",entityId:FS,name:"Susan Park",email:"spark@oakhillsestates.com",phone:"+1 555-4106",title:"HOA Coordinator",companyName:"Oak Hills Estates HOA",companyId:"gco3",source:"Referral",createdAt:new Date(Date.now()-90*864e5).toISOString()},
+    {id:"gc7",entityId:FS,name:"Robert Chen",email:"rchen@sunsetplaza.com",phone:"+1 555-4107",title:"Facilities Director",companyName:"Sunset Plaza Properties",companyId:"gco4",source:"Partner",createdAt:new Date(Date.now()-180*864e5).toISOString()},
+    {id:"gc8",entityId:FS,name:"Diana Foster",email:"dfoster@gmail.com",phone:"+1 555-4108",title:"Homeowner",companyName:"",source:"Website",createdAt:new Date(Date.now()-30*864e5).toISOString()},
+  );
+  DEMO_FULL.deals.push(
+    {id:"jb1",entityId:FS,contactId:"gc3",companyId:"gco1",title:"Maple Ridge weekly grounds maintenance",value:1850,stage:"In Progress",closeDate:dayOffset(-1),probability:100,jobSiteAddress:"45 Maple Ridge Dr, Newton MA 02458",serviceType:"Lawn Maintenance",crewAssigned:["emp1","emp2","emp3"],materialsCost:120,recurring:true,frequency:"Weekly",nextOccurrence:dayOffset(6),depositRequired:false,createdAt:new Date(Date.now()-90*864e5).toISOString()},
+    {id:"jb2",entityId:FS,contactId:"gc2",title:"Brennan residence spring cleanup",value:680,stage:"Completed",closeDate:dayOffset(-7),probability:100,jobSiteAddress:"47 Oak Ridge Dr, Newton MA 02458",serviceType:"Spring Cleanup",crewAssigned:["emp2","emp3"],materialsCost:45,recurring:false,depositRequired:true,depositAmount:200,depositPaid:true,depositPaidDate:dayOffset(-14),completionNotes:"Hauled away 14 bags of leaves and debris. Edged all beds and applied pre-emergent.",createdAt:new Date(Date.now()-21*864e5).toISOString()},
+    {id:"jb3",entityId:FS,contactId:"gc5",companyId:"gco2",title:"Riverside Apts patio hardscape — building 4",value:18400,stage:"Won",closeDate:dayOffset(0),probability:100,jobSiteAddress:"122 Riverside Ave, Cambridge MA 02141",serviceType:"Hardscaping",crewAssigned:["emp1","emp2"],materialsCost:6200,recurring:false,depositRequired:true,depositAmount:5520,depositPaid:true,depositPaidDate:dayOffset(-7),createdAt:new Date(Date.now()-30*864e5).toISOString()},
+    {id:"jb4",entityId:FS,contactId:"gc6",companyId:"gco3",title:"Oak Hills aeration & overseed (fall)",value:4200,stage:"Estimate Sent",closeDate:dayOffset(60),probability:60,jobSiteAddress:"Oak Hills Estates common areas, Brookline MA",serviceType:"Aeration",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:1260,depositPaid:false,createdAt:new Date(Date.now()-3*864e5).toISOString()},
+    {id:"jb5",entityId:FS,contactId:"gc7",companyId:"gco4",title:"Sunset Plaza bi-weekly grounds",value:2400,stage:"In Progress",closeDate:dayOffset(-2),probability:100,jobSiteAddress:"500 Sunset Plaza, Watertown MA 02472",serviceType:"Lawn Maintenance",crewAssigned:["emp1","emp2"],materialsCost:0,recurring:true,frequency:"Bi-Weekly",nextOccurrence:dayOffset(12),depositRequired:false,createdAt:new Date(Date.now()-180*864e5).toISOString()},
+    {id:"jb6",entityId:FS,contactId:"gc1",title:"Walsh residence mulch refresh",value:520,stage:"New Lead",closeDate:dayOffset(10),probability:30,jobSiteAddress:"234 Pine St, Newton MA 02458",serviceType:"Mulching",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:false,createdAt:new Date(Date.now()-2*864e5).toISOString()},
+    {id:"jb7",entityId:FS,contactId:"gc4",title:"Henderson tree pruning — front oaks",value:850,stage:"Contacted",closeDate:dayOffset(7),probability:50,jobSiteAddress:"88 Willow Way, Brookline MA 02446",serviceType:"Tree/Shrub Care",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:false,createdAt:new Date(Date.now()-5*864e5).toISOString()},
+    {id:"jb8",entityId:FS,contactId:null,companyId:"gco5",title:"Greenfield Park snow removal contract (winter 26-27)",value:22000,stage:"Won",closeDate:dayOffset(150),probability:100,jobSiteAddress:"1 Greenfield Way, Waltham MA 02451",serviceType:"Snow Removal",crewAssigned:["emp1","emp2","emp3"],materialsCost:0,recurring:false,depositRequired:true,depositAmount:5500,depositPaid:true,depositPaidDate:dayOffset(-15),createdAt:new Date(Date.now()-45*864e5).toISOString()},
+    {id:"jb9",entityId:FS,contactId:"gc3",companyId:"gco1",title:"Maple Ridge entrance landscape redesign",value:9500,stage:"Demo Scheduled",closeDate:dayOffset(14),probability:65,jobSiteAddress:"45 Maple Ridge Dr (entry monument), Newton MA",serviceType:"Landscape Design",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:2850,depositPaid:false,createdAt:new Date(Date.now()-10*864e5).toISOString()},
+    {id:"jb10",entityId:FS,contactId:"gc5",companyId:"gco2",title:"Riverside drip irrigation install — courtyard",value:6800,stage:"Follow-up / Discovery",closeDate:dayOffset(25),probability:45,jobSiteAddress:"122 Riverside Ave, Cambridge MA 02141",serviceType:"Irrigation",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:2040,depositPaid:false,createdAt:new Date(Date.now()-12*864e5).toISOString()},
+    {id:"jb11",entityId:FS,contactId:"gc8",title:"Foster residence fall cleanup",value:540,stage:"Completed",closeDate:dayOffset(-3),probability:100,jobSiteAddress:"12 Birch Lane, Newton MA 02465",serviceType:"Fall Cleanup",crewAssigned:["emp3"],materialsCost:0,recurring:false,depositRequired:false,completionNotes:"Single-crew job. Hauled 9 bags off-site. Customer paid by check on completion.",createdAt:new Date(Date.now()-30*864e5).toISOString()},
+    {id:"jb12",entityId:FS,contactId:"gc7",companyId:"gco4",title:"Robert Chen residence weekly lawn (executive perk)",value:240,stage:"In Progress",closeDate:dayOffset(-3),probability:100,jobSiteAddress:"77 Sunset Dr, Watertown MA 02472",serviceType:"Lawn Maintenance",crewAssigned:["emp3"],materialsCost:0,recurring:true,frequency:"Weekly",nextOccurrence:dayOffset(4),depositRequired:false,createdAt:new Date(Date.now()-60*864e5).toISOString()},
+  );
+})();
 
 // ─── ICONS ────────────────────────────────────────────────────────────────────
 const Ic = ({d,size=16,c=""}) => (
@@ -304,6 +428,10 @@ const I = {
   play:"M5 3l14 9-14 9V3z",
   stop:"M21 4H3v16h18V4z",
   dollar2:"M12 2v20 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
+  camera:["M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z","M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"],
+  repeat:["M17 1l4 4-4 4","M3 11V9a4 4 0 0 1 4-4h14","M7 23l-4-4 4-4","M21 13v2a4 4 0 0 1-4 4H3"],
+  truck:["M1 3h15v13H1z","M16 8h4l3 3v5h-7V8z","M5.5 21a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z","M18.5 21a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"],
+  mapPin:["M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z","M12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"],
 };
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
@@ -1198,6 +1326,7 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
 // KANBAN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,setSelContact,setSelCompany,setSelDeal,setView,products,entity}){
+  const fs=isFieldService(entity);
   const [dragging,setDragging]=useState(null);
   const [dragOver,setDragOver]=useState(null);
   const [selected,setSelected]=useState(()=>new Set());
@@ -1211,18 +1340,18 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
   const bulkDelete=()=>{
     const n=selected.size;
     if(n===0)return;
-    if(!confirm(`Delete ${n} deal${n===1?"":"s"}? This cannot be undone.`))return;
+    if(!confirm(`Delete ${n} ${fs?"job":"deal"}${n===1?"":"s"}? This cannot be undone.`))return;
     selected.forEach(id=>deleteDeal(id));
     setSelected(new Set());
   };
-  const totalPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
+  const totalPipe=ed.filter(d=>!["Won","Lost","Completed"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
   return(
     <div>
-      <PageHeader title="Deal Pipeline" sub={`${ed.length} deals · ${fmt$(totalPipe)} active pipeline`}>
+      <PageHeader title={fs?"Job Board":"Deal Pipeline"} sub={fs?`${ed.length} jobs · ${fmt$(totalPipe)} active`:`${ed.length} deals · ${fmt$(totalPipe)} active pipeline`}>
         <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer"}}>
           <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{accentColor:"#1D4ED8",cursor:"pointer"}}/>Select all
         </label>
-        <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>Add Deal</button>
+        <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>{fs?"Add Job":"Add Deal"}</button>
       </PageHeader>
       {selected.size>0&&(
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
@@ -1267,11 +1396,13 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
                         if(setSelDeal)setSelDeal(deal.id);
                       }}
                       style={{background:"#FFFFFF",border:`1px solid ${selected.has(deal.id)?"#1D4ED8":dragging===deal.id?"#1D4ED8":"#E2E8F0"}`,boxShadow:selected.has(deal.id)?"0 0 0 2px #1D4ED830":undefined,borderRadius:10,padding:14,marginBottom:10,cursor:"grab",opacity:dragging===deal.id?.5:1,position:"relative"}}>
-                      <div style={{position:"absolute",top:8,right:8}}>
+                      <div style={{position:"absolute",top:8,right:8,display:"flex",alignItems:"center",gap:6}}>
+                        {fs&&deal.recurring&&<span title={`Recurring ${deal.frequency||""}`} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:"50%",background:"#10B98120",border:"1px solid #10B98140",color:"#10B981"}}><Ic d={I.repeat} size={10} c="#10B981"/></span>}
                         <input type="checkbox" checked={selected.has(deal.id)} onChange={()=>toggleOne(deal.id)} onClick={e=>e.stopPropagation()} style={{accentColor:"#1D4ED8",cursor:"pointer",width:14,height:14}}/>
                       </div>
-                      <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:6,lineHeight:1.4,paddingRight:22}}>{deal.title}</div>
+                      <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:6,lineHeight:1.4,paddingRight:42}}>{deal.title}</div>
                       <div style={{fontSize:20,fontWeight:800,color:sCol,marginBottom:8}}>{fmt$(deal.value)}</div>
+                      {fs&&deal.serviceType&&<div style={{marginBottom:6}}><span style={{...S.badge("#10B981"),fontSize:10}}>{deal.serviceType}</span></div>}
                       {deal.probability!=null&&<div style={{marginBottom:8}}>
                         <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginBottom:3}}><span>Probability</span><span style={{color:sCol}}>{deal.probability}%</span></div>
                         <div style={{height:4,background:"#E9EEF6",borderRadius:2}}><div style={{height:"100%",background:sCol,borderRadius:2,width:`${deal.probability}%`,transition:"width .3s"}}/></div>
@@ -3296,7 +3427,8 @@ function AutomationView({automations,activeEntityId,addAutomation,updateAutomati
 // ═══════════════════════════════════════════════════════════════════════════════
 // SETTINGS VIEW (Entities, Products, Custom Fields, Email, Profile)
 // ═══════════════════════════════════════════════════════════════════════════════
-function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,openModal,setEntities,showToast,products,activeEntityId,addProduct,updateProduct,deleteProduct,customFields,addCustomField,deleteCustomField,webhooks,addWebhook,updateWebhook,deleteWebhook}){
+function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,openModal,setEntities,showToast,products,activeEntityId,addProduct,updateProduct,deleteProduct,customFields,addCustomField,deleteCustomField,webhooks,addWebhook,updateWebhook,deleteWebhook,employees=[],addEmployee,updateEmployee,deleteEmployee,fsSettings={},updateFsSettings}){
+  const fs=isFieldService(entity);
   const [tab,setTab]=useState("entities");
   const [connecting,setConnecting]=useState(null);
   const [emailForm,setEmailForm]=useState({email:"",password:"",server:"",port:""});
@@ -3304,18 +3436,46 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
   const [newField,setNewField]=useState({entity:"contact",name:"",type:"text",options:""});
   const [showNewProd,setShowNewProd]=useState(false);
   const [showNewField,setShowNewField]=useState(false);
+  const [newEmp,setNewEmp]=useState({name:"",role:"Crew Member",phone:"",hourlyRate:"",pin:"",startDate:"",active:true});
+  const [editEmpId,setEditEmpId]=useState(null);
+  const [showNewEmp,setShowNewEmp]=useState(false);
 
   const eProducts=products.filter(p=>p.entityId===activeEntityId);
   const eFields=customFields.filter(f=>f.entityId===activeEntityId);
+  const eEmps=employees.filter(e=>e.entityId===activeEntityId);
+  const fsCfg=fsSettings[activeEntityId]||{};
 
   const simulateOAuth=(provider)=>{connectEmail(provider,"user@"+provider+".com");setConnecting(null);showToast(`${provider} connected! (Demo mode)`);};
+
+  const saveEmployee=()=>{
+    if(!newEmp.name){showToast?.("Name required","error");return;}
+    if(newEmp.pin&&!/^\d{4}$/.test(newEmp.pin)){showToast?.("PIN must be 4 digits","error");return;}
+    if(newEmp.pin&&eEmps.some(e=>e.pin===newEmp.pin&&e.id!==editEmpId)){showToast?.("PIN already in use by another employee","error");return;}
+    const payload={...newEmp,hourlyRate:+newEmp.hourlyRate||0};
+    if(editEmpId)updateEmployee(editEmpId,payload);
+    else addEmployee(payload);
+    setNewEmp({name:"",role:"Crew Member",phone:"",hourlyRate:"",pin:"",startDate:"",active:true});
+    setEditEmpId(null);setShowNewEmp(false);
+    showToast?.(editEmpId?"Employee updated":"Employee added");
+  };
+  const startEdit=(emp)=>{setNewEmp({name:emp.name||"",role:emp.role||"Crew Member",phone:emp.phone||"",hourlyRate:emp.hourlyRate||"",pin:emp.pin||"",startDate:emp.startDate||"",active:emp.active!==false});setEditEmpId(emp.id);setShowNewEmp(true);};
+
+  const tabList=[
+    ["entities","Entities"],
+    ...(fs?[["employees","Employees"],["fsettings","Field Service"]]:[]),
+    ["products","Product Catalog"],
+    ["fields","Custom Fields"],
+    ["email","Email Integration"],
+    ["webhooks","Webhooks"],
+    ["profile","Profile"],
+  ];
 
   return(
     <div>
       <PageHeader title="Settings" sub="Manage entities, products, fields, integrations & preferences"/>
       <div style={{display:"flex",gap:0,background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:12,overflow:"hidden"}}>
         <div style={{width:210,borderRight:"1px solid #E9EEF6",padding:"12px 0",flexShrink:0}}>
-          {[["entities","Entities"],["products","Product Catalog"],["fields","Custom Fields"],["email","Email Integration"],["webhooks","Webhooks"],["profile","Profile"]].map(([id,lbl])=>(
+          {tabList.map(([id,lbl])=>(
             <button key={id} style={{width:"100%",padding:"10px 16px",background:tab===id?"#EEF2FF":"transparent",border:"none",borderLeft:tab===id?"3px solid #1D4ED8":"3px solid transparent",color:tab===id?"#1D4ED8":"#64748B",cursor:"pointer",textAlign:"left",fontSize:13,fontWeight:tab===id?600:500}} onClick={()=>setTab(id)}>{lbl}</button>
           ))}
         </div>
@@ -3340,6 +3500,92 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
                     <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(entities.length===1)return showToast("Cannot delete last entity","error");if(confirm("Delete entity and all its data?"))setEntities(p=>p.filter(x=>x.id!==e.id));}}><Ic d={I.trash} size={14}/></button>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* EMPLOYEES (Field Service only) */}
+          {tab==="employees"&&fs&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+                <div><h3 style={{margin:0,fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Employees</h3><p style={{margin:"4px 0 0",color:"#475569",fontSize:13}}>Crew, supervisors, and admins. PIN is used at the worker time-clock kiosk.</p></div>
+                <button style={S.btnPrimary} onClick={()=>{setEditEmpId(null);setNewEmp({name:"",role:"Crew Member",phone:"",hourlyRate:"",pin:"",startDate:"",active:true});setShowNewEmp(true);}}><Ic d={I.plus} size={14}/>Add Employee</button>
+              </div>
+              {showNewEmp&&(
+                <div style={{...S.card({padding:16}),marginBottom:16,border:"1px solid #BFDBFE"}}>
+                  <div style={S.grid2}>
+                    <Field label="Full Name *"><input style={S.input} value={newEmp.name} onChange={e=>setNewEmp(p=>({...p,name:e.target.value}))}/></Field>
+                    <Field label="Role"><select style={S.select} value={newEmp.role} onChange={e=>setNewEmp(p=>({...p,role:e.target.value}))}>{EMPLOYEE_ROLES.map(r=><option key={r}>{r}</option>)}</select></Field>
+                    <Field label="Phone"><input style={S.input} value={newEmp.phone} onChange={e=>setNewEmp(p=>({...p,phone:e.target.value}))} placeholder="+1 555-0100"/></Field>
+                    <Field label="Hourly Rate (USD)"><input type="number" style={S.input} value={newEmp.hourlyRate} onChange={e=>setNewEmp(p=>({...p,hourlyRate:e.target.value}))}/></Field>
+                    <Field label="PIN (4 digits)"><input maxLength={4} pattern="\d{4}" style={S.input} value={newEmp.pin} onChange={e=>setNewEmp(p=>({...p,pin:e.target.value.replace(/\D/g,"").slice(0,4)}))}/></Field>
+                    <Field label="Start Date"><input type="date" style={S.input} value={newEmp.startDate} onChange={e=>setNewEmp(p=>({...p,startDate:e.target.value}))}/></Field>
+                    <Field label="Active">
+                      <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#334155",padding:"8px 10px",background:"#F8FAFC",borderRadius:8,border:"1px solid #E2E8F0",cursor:"pointer"}}>
+                        <input type="checkbox" checked={newEmp.active!==false} onChange={e=>setNewEmp(p=>({...p,active:e.target.checked}))} style={{accentColor:"#10B981",width:16,height:16}}/>
+                        {newEmp.active!==false?"Active":"Inactive"}
+                      </label>
+                    </Field>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:4}}>
+                    <button style={S.btnSecondary} onClick={()=>{setShowNewEmp(false);setEditEmpId(null);}}>Cancel</button>
+                    <button style={S.btnPrimary} onClick={saveEmployee}>{editEmpId?"Save Changes":"Add Employee"}</button>
+                  </div>
+                </div>
+              )}
+              <div style={S.card({overflow:"hidden"})}>
+                {eEmps.length===0?<div style={{padding:40,textAlign:"center",color:"#475569"}}>No employees yet.</div>:(
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>{["Name","Role","Phone","Rate","PIN","Started","Status",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                    <tbody>{eEmps.map(emp=>(
+                      <tr key={emp.id}>
+                        <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{emp.name}</td>
+                        <td style={S.td}><span style={S.badge("#1D4ED8")}>{emp.role||"—"}</span></td>
+                        <td style={S.td}>{emp.phone||"—"}</td>
+                        <td style={{...S.td,fontWeight:600,color:"#10B981"}}>{fmt$(emp.hourlyRate)}/hr</td>
+                        <td style={{...S.td,fontFamily:"monospace",letterSpacing:2}}>{emp.pin||"—"}</td>
+                        <td style={S.td}>{emp.startDate?fmtDate(emp.startDate):"—"}</td>
+                        <td style={S.td}>{emp.active!==false?<span style={S.badge("#10B981")}>Active</span>:<span style={S.badge("#94A3B8")}>Inactive</span>}</td>
+                        <td style={S.td}>
+                          <button style={S.btnGhost} onClick={()=>startEdit(emp)}><Ic d={I.edit} size={13}/></button>
+                          <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(confirm(`Delete ${emp.name}?`))deleteEmployee(emp.id);}}><Ic d={I.trash} size={13}/></button>
+                        </td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* FIELD SERVICE SETTINGS (Field Service only) */}
+          {tab==="fsettings"&&fs&&(
+            <div>
+              <div style={{marginBottom:20}}>
+                <h3 style={{margin:0,fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Field Service Settings</h3>
+                <p style={{margin:"4px 0 0",color:"#475569",fontSize:13}}>Defaults used when creating estimates, invoices, and client portal pages.</p>
+              </div>
+              <div style={S.grid2}>
+                <Field label="Default Deposit %"><input type="number" min={0} max={100} style={S.input} value={fsCfg.defaultDepositPct||""} onChange={e=>updateFsSettings(activeEntityId,{defaultDepositPct:+e.target.value||0})} placeholder="30"/></Field>
+                <Field label="Default Hourly Labor Rate (USD)"><input type="number" style={S.input} value={fsCfg.defaultLaborRate||""} onChange={e=>updateFsSettings(activeEntityId,{defaultLaborRate:+e.target.value||0})} placeholder="65"/></Field>
+                <Field label="Service Area"><input style={S.input} value={fsCfg.serviceArea||""} onChange={e=>updateFsSettings(activeEntityId,{serviceArea:e.target.value})} placeholder="Greater Boston · 25-mile radius"/></Field>
+                <Field label="Business Hours"><input style={S.input} value={fsCfg.businessHours||""} onChange={e=>updateFsSettings(activeEntityId,{businessHours:e.target.value})} placeholder="Mon-Sat 7am-5pm"/></Field>
+              </div>
+              <Field label="Company Logo">
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  {fsCfg.logo?<img src={fsCfg.logo} alt="Logo" style={{maxWidth:120,maxHeight:60,border:"1px solid #E2E8F0",borderRadius:8,padding:4}}/>:<div style={{width:120,height:60,background:"#F1F5F9",borderRadius:8,border:"1px dashed #CBD5E1",display:"flex",alignItems:"center",justifyContent:"center",color:"#94A3B8",fontSize:11}}>No logo</div>}
+                  <label style={{...S.btnSecondary,cursor:"pointer"}}>
+                    <Ic d={I.upload} size={13}/>Upload Logo
+                    <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{
+                      const f=e.target.files?.[0];if(!f)return;
+                      const r=new FileReader();r.onload=()=>updateFsSettings(activeEntityId,{logo:r.result});r.readAsDataURL(f);
+                    }}/>
+                  </label>
+                  {fsCfg.logo&&<button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>updateFsSettings(activeEntityId,{logo:""})}>Remove</button>}
+                </div>
+              </Field>
+              <div style={{marginTop:18,padding:14,background:"#F0FDF4",borderRadius:10,border:"1px solid #10B98140",fontSize:12,color:"#065F46"}}>
+                Tip: defaults apply to new estimates and invoices. Existing records keep their values.
               </div>
             </div>
           )}
@@ -4053,6 +4299,581 @@ function PortalCredentialsModal({info,onClose,copy}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // SCHEDULER (C1)
 // ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIELD SERVICE — MOBILE FIELD VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+function FieldView({entity,activeEntityId,deals,contacts,companies,employees,timeClockEntries,notes,updateDeal,addNote,clockInEmployee,clockOutEmployee,onExit,recentJobId,setRecentJobId,showToast,_tab,_setTab,_selJobId,_setSelJobId}){
+  const tab=_tab||"jobs";
+  const selJobId=_selJobId||null;
+  const setSelJobId=_setSelJobId||(()=>{});
+  const setTab=_setTab||(()=>{});
+  const [noteText,setNoteText]=useState("");
+  const todayStr=new Date().toISOString().slice(0,10);
+  const eDeals=deals.filter(d=>d.entityId===activeEntityId);
+  const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
+  const eEmps=employees.filter(e=>e.entityId===activeEntityId&&e.active!==false);
+  const todaysJobs=eDeals.filter(d=>d.closeDate===todayStr||(["In Progress","Won"].includes(d.stage)&&(!d.closeDate||d.closeDate<=todayStr))).sort((a,b)=>a.title.localeCompare(b.title));
+  const selJob=selJobId?eDeals.find(d=>d.id===selJobId):null;
+  const stages=stagesFor(entity);
+
+  const openJob=(id)=>{setSelJobId(id);setRecentJobId?.(id);};
+
+  const addPhoto=(jobId,dataUrl)=>{
+    if(!jobId)return;
+    const d=eDeals.find(x=>x.id===jobId);
+    if(!d)return;
+    const photos=[...(d.photos||[]),{id:uid(),dataUrl,at:new Date().toISOString()}];
+    updateDeal(jobId,{photos});
+    showToast?.("Photo attached");
+  };
+
+  const big={padding:"16px 18px",fontSize:16,borderRadius:14};
+  const btnBig={...S.btnPrimary,...big,justifyContent:"center",width:"100%"};
+  const btnBigSec={...S.btnSecondary,...big,justifyContent:"center",width:"100%"};
+
+  // ── JOB DETAIL (within field view) ──
+  if(selJob){
+    const contact=eContacts.find(c=>c.id===selJob.contactId);
+    const company=companies.find(c=>c.id===selJob.companyId);
+    const sCol=stageColor(entity,selJob.stage);
+    const crewNames=(selJob.crewAssigned||[]).map(id=>eEmps.find(x=>x.id===id)?.name||"?");
+    return(
+      <div style={{maxWidth:540,margin:"0 auto"}}>
+        <button style={{...S.btnGhost,fontSize:14,marginBottom:14}} onClick={()=>setSelJobId(null)}><Ic d={I.arrow} size={14}/>Back</button>
+        <div style={{...S.card({padding:20}),borderLeft:`6px solid ${sCol}`,marginBottom:14}}>
+          <div style={{fontSize:20,fontFamily:"'Sora',sans-serif",fontWeight:800,color:"#0F172A",marginBottom:8}}>{selJob.title}</div>
+          {contact&&<div style={{fontSize:15,color:"#1D4ED8",marginBottom:4}}>{contact.name}{contact.phone&&<a href={`tel:${contact.phone}`} style={{marginLeft:10,fontSize:13,color:"#475569"}}>📞 {contact.phone}</a>}</div>}
+          {company&&<div style={{fontSize:14,color:"#475569",marginBottom:4}}>🏢 {company.name}</div>}
+          {selJob.jobSiteAddress&&(
+            <a href={`https://maps.apple.com/?q=${encodeURIComponent(selJob.jobSiteAddress)}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:8,padding:"12px 14px",background:"#EFF6FF",borderRadius:10,marginTop:10,color:"#1D4ED8",textDecoration:"none",fontWeight:600,fontSize:14}}>
+              <Ic d={I.mapPin} size={16} c="#1D4ED8"/>{selJob.jobSiteAddress}
+            </a>
+          )}
+          {selJob.serviceType&&<div style={{marginTop:10}}><span style={S.badge("#10B981")}>{selJob.serviceType}</span></div>}
+          {crewNames.length>0&&<div style={{marginTop:10,fontSize:13,color:"#475569"}}>👷 Crew: {crewNames.join(", ")}</div>}
+        </div>
+        <div style={{...S.card({padding:16}),marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",marginBottom:8,letterSpacing:.5}}>Status</div>
+          <select value={selJob.stage} onChange={e=>updateDeal(selJob.id,{stage:e.target.value})} style={{...S.select,fontSize:15,padding:"12px 14px"}}>
+            {stages.map(s=><option key={s}>{s}</option>)}
+          </select>
+        </div>
+        {selJob.description&&<div style={{...S.card({padding:16}),marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",marginBottom:6,letterSpacing:.5}}>Description</div><div style={{fontSize:14,color:"#0F172A",whiteSpace:"pre-wrap"}}>{selJob.description}</div></div>}
+        <div style={{...S.card({padding:16}),marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",marginBottom:8,letterSpacing:.5}}>Add note</div>
+          <textarea rows={3} style={{...S.textarea,fontSize:14}} value={noteText} onChange={e=>setNoteText(e.target.value)} placeholder="What's going on on-site…"/>
+          <button style={{...btnBig,marginTop:8}} disabled={!noteText.trim()} onClick={()=>{addNote({entityId:activeEntityId,dealId:selJob.id,contactId:selJob.contactId||null,content:noteText.trim(),type:"note"});setNoteText("");showToast?.("Note added");}}><Ic d={I.plus} size={14}/>Save note</button>
+        </div>
+        <div style={{...S.card({padding:16}),marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",marginBottom:8,letterSpacing:.5}}>Photos ({(selJob.photos||[]).length})</div>
+          {(selJob.photos||[]).length>0&&(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:10}}>
+              {(selJob.photos||[]).map(p=><img key={p.id} src={p.dataUrl} alt="" style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8}}/>)}
+            </div>
+          )}
+          <label style={{...btnBigSec,cursor:"pointer"}}>
+            <Ic d={I.camera} size={16}/>Upload photos
+            <input type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{
+              const files=Array.from(e.target.files||[]);
+              files.forEach(f=>{const r=new FileReader();r.onload=()=>addPhoto(selJob.id,r.result);r.readAsDataURL(f);});
+              e.target.value="";
+            }}/>
+          </label>
+        </div>
+      </div>
+    );
+  }
+
+  // ── CAMERA ──
+  if(tab==="camera"){
+    const tgtId=recentJobId&&eDeals.some(d=>d.id===recentJobId)?recentJobId:null;
+    const tgt=tgtId?eDeals.find(d=>d.id===tgtId):null;
+    return(
+      <div style={{maxWidth:540,margin:"0 auto",padding:20}}>
+        <div style={{textAlign:"center",marginBottom:18}}>
+          <div style={{width:84,height:84,borderRadius:"50%",background:"#1D4ED820",margin:"0 auto 14px",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic d={I.camera} size={42} c="#1D4ED8"/></div>
+          <div style={{fontFamily:"'Sora',sans-serif",fontSize:20,fontWeight:800,color:"#0F172A"}}>Job site photos</div>
+          <div style={{fontSize:13,color:"#64748B",marginTop:4}}>{tgt?`Attaches to: ${tgt.title}`:"Open a job first so photos attach to it."}</div>
+        </div>
+        <label style={{...btnBig,cursor:tgt?"pointer":"not-allowed",opacity:tgt?1:0.55}}>
+          <Ic d={I.camera} size={18}/>Take / pick photos
+          <input type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} disabled={!tgt} onChange={e=>{
+            if(!tgt)return;
+            const files=Array.from(e.target.files||[]);
+            files.forEach(f=>{const r=new FileReader();r.onload=()=>addPhoto(tgt.id,r.result);r.readAsDataURL(f);});
+            e.target.value="";
+          }}/>
+        </label>
+      </div>
+    );
+  }
+
+  // ── TIME CLOCK (worker PIN inside field view) ──
+  if(tab==="timeclock"){
+    return(
+      <WorkerPinView entity={entity} eEmps={eEmps} eDeals={eDeals} todayStr={todayStr} openEntry={(id)=>timeClockEntries.find(e=>e.entityId===activeEntityId&&e.employeeId===id&&!e.clockOut)} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setTab("jobs")} showToast={showToast}/>
+    );
+  }
+
+  // ── CUSTOMERS ──
+  if(tab==="customers"){
+    return(
+      <div style={{maxWidth:540,margin:"0 auto"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>All customers</div>
+        {eContacts.length===0?<div style={{textAlign:"center",color:"#94A3B8",padding:30}}>No customers yet.</div>:eContacts.sort((a,b)=>a.name.localeCompare(b.name)).map(c=>{
+          const jobs=eDeals.filter(d=>d.contactId===c.id);
+          return(
+            <div key={c.id} style={{...S.card({padding:14}),marginBottom:8}}>
+              <div style={{fontSize:15,fontWeight:700,color:"#0F172A"}}>{c.name}</div>
+              <div style={{fontSize:13,color:"#64748B",marginTop:2}}>{c.phone&&<a href={`tel:${c.phone}`} style={{color:"#1D4ED8",marginRight:10}}>📞 {c.phone}</a>}{c.email&&<a href={`mailto:${c.email}`} style={{color:"#1D4ED8"}}>{c.email}</a>}</div>
+              {c.companyName&&<div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>🏢 {c.companyName}</div>}
+              {jobs.length>0&&(
+                <div style={{marginTop:8,fontSize:12,color:"#475569"}}>
+                  {jobs.length} job{jobs.length===1?"":"s"} · {jobs.map(j=>(
+                    <button key={j.id} onClick={()=>openJob(j.id)} style={{background:"none",border:"none",color:"#1D4ED8",cursor:"pointer",fontSize:12,padding:"2px 0",marginRight:8,textDecoration:"underline"}}>{j.title.slice(0,30)}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── TODAY'S JOBS (default) ──
+  return(
+    <div style={{maxWidth:540,margin:"0 auto"}}>
+      <div style={{fontSize:13,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Today · {new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>
+      {todaysJobs.length===0?(
+        <div style={{...S.card({padding:30}),textAlign:"center",color:"#94A3B8"}}>No jobs scheduled for today.</div>
+      ):todaysJobs.map(d=>{
+        const sCol=stageColor(entity,d.stage);
+        const contact=eContacts.find(c=>c.id===d.contactId);
+        const crewNames=(d.crewAssigned||[]).map(id=>eEmps.find(x=>x.id===id)?.name?.split(" ")[0]||"?");
+        return(
+          <button key={d.id} onClick={()=>openJob(d.id)} style={{display:"block",textAlign:"left",width:"100%",border:"none",padding:0,marginBottom:10,background:"transparent",cursor:"pointer"}}>
+            <div style={{...S.card({padding:14}),borderLeft:`5px solid ${sCol}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:15,fontWeight:700,color:"#0F172A",lineHeight:1.3}}>{d.title}</div>
+                  {contact&&<div style={{fontSize:13,color:"#475569",marginTop:2}}>{contact.name}</div>}
+                  {d.jobSiteAddress&&<div style={{fontSize:12,color:"#64748B",marginTop:2}}>📍 {d.jobSiteAddress}</div>}
+                  {crewNames.length>0&&<div style={{fontSize:12,color:sCol,fontWeight:600,marginTop:4}}>👷 {crewNames.join(", ")}</div>}
+                </div>
+                <span style={{...S.badge(sCol),flexShrink:0}}>{d.stage}</span>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FieldViewShell({entity,activeEntityId,deals,contacts,companies,employees,timeClockEntries,notes,updateDeal,addNote,clockInEmployee,clockOutEmployee,onExit,recentJobId,setRecentJobId,showToast}){
+  const [tab,setTab]=useState("jobs");
+  const [selJobId,setSelJobId]=useState(null);
+  const showTabBar = !selJobId && tab!=="timeclock";
+  const TabBtn=({id,label,icon})=>(
+    <button onClick={()=>{setTab(id);setSelJobId(null);}} style={{flex:1,padding:"12px 0",background:tab===id?"#1D4ED810":"transparent",border:"none",cursor:"pointer",color:tab===id?"#1D4ED8":"#64748B",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}>
+      <Ic d={icon} size={20}/>{label}
+    </button>
+  );
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100%",background:"#F8FAFC"}}>
+      <div style={{flexShrink:0,padding:"10px 14px",background:entity?.color||"#0F2044",color:"#fff",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <Ic d={I.truck} size={18}/>
+          <div>
+            <div style={{fontFamily:"'Sora',sans-serif",fontSize:15,fontWeight:800,lineHeight:1}}>{entity?.name}</div>
+            <div style={{fontSize:10,opacity:.85,marginTop:2}}>Field View</div>
+          </div>
+        </div>
+        <button style={{background:"rgba(255,255,255,0.18)",border:"none",color:"#fff",padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}} onClick={onExit}>Exit</button>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"18px 14px",paddingBottom:showTabBar?80:18}}>
+        <FieldView entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} timeClockEntries={timeClockEntries} notes={notes} updateDeal={updateDeal} addNote={addNote} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={onExit} recentJobId={recentJobId} setRecentJobId={setRecentJobId} showToast={showToast} _tab={tab} _setTab={setTab} _selJobId={selJobId} _setSelJobId={setSelJobId}/>
+      </div>
+      {showTabBar&&(
+        <div style={{position:"absolute",left:0,right:0,bottom:0,display:"flex",background:"#FFFFFF",borderTop:"1px solid #E2E8F0",boxShadow:"0 -2px 8px rgba(15,30,60,0.06)"}}>
+          <TabBtn id="jobs" label="Today" icon={I.cal}/>
+          <TabBtn id="customers" label="Customers" icon={I.users}/>
+          <TabBtn id="timeclock" label="Time Clock" icon={I.clock}/>
+          <TabBtn id="camera" label="Camera" icon={I.camera}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIELD SERVICE — TIME CLOCK
+// ═══════════════════════════════════════════════════════════════════════════════
+function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,clockInEmployee,clockOutEmployee,addTimeClockEntry,updateTimeClockEntry,deleteTimeClockEntry,showToast,initialMode}){
+  const [mode,setMode]=useState(initialMode||"supervisor"); // supervisor | worker
+  // Re-render every 30s for live "duration" display
+  const [,setTick]=useState(0);
+  useEffect(()=>{const id=setInterval(()=>setTick(t=>t+1),30000);return()=>clearInterval(id);},[]);
+  const eEmps=employees.filter(e=>e.entityId===activeEntityId);
+  const eEntries=timeClockEntries.filter(e=>e.entityId===activeEntityId);
+  const eDeals=deals.filter(d=>d.entityId===activeEntityId);
+  const todayStr=new Date().toISOString().slice(0,10);
+  const fmtClock=iso=>iso?new Date(iso).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}):"—";
+  const liveDuration=(iso)=>{const ms=Date.now()-new Date(iso).getTime();const h=ms/3600000;const hh=Math.floor(h);const mm=Math.round((h-hh)*60);return`${hh}h ${mm}m`;};
+
+  // Week boundaries (Mon-Sun)
+  const weekBounds=()=>{
+    const d=new Date();
+    const day=d.getDay()||7; // 1..7 Mon..Sun
+    const mon=new Date(d);mon.setDate(d.getDate()-(day-1));mon.setHours(0,0,0,0);
+    const sun=new Date(mon);sun.setDate(mon.getDate()+6);sun.setHours(23,59,59,999);
+    return{mon,sun};
+  };
+  const {mon,sun}=weekBounds();
+  const weekDays=Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;});
+
+  const hoursForEmpDay=(empId,d)=>{
+    const ds=d.toISOString().slice(0,10);
+    return eEntries.filter(e=>e.employeeId===empId&&e.date===ds&&e.clockOut).reduce((s,e)=>s+(e.hours||0),0);
+  };
+  const todayHours=(empId)=>eEntries.filter(e=>e.employeeId===empId&&e.date===todayStr&&e.clockOut).reduce((s,e)=>s+(e.hours||0),0);
+  const openEntry=(empId)=>eEntries.find(e=>e.employeeId===empId&&!e.clockOut);
+
+  const exportWeekCSV=()=>{
+    const rows=[["Employee Name","Date","Job Name","Clock In","Clock Out","Hours"]];
+    eEntries.filter(e=>{const dt=new Date(e.date);return dt>=mon&&dt<=sun&&e.clockOut;}).forEach(e=>{
+      const emp=eEmps.find(x=>x.id===e.employeeId);
+      const job=eDeals.find(d=>d.id===e.jobId);
+      rows.push([emp?.name||"—",e.date,job?.title||"—",fmtClock(e.clockIn),fmtClock(e.clockOut),(e.hours||0).toFixed(2)]);
+    });
+    const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob=new Blob([csv],{type:"text/csv"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`timeclock-week-${mon.toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(a.href);
+    showToast?.("Week exported as CSV");
+  };
+
+  // ── WORKER VIEW ──
+  if(mode==="worker"){
+    return <WorkerPinView entity={entity} eEmps={eEmps} eDeals={eDeals} todayStr={todayStr} openEntry={openEntry} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setMode("supervisor")} showToast={showToast}/>;
+  }
+
+  // ── SUPERVISOR VIEW ──
+  const clockedIn=eEmps.filter(e=>openEntry(e.id));
+  const clockedOut=eEmps.filter(e=>!openEntry(e.id));
+  return(
+    <div>
+      <PageHeader title="Time Clock" sub={`${clockedIn.length} clocked in · ${eEmps.length} employees`}>
+        <button style={S.btnSecondary} onClick={exportWeekCSV}><Ic d={I.dl} size={13}/>Export Week</button>
+        <button style={S.btnPrimary} onClick={()=>setMode("worker")}><Ic d={I.eye} size={13}/>Worker View</button>
+      </PageHeader>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+        <StatCard label="Clocked in" value={clockedIn.length} sub="Right now" color="#10B981" icon={I.clock}/>
+        <StatCard label="On break / out" value={clockedOut.length} sub="Not clocked in" color="#94A3B8" icon={I.users}/>
+        <StatCard label="Hours today" value={eEmps.reduce((s,e)=>s+todayHours(e.id),0).toFixed(1)} sub="All employees" color="#1D4ED8" icon={I.bar}/>
+        <StatCard label="Hours this week" value={eEmps.reduce((s,e)=>s+weekDays.reduce((ss,d)=>ss+hoursForEmpDay(e.id,d),0),0).toFixed(1)} sub="Mon–Sun" color="#8B5CF6" icon={I.cal}/>
+      </div>
+      <div style={{...S.card({padding:18}),marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>Live status</div>
+        {eEmps.length===0?(
+          <div style={{textAlign:"center",padding:24,color:"#94A3B8",fontSize:13}}>No employees yet. Add them in Settings → Employees.</div>
+        ):(
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>{["Employee","Role","Status","At job","Since","Today","Actions"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{eEmps.map(emp=>{
+              const open=openEntry(emp.id);
+              const job=open&&eDeals.find(d=>d.id===open.jobId);
+              return(
+                <tr key={emp.id}>
+                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{emp.name}</td>
+                  <td style={S.td}>{emp.role||"—"}</td>
+                  <td style={S.td}>{open?<span style={S.badge("#10B981")}><span style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>Clocked in</span>:<span style={S.badge("#94A3B8")}>Out</span>}</td>
+                  <td style={S.td}>{job?.title||(open?"(no job)":"—")}</td>
+                  <td style={S.td}>{open?`${fmtClock(open.clockIn)} · ${liveDuration(open.clockIn)}`:"—"}</td>
+                  <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{todayHours(emp.id).toFixed(2)} hr</td>
+                  <td style={S.td}>
+                    {open?(
+                      <button style={{...S.btnSecondary,padding:"4px 10px",fontSize:12}} onClick={()=>{clockOutEmployee(emp.id);showToast?.(`${emp.name} clocked out`);}}>Clock out</button>
+                    ):(
+                      <select defaultValue="" onChange={e=>{if(!e.target.value)return;clockInEmployee(emp.id,e.target.value||null);showToast?.(`${emp.name} clocked in`);e.target.value="";}} style={{...S.select,padding:"3px 8px",fontSize:12,width:"auto"}}>
+                        <option value="">Clock in to…</option>
+                        {eDeals.filter(d=>!["Lost","Completed"].includes(d.stage)).map(d=><option key={d.id} value={d.id}>{d.title.slice(0,40)}</option>)}
+                      </select>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        )}
+      </div>
+      <div style={S.card({padding:18})}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>Weekly hours — {mon.toLocaleDateString("en-US",{month:"short",day:"numeric"})} to {sun.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
+          <button style={{...S.btnGhost,fontSize:12}} onClick={exportWeekCSV}><Ic d={I.dl} size={12}/>Download CSV</button>
+        </div>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr>
+            <th style={S.th}>Employee</th>
+            {weekDays.map(d=><th key={d.toISOString()} style={S.th}>{d.toLocaleDateString("en-US",{weekday:"short"})} {d.getDate()}</th>)}
+            <th style={S.th}>Total</th>
+          </tr></thead>
+          <tbody>{eEmps.map(emp=>{
+            const cells=weekDays.map(d=>hoursForEmpDay(emp.id,d));
+            const total=cells.reduce((s,h)=>s+h,0);
+            return(
+              <tr key={emp.id}>
+                <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{emp.name}</td>
+                {cells.map((h,i)=><td key={i} style={S.td}>{h>0?h.toFixed(2):"—"}</td>)}
+                <td style={{...S.td,fontWeight:700,color:"#0F172A"}}>{total.toFixed(2)}</td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Worker PIN clock-in/out flow
+function WorkerPinView({entity,eEmps,eDeals,todayStr,openEntry,clockInEmployee,clockOutEmployee,onExit,showToast}){
+  const [pin,setPin]=useState("");
+  const [stage,setStage]=useState("pin"); // pin | menu | pickJob | confirmIn | confirmOut
+  const [employee,setEmployee]=useState(null);
+  const [pickedJob,setPickedJob]=useState(null);
+  const [lastResult,setLastResult]=useState(null);
+
+  const reset=()=>{setPin("");setStage("pin");setEmployee(null);setPickedJob(null);setLastResult(null);};
+  const tryPin=(p)=>{
+    const emp=eEmps.find(e=>e.pin===p&&e.active!==false);
+    if(emp){setEmployee(emp);setStage("menu");}
+    else{setPin("");showToast?.("PIN not recognized","error");}
+  };
+  const pad=(n)=>{
+    if(pin.length>=4)return;
+    const next=pin+String(n);
+    setPin(next);
+    if(next.length===4)setTimeout(()=>tryPin(next),120);
+  };
+
+  const empOpenEntry=employee?openEntry(employee.id):null;
+  const todaysJobs=employee?eDeals.filter(d=>(d.crewAssigned||[]).includes(employee.id)||["In Progress","Won"].includes(d.stage)):[];
+
+  const handleClockIn=(job)=>{
+    clockInEmployee(employee.id,job?.id||null);
+    setLastResult({action:"in",time:new Date(),job});
+    setStage("confirmIn");
+  };
+  const handleClockOut=()=>{
+    const closed=clockOutEmployee(employee.id);
+    setLastResult({action:"out",time:new Date(),hours:closed?.hours||0});
+    setStage("confirmOut");
+  };
+
+  return(
+    <div style={{minHeight:"calc(100vh - 100px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,background:"linear-gradient(135deg,#0F2044 0%,#1D4ED8 100%)",borderRadius:14}}>
+      <div style={{maxWidth:420,width:"100%"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{color:"#fff",fontFamily:"'Sora',sans-serif",fontSize:24,fontWeight:800}}>{entity?.name}</div>
+          <button style={{...S.btnGhost,color:"#94A3B8",fontSize:11}} onClick={onExit}>← Exit worker view</button>
+        </div>
+        {stage==="pin"&&(
+          <div style={{background:"#FFFFFF",borderRadius:16,padding:28}}>
+            <div style={{textAlign:"center",fontSize:14,color:"#64748B",marginBottom:10}}>Enter your 4-digit PIN</div>
+            <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:24}}>
+              {[0,1,2,3].map(i=><div key={i} style={{width:44,height:54,border:"2px solid #CBD5E1",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:800,color:"#0F172A",background:pin.length>i?"#1D4ED810":"#fff"}}>{pin.length>i?"●":""}</div>)}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+              {[1,2,3,4,5,6,7,8,9].map(n=>(
+                <button key={n} onClick={()=>pad(n)} style={{padding:"22px 0",fontSize:26,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#0F172A"}}>{n}</button>
+              ))}
+              <button onClick={()=>setPin("")} style={{padding:"22px 0",fontSize:14,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#64748B"}}>Clear</button>
+              <button onClick={()=>pad(0)} style={{padding:"22px 0",fontSize:26,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#0F172A"}}>0</button>
+              <button onClick={()=>setPin(p=>p.slice(0,-1))} style={{padding:"22px 0",fontSize:14,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#64748B"}}>⌫</button>
+            </div>
+          </div>
+        )}
+        {stage==="menu"&&employee&&(
+          <div style={{background:"#FFFFFF",borderRadius:16,padding:28,textAlign:"center"}}>
+            <div style={{fontSize:14,color:"#64748B",marginBottom:6}}>Welcome,</div>
+            <div style={{fontFamily:"'Sora',sans-serif",fontSize:30,fontWeight:800,color:"#0F172A",marginBottom:14}}>{employee.name}</div>
+            <div style={{fontSize:12,color:"#94A3B8",marginBottom:20}}>{empOpenEntry?`Clocked in at ${new Date(empOpenEntry.clockIn).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}${empOpenEntry.jobId?` · ${eDeals.find(d=>d.id===empOpenEntry.jobId)?.title||""}`:""}`:"Not clocked in"}</div>
+            {!empOpenEntry?(
+              <button style={{width:"100%",background:"#10B981",color:"#fff",border:"none",borderRadius:14,padding:"22px 0",fontSize:22,fontWeight:800,cursor:"pointer",marginBottom:10}} onClick={()=>setStage("pickJob")}>CLOCK IN</button>
+            ):(
+              <button style={{width:"100%",background:"#EF4444",color:"#fff",border:"none",borderRadius:14,padding:"22px 0",fontSize:22,fontWeight:800,cursor:"pointer",marginBottom:10}} onClick={handleClockOut}>CLOCK OUT</button>
+            )}
+            {todaysJobs.length>0&&!empOpenEntry&&(
+              <div style={{marginTop:14,padding:"12px 14px",background:"#F8FAFC",borderRadius:10,textAlign:"left"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Today's jobs assigned to you</div>
+                {todaysJobs.slice(0,5).map(j=>(
+                  <div key={j.id} style={{fontSize:13,color:"#334155",padding:"4px 0",borderBottom:"1px solid #E2E8F0"}}>{j.title}</div>
+                ))}
+              </div>
+            )}
+            <button style={{...S.btnGhost,marginTop:16,fontSize:12}} onClick={reset}>Done</button>
+          </div>
+        )}
+        {stage==="pickJob"&&employee&&(
+          <div style={{background:"#FFFFFF",borderRadius:16,padding:24}}>
+            <div style={{fontSize:14,color:"#64748B",marginBottom:14,textAlign:"center"}}>Pick the job you're starting</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:340,overflowY:"auto"}}>
+              {todaysJobs.length===0&&<div style={{textAlign:"center",color:"#94A3B8",fontSize:13,padding:20}}>No jobs assigned yet.</div>}
+              {todaysJobs.map(j=>(
+                <button key={j.id} onClick={()=>handleClockIn(j)} style={{padding:"14px 16px",background:"#F1F5F9",border:"1px solid #E2E8F0",borderRadius:12,textAlign:"left",cursor:"pointer"}}>
+                  <div style={{fontSize:14,fontWeight:700,color:"#0F172A"}}>{j.title}</div>
+                  {j.jobSiteAddress&&<div style={{fontSize:12,color:"#64748B",marginTop:3}}>{j.jobSiteAddress}</div>}
+                  {j.serviceType&&<span style={{...S.badge("#10B981"),marginTop:6,fontSize:10}}>{j.serviceType}</span>}
+                </button>
+              ))}
+              <button onClick={()=>handleClockIn(null)} style={{padding:"14px 16px",background:"#FFFFFF",border:"1px dashed #CBD5E1",borderRadius:12,textAlign:"center",cursor:"pointer",color:"#475569",fontSize:13}}>Clock in without a job</button>
+            </div>
+            <button style={{...S.btnSecondary,width:"100%",marginTop:14,justifyContent:"center"}} onClick={()=>setStage("menu")}>Back</button>
+          </div>
+        )}
+        {(stage==="confirmIn"||stage==="confirmOut")&&lastResult&&(
+          <div style={{background:"#FFFFFF",borderRadius:16,padding:28,textAlign:"center"}}>
+            <div style={{width:64,height:64,borderRadius:"50%",background:stage==="confirmIn"?"#10B98120":"#1D4ED820",margin:"0 auto 14px",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic d={I.ok} size={32} c={stage==="confirmIn"?"#10B981":"#1D4ED8"}/></div>
+            <div style={{fontSize:22,fontFamily:"'Sora',sans-serif",fontWeight:800,color:"#0F172A",marginBottom:8}}>{stage==="confirmIn"?"Clocked in":"Clocked out"}</div>
+            <div style={{fontSize:13,color:"#64748B",marginBottom:6}}>{lastResult.time.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</div>
+            {stage==="confirmIn"&&<div style={{fontSize:13,color:"#475569",marginBottom:14}}>{lastResult.job?lastResult.job.title:"(no job selected)"}<div style={{fontSize:11,color:"#94A3B8",marginTop:4}}>Location recorded</div></div>}
+            {stage==="confirmOut"&&<div style={{fontSize:13,color:"#475569",marginBottom:14}}>{(lastResult.hours||0).toFixed(2)} hrs this session</div>}
+            <button style={{width:"100%",background:"#1D4ED8",color:"#fff",border:"none",borderRadius:12,padding:"14px 0",fontSize:14,fontWeight:700,cursor:"pointer"}} onClick={reset}>Done</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIELD SERVICE — JOB SCHEDULER (calendar)
+// ═══════════════════════════════════════════════════════════════════════════════
+function JobScheduler({entity,activeEntityId,deals,contacts,companies,employees,updateDeal,setSelDeal,setView,showToast}){
+  const [weekStart,setWeekStart]=useState(()=>{const d=new Date();const day=d.getDay()||7;const m=new Date(d);m.setDate(d.getDate()-(day-1));m.setHours(0,0,0,0);return m;});
+  const [dragging,setDragging]=useState(null);
+  const [dragOver,setDragOver]=useState(null);
+  const [assigning,setAssigning]=useState(null); // dealId currently editing crew
+
+  const eDeals=deals.filter(d=>d.entityId===activeEntityId);
+  const eEmps=employees.filter(e=>e.entityId===activeEntityId&&e.active!==false);
+  const days=Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(weekStart.getDate()+i);return d;});
+  const fmtDateStr=d=>d.toISOString().slice(0,10);
+  const jumpToday=()=>{const d=new Date();const day=d.getDay()||7;const m=new Date(d);m.setDate(d.getDate()-(day-1));m.setHours(0,0,0,0);setWeekStart(m);};
+  const shift=(n)=>{const d=new Date(weekStart);d.setDate(weekStart.getDate()+n);setWeekStart(d);};
+
+  const scheduledOn=ds=>eDeals.filter(d=>d.closeDate===ds);
+  const unscheduled=eDeals.filter(d=>!d.closeDate&&!["Completed","Lost"].includes(d.stage));
+
+  const handleDrop=(dateStr)=>{
+    if(!dragging)return;
+    updateDeal(dragging,{closeDate:dateStr});
+    setDragging(null);setDragOver(null);
+    showToast?.(`Rescheduled to ${fmtDate(dateStr)}`);
+  };
+  const handleDropUnschedule=()=>{
+    if(!dragging)return;
+    updateDeal(dragging,{closeDate:null});
+    setDragging(null);setDragOver(null);
+    showToast?.("Moved to Unscheduled");
+  };
+
+  const Block=({d})=>{
+    const sCol=stageColor(entity,d.stage);
+    const contact=contacts.find(c=>c.id===d.contactId);
+    const company=companies.find(c=>c.id===d.companyId);
+    const customerLabel=contact?.name||company?.name||d.companyName||"—";
+    const crewNames=(d.crewAssigned||[]).map(id=>eEmps.find(x=>x.id===id)?.name?.split(" ")[0]||"?");
+    return(
+      <div draggable onDragStart={e=>{setDragging(d.id);e.dataTransfer.setData("text",d.id);}} onDragEnd={()=>{setDragging(null);setDragOver(null);}}
+        onClick={()=>{setSelDeal(d.id);setView("deals");}}
+        style={{background:sCol+"15",borderLeft:`3px solid ${sCol}`,borderRadius:6,padding:"6px 8px",marginBottom:5,cursor:"grab",fontSize:11,position:"relative"}}>
+        {d.recurring&&<div style={{position:"absolute",top:4,right:4,color:sCol}}><Ic d={I.repeat} size={9}/></div>}
+        <div style={{fontWeight:700,color:"#0F172A",lineHeight:1.25,paddingRight:14}}>{d.title}</div>
+        <div style={{color:"#475569",marginTop:2}}>{customerLabel}</div>
+        {crewNames.length>0&&<div style={{color:sCol,fontWeight:600,marginTop:2}}>👷 {crewNames.join(", ")}</div>}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:3,gap:4}}>
+          <span style={{...S.badge(sCol),fontSize:9,padding:"1px 5px"}}>{d.stage}</span>
+          <button onClick={e=>{e.stopPropagation();setAssigning(assigning===d.id?null:d.id);}} style={{...S.btnGhost,padding:2,fontSize:10}}><Ic d={I.users} size={10}/></button>
+        </div>
+        {assigning===d.id&&(
+          <div onClick={e=>e.stopPropagation()} style={{position:"absolute",top:"100%",left:0,right:0,zIndex:10,background:"#FFFFFF",border:"1px solid #CBD5E1",borderRadius:8,padding:10,marginTop:4,boxShadow:"0 8px 24px rgba(15,30,60,.18)"}}>
+            <div style={{fontSize:10,fontWeight:700,color:"#64748B",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Assign crew</div>
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              {eEmps.length===0&&<div style={{fontSize:11,color:"#94A3B8"}}>No employees yet.</div>}
+              {eEmps.map(emp=>{
+                const sel=(d.crewAssigned||[]).includes(emp.id);
+                return(
+                  <label key={emp.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#334155",cursor:"pointer"}}>
+                    <input type="checkbox" checked={sel} onChange={()=>{
+                      const cur=d.crewAssigned||[];
+                      updateDeal(d.id,{crewAssigned:sel?cur.filter(x=>x!==emp.id):[...cur,emp.id]});
+                    }} style={{accentColor:"#10B981"}}/>
+                    {emp.name}
+                  </label>
+                );
+              })}
+            </div>
+            <button style={{...S.btnGhost,fontSize:10,marginTop:6}} onClick={()=>setAssigning(null)}>Close</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return(
+    <div>
+      <PageHeader title="Job Schedule" sub={`Week of ${weekStart.toLocaleDateString("en-US",{month:"long",day:"numeric"})}`}>
+        <button style={S.btnSecondary} onClick={()=>shift(-7)}>‹ Prev</button>
+        <button style={S.btnSecondary} onClick={jumpToday}>Today</button>
+        <button style={S.btnSecondary} onClick={()=>shift(7)}>Next ›</button>
+      </PageHeader>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:12,alignItems:"start"}}>
+        <div style={{...S.card({padding:0}),overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+            {days.map(d=>{
+              const ds=fmtDateStr(d);
+              const isToday=ds===new Date().toISOString().slice(0,10);
+              const sd=scheduledOn(ds);
+              const over=dragOver===ds;
+              return(
+                <div key={ds}
+                  onDragOver={e=>{e.preventDefault();setDragOver(ds);}}
+                  onDragLeave={()=>setDragOver(null)}
+                  onDrop={e=>{e.preventDefault();handleDrop(ds);}}
+                  style={{borderRight:"1px solid #E2E8F0",padding:10,minHeight:480,background:over?"#EFF6FF":isToday?"#FEFCE8":"#FFFFFF"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:isToday?"#F59E0B":"#64748B",textTransform:"uppercase",letterSpacing:.5}}>{d.toLocaleDateString("en-US",{weekday:"short"})}</div>
+                  <div style={{fontSize:18,fontWeight:800,color:"#0F172A",marginBottom:8}}>{d.getDate()}</div>
+                  {sd.map(deal=><Block key={deal.id} d={deal}/>)}
+                  {sd.length===0&&<div style={{fontSize:10,color:"#CBD5E1",textAlign:"center",padding:"40px 0"}}>Drop here</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={S.card({padding:14})} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();handleDropUnschedule();}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>Unscheduled jobs</div>
+            <span style={{fontSize:11,color:"#64748B"}}>{unscheduled.length}</span>
+          </div>
+          <div style={{fontSize:11,color:"#94A3B8",marginBottom:10}}>Drag onto a date to schedule. Drag back here to clear.</div>
+          {unscheduled.length===0?(
+            <div style={{padding:24,textAlign:"center",color:"#CBD5E1",fontSize:12,border:"2px dashed #E2E8F0",borderRadius:8}}>All caught up.</div>
+          ):unscheduled.map(d=><Block key={d.id} d={d}/>)}
+          <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Stage legend</div>
+            {FS_STAGES.map(s=>(
+              <div key={s} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,padding:"2px 0",color:"#475569"}}>
+                <span style={{width:10,height:10,background:stageColor(entity,s),borderRadius:3,display:"inline-block"}}/>{s}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SchedulerView({meetings,contacts,activeEntityId,availability,addMeeting,updateMeeting,deleteMeeting,updateAvailability,showToast}){
   const [tab,setTab]=useState("upcoming");
   const [adding,setAdding]=useState(false);
@@ -4326,9 +5147,11 @@ function SignatureModal({doc,contact,onClose,onSign,showToast}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEAL DETAIL (H1)
 // ═══════════════════════════════════════════════════════════════════════════════
-function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId}){
+function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId,employees=[],timeClockEntries=[],addDeal,showToast,onRecentJob}){
+  const fs=isFieldService(entity);
   const [tab,setTab]=useState("overview");
   const [noteText,setNoteText]=useState("");
+  useEffect(()=>{if(deal&&onRecentJob)onRecentJob(deal.id);},[deal?.id,onRecentJob]);
   const [stageNoteDraft,setStageNoteDraft]=useState(deal?.stageNote||"");
   // Re-sync the local stage-note draft when the deal or its stage changes (e.g., after a stage transition that clears it).
   const stageKeyRef=useRef(deal?`${deal.id}|${deal.stage}`:"");
@@ -4367,10 +5190,10 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
   };
   return(
     <div>
-      <button style={{...S.btnGhost,fontSize:12,marginBottom:14}} onClick={onBack}><Ic d={I.arrow} size={12}/>Back to Pipeline</button>
+      <button style={{...S.btnGhost,fontSize:12,marginBottom:14}} onClick={onBack}><Ic d={I.arrow} size={12}/>Back to {fs?"Job Board":"Pipeline"}</button>
       <div style={S.card({padding:24,marginBottom:20})}>
         <div style={{display:"flex",alignItems:"flex-start",gap:16}}>
-          <div style={{width:64,height:64,background:sCol+"20",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:`1px solid ${sCol}40`}}><Ic d={I.dollar} size={28} c={sCol}/></div>
+          <div style={{width:64,height:64,background:sCol+"20",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:`1px solid ${sCol}40`}}><Ic d={fs?I.truck:I.dollar} size={28} c={sCol}/></div>
           <div style={{flex:1,minWidth:0}}>
             <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:22,fontWeight:800,color:"#0F172A",margin:"0 0 6px"}}>{deal.title}</h2>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
@@ -4391,15 +5214,24 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
             <div style={{fontSize:12,color:"#64748B"}}>Probability: {deal.probability||"—"}%</div>
           </div>
         </div>
-        <div style={{display:"flex",gap:8,marginTop:16,paddingTop:16,borderTop:"1px solid #E9EEF6"}}>
-          <button style={S.btnSecondary} onClick={()=>openModal("editDeal",deal)}><Ic d={I.edit} size={13}/>Edit deal</button>
-          <button style={S.btnSecondary} onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id})}><Ic d={I.quote} size={13}/>Build quote</button>
-          <button style={{...S.btnSecondary,color:"#EF4444",borderColor:"#FECACA",marginLeft:"auto"}} onClick={()=>{if(confirm("Delete deal?")){deleteDeal(deal.id);onBack();}}}><Ic d={I.trash} size={13}/>Delete</button>
+        <div style={{display:"flex",gap:8,marginTop:16,paddingTop:16,borderTop:"1px solid #E9EEF6",flexWrap:"wrap"}}>
+          <button style={S.btnSecondary} onClick={()=>openModal("editDeal",deal)}><Ic d={I.edit} size={13}/>{fs?"Edit job":"Edit deal"}</button>
+          {!fs&&<button style={S.btnSecondary} onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id})}><Ic d={I.quote} size={13}/>Build quote</button>}
+          {fs&&deal.recurring&&deal.frequency&&addDeal&&(
+            <button style={{...S.btnSecondary,background:"#DCFCE7",borderColor:"#10B981",color:"#065F46"}} onClick={()=>{
+              const nextDate=deal.nextOccurrence||advanceDate(deal.closeDate,deal.frequency)||advanceDate(new Date().toISOString().slice(0,10),deal.frequency);
+              const {id,createdAt,lastContacted,stage,stageHistory,stageNote,depositPaid,depositPaidDate,completionNotes,...copy}=deal;
+              const nu=addDeal({...copy,title:deal.title.replace(/\s*\(#\d+\)\s*$/,"")+(deal.occurrenceNum?` (#${(deal.occurrenceNum||1)+1})`:" (#2)"),stage:"New Lead",closeDate:nextDate,nextOccurrence:advanceDate(nextDate,deal.frequency),occurrenceNum:(deal.occurrenceNum||1)+1});
+              showToast?.(`Next occurrence created for ${fmtDate(nextDate)}`);
+            }}><Ic d={I.repeat} size={13}/>Generate next occurrence</button>
+          )}
+          <button style={{...S.btnSecondary,color:"#EF4444",borderColor:"#FECACA",marginLeft:"auto"}} onClick={()=>{if(confirm(`Delete ${fs?"job":"deal"}?`)){deleteDeal(deal.id);onBack();}}}><Ic d={I.trash} size={13}/>Delete</button>
         </div>
       </div>
 
       <div style={{display:"flex",gap:0,borderBottom:"1px solid #E2E8F0",marginBottom:16}}>
         <TAB id="overview" label="Overview"/>
+        {fs&&<TAB id="costing" label="Job Costing"/>}
         <TAB id="notes" label="Notes" count={notes.length}/>
         <TAB id="tasks" label="Tasks" count={tasks.length}/>
         <TAB id="activity" label="Activity"/>
@@ -4416,18 +5248,24 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
           </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
           <div style={S.card({padding:18})}>
-            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Deal facts</div>
-            <div style={{display:"grid",gridTemplateColumns:"130px 1fr",rowGap:8,fontSize:13}}>
-              <div style={{color:"#94A3B8"}}>Value</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmt$(deal.value)}</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>{fs?"Job facts":"Deal facts"}</div>
+            <div style={{display:"grid",gridTemplateColumns:"140px 1fr",rowGap:8,fontSize:13}}>
+              <div style={{color:"#94A3B8"}}>{fs?"Job value":"Value"}</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmt$(deal.value)}</div>
               <div style={{color:"#94A3B8"}}>Stage</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.stage}</div>
               <div style={{color:"#94A3B8"}}>Probability</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.probability||"—"}%</div>
-              <div style={{color:"#94A3B8"}}>Close date</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmtDate(deal.closeDate)}</div>
+              <div style={{color:"#94A3B8"}}>{fs?"Scheduled":"Close date"}</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmtDate(deal.closeDate)}</div>
               <div style={{color:"#94A3B8"}}>Created</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmtDate(deal.createdAt)}</div>
               {deal.lastContacted&&(<><div style={{color:"#94A3B8"}}>Last contact</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmtDate(deal.lastContacted)}</div></>)}
-              {deal.owner&&(<><div style={{color:"#94A3B8"}}>Owner</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.owner}</div></>)}
-              {deal.dealType&&(<><div style={{color:"#94A3B8"}}>Type</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.dealType}</div></>)}
-              {deal.priority&&(<><div style={{color:"#94A3B8"}}>Priority</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.priority}</div></>)}
-              {deal.pipeline&&(<><div style={{color:"#94A3B8"}}>Pipeline</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.pipeline}</div></>)}
+              {!fs&&deal.owner&&(<><div style={{color:"#94A3B8"}}>Owner</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.owner}</div></>)}
+              {!fs&&deal.dealType&&(<><div style={{color:"#94A3B8"}}>Type</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.dealType}</div></>)}
+              {!fs&&deal.priority&&(<><div style={{color:"#94A3B8"}}>Priority</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.priority}</div></>)}
+              {!fs&&deal.pipeline&&(<><div style={{color:"#94A3B8"}}>Pipeline</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.pipeline}</div></>)}
+              {fs&&deal.serviceType&&(<><div style={{color:"#94A3B8"}}>Service type</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.serviceType}</div></>)}
+              {fs&&deal.jobSiteAddress&&(<><div style={{color:"#94A3B8"}}>Job site</div><div style={{fontWeight:600,color:"#0F172A"}}><a href={`https://maps.apple.com/?q=${encodeURIComponent(deal.jobSiteAddress)}`} target="_blank" rel="noreferrer" style={{color:"#1D4ED8",textDecoration:"underline"}}>{deal.jobSiteAddress}</a></div></>)}
+              {fs&&deal.crewAssigned?.length>0&&(<><div style={{color:"#94A3B8"}}>Crew</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.crewAssigned.map(id=>employees.find(e=>e.id===id)?.name||"?").join(", ")}</div></>)}
+              {fs&&deal.materialsCost!=null&&(<><div style={{color:"#94A3B8"}}>Materials cost</div><div style={{fontWeight:600,color:"#0F172A"}}>{fmt$(deal.materialsCost)}</div></>)}
+              {fs&&deal.recurring&&(<><div style={{color:"#94A3B8"}}>Recurring</div><div style={{fontWeight:600,color:"#10B981"}}>{deal.frequency} · next {fmtDate(deal.nextOccurrence)}</div></>)}
+              {fs&&deal.depositRequired&&(<><div style={{color:"#94A3B8"}}>Deposit</div><div style={{fontWeight:600,color:deal.depositPaid?"#10B981":"#F59E0B"}}>{fmt$(deal.depositAmount||0)} · {deal.depositPaid?`Paid ${fmtDate(deal.depositPaidDate)}`:"Unpaid"}</div></>)}
               {deal.nextStep&&(<><div style={{color:"#94A3B8"}}>Next step</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.nextStep}</div></>)}
               {deal.contractType&&(<><div style={{color:"#94A3B8"}}>Contract</div><div style={{fontWeight:600,color:"#0F172A"}}>{deal.contractType}</div></>)}
             </div>
@@ -4435,6 +5273,12 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
               <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Description</div>
                 <div style={{fontSize:13,color:"#0F172A",whiteSpace:"pre-wrap"}}>{deal.description}</div>
+              </div>
+            )}
+            {fs&&deal.completionNotes&&(
+              <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#14B8A6",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Completion notes</div>
+                <div style={{fontSize:13,color:"#0F172A",whiteSpace:"pre-wrap"}}>{deal.completionNotes}</div>
               </div>
             )}
             {deal.stage==="Lost"&&deal.lostReason&&(
@@ -4458,10 +5302,60 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
         </div>
       )}
 
+      {fs&&tab==="costing"&&(()=>{
+        const jobEntries=timeClockEntries.filter(e=>e.jobId===deal.id&&e.clockOut&&e.hours!=null);
+        const empMap=Object.fromEntries(employees.map(e=>[e.id,e]));
+        const laborByEmployee={};
+        jobEntries.forEach(e=>{const emp=empMap[e.employeeId];if(!emp)return;laborByEmployee[e.employeeId]=(laborByEmployee[e.employeeId]||{name:emp.name,hours:0,rate:emp.hourlyRate||0,cost:0});laborByEmployee[e.employeeId].hours+=e.hours||0;laborByEmployee[e.employeeId].cost+=(e.hours||0)*(emp.hourlyRate||0);});
+        const laborTotal=Object.values(laborByEmployee).reduce((s,x)=>s+x.cost,0);
+        const totalHours=Object.values(laborByEmployee).reduce((s,x)=>s+x.hours,0);
+        const materials=+deal.materialsCost||0;
+        const totalCost=laborTotal+materials;
+        const value=+deal.value||0;
+        const profit=value-totalCost;
+        const margin=value>0?(profit/value)*100:0;
+        return(
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:16}}>
+              <StatCard label="Estimated value" value={fmt$(value)} sub="Job value" color="#1D4ED8" icon={I.dollar}/>
+              <StatCard label="Labor cost" value={fmt$(laborTotal)} sub={`${totalHours.toFixed(2)} hrs × rates`} color="#F59E0B" icon={I.clock}/>
+              <StatCard label="Total cost" value={fmt$(totalCost)} sub={`Labor + ${fmt$(materials)} materials`} color="#8B5CF6" icon={I.dollar2}/>
+              <StatCard label="Gross profit" value={fmt$(profit)} sub={`${margin.toFixed(1)}% margin`} color={profit>=0?"#10B981":"#EF4444"} icon={I.trending}/>
+            </div>
+            <div style={S.card({padding:18,marginBottom:16})}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Labor breakdown</div>
+              {Object.values(laborByEmployee).length===0?(
+                <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>No clock-in entries against this job yet.</div>
+              ):(
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Employee","Hours","Hourly rate","Labor cost"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{Object.values(laborByEmployee).map((row,i)=>(
+                    <tr key={i}><td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{row.name}</td><td style={S.td}>{row.hours.toFixed(2)}</td><td style={S.td}>{fmt$(row.rate)}/hr</td><td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{fmt$(row.cost)}</td></tr>
+                  ))}</tbody>
+                </table>
+              )}
+            </div>
+            <div style={S.card({padding:18})}>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Time clock entries</div>
+              {jobEntries.length===0?(
+                <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>No entries yet.</div>
+              ):(
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Employee","Date","Clock in","Clock out","Hours"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{jobEntries.sort((a,b)=>new Date(b.clockIn)-new Date(a.clockIn)).map(e=>(
+                    <tr key={e.id}><td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{empMap[e.employeeId]?.name||"—"}</td><td style={S.td}>{e.date}</td><td style={S.td}>{new Date(e.clockIn).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</td><td style={S.td}>{new Date(e.clockOut).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</td><td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{(e.hours||0).toFixed(2)}</td></tr>
+                  ))}</tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {tab==="notes"&&(
         <div>
           <div style={{...S.card({padding:14}),marginBottom:14}}>
-            <textarea style={S.textarea} rows={3} placeholder="Add a note about this deal…" value={noteText} onChange={e=>setNoteText(e.target.value)}/>
+            <textarea style={S.textarea} rows={3} placeholder={fs?"Add a note about this job…":"Add a note about this deal…"} value={noteText} onChange={e=>setNoteText(e.target.value)}/>
             <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
               <button style={S.btnPrimary} disabled={!noteText.trim()} onClick={submitNote}><Ic d={I.plus} size={13}/>Add note</button>
             </div>
@@ -4531,7 +5425,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════════════════════════════════════════
-function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,addContact,updateContact,addCompany,updateCompany,addDeal,updateDeal,addTask,updateTask,addNote,addEntity,connectEmail,showToast,products,sequences,addEnrollment,customFields,entity,addQuote,updateQuote,addTemplate,updateTemplate,timeEntries,addInvoice,updateInvoice,setInvoiceCounter,invoiceCounter}){
+function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,addContact,updateContact,addCompany,updateCompany,addDeal,updateDeal,addTask,updateTask,addNote,addEntity,connectEmail,showToast,products,sequences,addEnrollment,customFields,entity,addQuote,updateQuote,addTemplate,updateTemplate,timeEntries,addInvoice,updateInvoice,setInvoiceCounter,invoiceCounter,employees=[],addEmployee,updateEmployee}){
   const {type,data}=modal;
   const [form,setForm]=useState(data||{});
   const set=(k,v)=>setForm(p=>({...p,[k]:v}));
@@ -4625,38 +5519,108 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
     </Modal>
   );
 
-  if(type==="addDeal"||type==="editDeal") return(
-    <Modal title={type==="addDeal"?"Add Deal":"Edit Deal"} onClose={closeModal} wide>
-      <F form={form} set={set} label="Deal Title *" name="title" placeholder="Free text — anything you want to call this deal" required/>
+  if(type==="addDeal"||type==="editDeal") {
+    const fs=isFieldService(entity);
+    const eEmps=(employees||[]).filter(e=>e.entityId===activeEntityId&&e.active!==false);
+    const titleStr=type==="addDeal"?(fs?"Add Job":"Add Deal"):(fs?"Edit Job":"Edit Deal");
+    const titleField=fs?"Job Title *":"Deal Title *";
+    const valueField=fs?"Job Value (USD)":"Value (USD)";
+    const dateField=fs?"Scheduled Date":"Close Date";
+    return(
+    <Modal title={titleStr} onClose={closeModal} wide>
+      <F form={form} set={set} label={titleField} name="title" placeholder={fs?"e.g. Maple Ridge weekly maintenance":"Free text — anything you want to call this deal"} required/>
       <div style={S.grid2}>
-        <F form={form} set={set} label="Value (USD)" name="value" type="number" placeholder="50000"/>
+        <F form={form} set={set} label={valueField} name="value" type="number" placeholder={fs?"850":"50000"}/>
         <F form={form} set={set} label="Stage" name="stage" options={stagesFor(entity)}/>
-        <F form={form} set={set} label="Close Date" name="closeDate" type="date"/>
+        <F form={form} set={set} label={dateField} name="closeDate" type="date"/>
         <Field label="Probability (%)"><input type="range" min={0} max={100} value={form.probability||50} onChange={e=>set("probability",+e.target.value)} style={{width:"100%",accentColor:"#1D4ED8"}}/><div style={{fontSize:12,color:"#64748B",textAlign:"right"}}>{form.probability||50}%</div></Field>
         {form._lockCompany?(
-          <Field label="Company"><div style={{...S.input,background:"#F1F5F9",color:"#475569",display:"flex",alignItems:"center",gap:6}}><Ic d={I.building} size={12} c="#64748B"/>{form.companyName||"—"}<span style={{fontSize:10,color:"#94A3B8",marginLeft:"auto"}}>locked</span></div></Field>
+          <Field label={fs?"Customer Company":"Company"}><div style={{...S.input,background:"#F1F5F9",color:"#475569",display:"flex",alignItems:"center",gap:6}}><Ic d={I.building} size={12} c="#64748B"/>{form.companyName||"—"}<span style={{fontSize:10,color:"#94A3B8",marginLeft:"auto"}}>locked</span></div></Field>
         ):(
-          <Field label="Company *"><select style={{...S.select,borderColor:!form.companyId?"#FCA5A5":undefined}} value={form.companyId||""} onChange={e=>{
+          <Field label={fs?"Customer Company":"Company *"}><select style={{...S.select,borderColor:(!fs&&!form.companyId)?"#FCA5A5":undefined}} value={form.companyId||""} onChange={e=>{
             const co=companies.find(x=>x.id===e.target.value);
             setForm(p=>({...p,companyId:e.target.value,companyName:co?.name||"",contactId:null}));
-          }}><option value="">Select company…</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+          }}><option value="">{fs?"None — residential":"Select company…"}</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         )}
         {(()=>{
-          const eligibleContacts=form.companyId?contacts.filter(c=>c.companyId===form.companyId||(c.companyName&&form.companyName&&c.companyName.toLowerCase()===form.companyName.toLowerCase())):[];
-          const placeholder=form.companyId?(eligibleContacts.length?"Select contact (optional)…":"No contacts at this company yet"):"Pick a company first";
+          const eligibleContacts=form.companyId?contacts.filter(c=>c.companyId===form.companyId||(c.companyName&&form.companyName&&c.companyName.toLowerCase()===form.companyName.toLowerCase())):(fs?contacts:[]);
+          const placeholder=form.companyId?(eligibleContacts.length?(fs?"Select customer (optional)…":"Select contact (optional)…"):(fs?"No customers at this company yet":"No contacts at this company yet")):(fs?"Pick a customer (residential ok)":"Pick a company first");
           return(
-            <Field label="Contact"><select style={S.select} value={form.contactId||""} disabled={!form.companyId} onChange={e=>{
+            <Field label={fs?"Customer":"Contact"}><select style={S.select} value={form.contactId||""} disabled={!fs&&!form.companyId} onChange={e=>{
               setForm(p=>({...p,contactId:e.target.value}));
             }}><option value="">{placeholder}</option>{eligibleContacts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
           );
         })()}
-        <F form={form} set={set} label="Deal Owner" name="owner" placeholder="Account exec"/>
-        <F form={form} set={set} label="Deal Type" name="dealType" options={DEAL_TYPES}/>
-        <F form={form} set={set} label="Priority" name="priority" options={DEAL_PRIORITIES}/>
-        <F form={form} set={set} label="Pipeline" name="pipeline" placeholder="Default"/>
+        {!fs&&<F form={form} set={set} label="Deal Owner" name="owner" placeholder="Account exec"/>}
+        {!fs&&<F form={form} set={set} label="Deal Type" name="dealType" options={DEAL_TYPES}/>}
+        {!fs&&<F form={form} set={set} label="Priority" name="priority" options={DEAL_PRIORITIES}/>}
+        {!fs&&<F form={form} set={set} label="Pipeline" name="pipeline" placeholder="Default"/>}
+        {fs&&<F form={form} set={set} label="Service Type" name="serviceType" options={SERVICE_TYPES}/>}
+        {fs&&<F form={form} set={set} label="Materials Cost (USD)" name="materialsCost" type="number" placeholder="0"/>}
       </div>
-      <Field label="Next Step"><input style={S.input} value={form.nextStep||""} onChange={e=>set("nextStep",e.target.value)} placeholder="e.g. Send pricing proposal"/></Field>
+      {fs&&(
+        <Field label="Job Site Address"><input style={S.input} value={form.jobSiteAddress||""} onChange={e=>set("jobSiteAddress",e.target.value)} placeholder="234 Pine St, Newton MA 02458"/></Field>
+      )}
+      {fs&&(
+        <Field label="Crew Assigned">
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"4px 0"}}>
+            {eEmps.length===0&&<span style={{fontSize:12,color:"#94A3B8"}}>No employees yet — add them in Settings → Employees</span>}
+            {eEmps.map(emp=>{
+              const sel=(form.crewAssigned||[]).includes(emp.id);
+              return(
+                <label key={emp.id} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",fontSize:12,background:sel?"#DCFCE7":"#F1F5F9",border:`1px solid ${sel?"#10B981":"#CBD5E1"}`,borderRadius:6,cursor:"pointer",color:sel?"#065F46":"#334155"}}>
+                  <input type="checkbox" checked={sel} onChange={()=>{
+                    const cur=form.crewAssigned||[];
+                    set("crewAssigned",sel?cur.filter(x=>x!==emp.id):[...cur,emp.id]);
+                  }} style={{accentColor:"#10B981"}}/>
+                  {emp.name}
+                </label>
+              );
+            })}
+          </div>
+        </Field>
+      )}
+      {fs&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Recurring Job">
+            <label style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"#F8FAFC",borderRadius:8,border:"1px solid #E2E8F0",cursor:"pointer",fontSize:13}}>
+              <input type="checkbox" checked={!!form.recurring} onChange={e=>set("recurring",e.target.checked)} style={{accentColor:"#10B981",width:16,height:16}}/>
+              {form.recurring?"Yes — generates next occurrence":"One-time job"}
+            </label>
+          </Field>
+          {form.recurring&&<F form={form} set={set} label="Frequency" name="frequency" options={RECURRING_FREQUENCIES}/>}
+          {form.recurring&&form.frequency&&(
+            <Field label="Next Occurrence Date">
+              <input type="date" style={S.input} value={form.nextOccurrence||advanceDate(form.closeDate,form.frequency)||""} onChange={e=>set("nextOccurrence",e.target.value)}/>
+              <div style={{fontSize:11,color:"#64748B",marginTop:4}}>Auto-calculated from frequency. Override if needed.</div>
+            </Field>
+          )}
+        </div>
+      )}
+      {fs&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+          <Field label="Deposit Required">
+            <label style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"#F8FAFC",borderRadius:8,border:"1px solid #E2E8F0",cursor:"pointer",fontSize:13}}>
+              <input type="checkbox" checked={!!form.depositRequired} onChange={e=>set("depositRequired",e.target.checked)} style={{accentColor:"#F59E0B",width:16,height:16}}/>
+              {form.depositRequired?"Yes":"No"}
+            </label>
+          </Field>
+          {form.depositRequired&&<F form={form} set={set} label="Deposit Amount" name="depositAmount" type="number" placeholder="0"/>}
+          {form.depositRequired&&(
+            <Field label="Deposit Paid">
+              <label style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"#F8FAFC",borderRadius:8,border:"1px solid #E2E8F0",cursor:"pointer",fontSize:13}}>
+                <input type="checkbox" checked={!!form.depositPaid} onChange={e=>{set("depositPaid",e.target.checked);if(e.target.checked&&!form.depositPaidDate)set("depositPaidDate",new Date().toISOString().slice(0,10));}} style={{accentColor:"#10B981",width:16,height:16}}/>
+                {form.depositPaid?(form.depositPaidDate||"Paid"):"Unpaid"}
+              </label>
+            </Field>
+          )}
+        </div>
+      )}
+      <Field label={fs?"Job Notes / Next Step":"Next Step"}><input style={S.input} value={form.nextStep||""} onChange={e=>set("nextStep",e.target.value)} placeholder={fs?"e.g. Confirm crew start time":"e.g. Send pricing proposal"}/></Field>
       <Field label="Description"><textarea rows={3} style={S.textarea} value={form.description||""} onChange={e=>set("description",e.target.value)}/></Field>
+      {fs&&(form.stage==="Completed"||form.stage==="Won")&&(
+        <Field label="Job Completion Notes"><textarea rows={3} style={S.textarea} value={form.completionNotes||""} onChange={e=>set("completionNotes",e.target.value)} placeholder="What was done, materials used, anything customer should know…"/></Field>
+      )}
       {form.stage==="Lost"&&(
         <Field label="Closed Lost Reason"><textarea rows={2} style={S.textarea} value={form.lostReason||""} onChange={e=>set("lostReason",e.target.value)} placeholder="Why was this deal lost?"/></Field>
       )}
@@ -4670,16 +5634,19 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
         <button style={S.btnPrimary} onClick={()=>{
           if(!form.title){showToast?.("Title required","error");return;}
-          if(!form.companyId){showToast?.("Pick a company — every deal must link to one","error");return;}
+          if(!fs&&!form.companyId){showToast?.("Pick a company — every deal must link to one","error");return;}
           const {_lockCompany,...rest}=form;
+          if(rest.recurring&&rest.frequency&&!rest.nextOccurrence){
+            rest.nextOccurrence=advanceDate(rest.closeDate,rest.frequency);
+          }
           type==="addDeal"?addDeal(rest):updateDeal(data.id,rest);
           closeModal();
         }}>
-          {type==="addDeal"?"Add Deal":"Save Changes"}
+          {type==="addDeal"?(fs?"Add Job":"Add Deal"):"Save Changes"}
         </button>
       </div>
     </Modal>
-  );
+  );}
 
   if(type==="addTask") return(
     <Modal title="Add Task" onClose={closeModal}>
@@ -4917,8 +5884,14 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [invoiceCounter,setInvoiceCounter]=useState(D.invoiceCounter);
   const [signatures,setSignatures]=useState([]);
   const [customReports,setCustomReports]=useState([]);
+  // Field Service
+  const [employees,setEmployees]=useState(D.employees||[]);
+  const [timeClockEntries,setTimeClockEntries]=useState(D.timeClockEntries||[]);
+  const [fsSettings,setFsSettings]=useState(D.fsSettings||{});
   // UI state
   const [view,setView]=useState("dashboard");
+  const [fieldView,setFieldView]=useState(false);
+  const [recentJobId,setRecentJobId]=useState(null);
   const [selContact,setSelContact]=useState(null);
   const [selCompany,setSelCompany]=useState(null);
   const [selDeal,setSelDeal]=useState(null);
@@ -4954,7 +5927,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           if(r?.value)setter(JSON.parse(r.value));
         }catch(e){console.error("[Persistence] load failed for",key,e);}
       };
-      const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures],["crm:customReports",setCustomReports]];
+      const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures],["crm:customReports",setCustomReports],["crm:employees",setEmployees],["crm:timeClockEntries",setTimeClockEntries],["crm:fsSettings",setFsSettings]];
       for(const [k,s] of keys)await load(k,s);
       try{
         const r=await window.storage?.get("crm:activeEntityId");
@@ -4982,7 +5955,7 @@ export default function App({session,onLogout,demoMode=false}={}){
     let changed=0;
     const migrated=deals.map(d=>{
       const ent=byEntity[d.entityId];
-      const allowed=(ent?.stages?.length?ent.stages:STAGES);
+      const allowed=stagesFor(ent);
       if(!d.stage||allowed.includes(d.stage))return d;
       const fallback=allowed[0]||"New Lead";
       const remapped=allowed.includes(STAGE_MIGRATION_MAP[d.stage])?STAGE_MIGRATION_MAP[d.stage]:fallback;
@@ -5040,6 +6013,9 @@ export default function App({session,onLogout,demoMode=false}={}){
   useEffect(()=>{save("crm:invoiceCounter",invoiceCounter);},[invoiceCounter]);
   useEffect(()=>{save("crm:signatures",signatures);},[signatures]);
   useEffect(()=>{save("crm:customReports",customReports);},[customReports]);
+  useEffect(()=>{save("crm:employees",employees);},[employees]);
+  useEffect(()=>{save("crm:timeClockEntries",timeClockEntries);},[timeClockEntries]);
+  useEffect(()=>{save("crm:fsSettings",fsSettings);},[fsSettings]);
   useEffect(()=>{save("crm:activeEntityId",activeEntityId);},[activeEntityId]);
 
   const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
@@ -5255,6 +6231,40 @@ export default function App({session,onLogout,demoMode=false}={}){
   const deleteReport=(id)=>setCustomReports(p=>p.filter(r=>r.id!==id));
   const duplicateReport=(id)=>{const orig=customReports.find(r=>r.id===id);if(!orig)return;addReport({...orig,id:undefined,name:`${orig.name} (copy)`,createdAt:undefined,lastRunAt:undefined});};
 
+  // ─── EMPLOYEES (Field Service) ────────────────────────────────────────────
+  const addEmployee=(data)=>setEmployees(p=>[...p,{id:uid(),entityId:activeEntityId,active:true,...data,createdAt:new Date().toISOString()}]);
+  const updateEmployee=(id,data)=>setEmployees(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteEmployee=(id)=>setEmployees(p=>p.filter(x=>x.id!==id));
+
+  // ─── TIME CLOCK (Field Service) ───────────────────────────────────────────
+  const clockInEmployee=(employeeId,jobId)=>{
+    const now=new Date().toISOString();
+    // Auto-close any open punch for this employee (rare but defensive)
+    setTimeClockEntries(p=>p.map(e=>(e.employeeId===employeeId&&!e.clockOut)?{...e,clockOut:now,hours:Math.max(0,(new Date(now)-new Date(e.clockIn))/3600000)}:e));
+    const entry={id:uid(),entityId:activeEntityId,employeeId,jobId:jobId||null,clockIn:now,clockOut:null,hours:null,gpsNote:"Location recorded",date:now.slice(0,10)};
+    setTimeClockEntries(p=>[...p,entry]);
+    return entry;
+  };
+  const clockOutEmployee=(employeeId)=>{
+    const now=new Date().toISOString();
+    let closed=null;
+    setTimeClockEntries(p=>p.map(e=>{
+      if(e.employeeId===employeeId&&!e.clockOut){
+        const hrs=Math.max(0,(new Date(now)-new Date(e.clockIn))/3600000);
+        closed={...e,clockOut:now,hours:hrs};
+        return closed;
+      }
+      return e;
+    }));
+    return closed;
+  };
+  const addTimeClockEntry=(data)=>setTimeClockEntries(p=>[...p,{id:uid(),entityId:activeEntityId,gpsNote:"Manual entry",...data}]);
+  const updateTimeClockEntry=(id,data)=>setTimeClockEntries(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteTimeClockEntry=(id)=>setTimeClockEntries(p=>p.filter(x=>x.id!==id));
+
+  // ─── FS SETTINGS ──────────────────────────────────────────────────────────
+  const updateFsSettings=(entityId,patch)=>setFsSettings(p=>({...p,[entityId]:{...(p[entityId]||{}),...patch}}));
+
   // ─── ENTITY ───────────────────────────────────────────────────────────────
   const addEntity=(data)=>{const e={id:uid(),...data};setEntities(p=>[...p,e]);setActiveEntityId(e.id);setView("dashboard");showToast(`Switched to ${e.name}`);};
 
@@ -5263,14 +6273,16 @@ export default function App({session,onLogout,demoMode=false}={}){
   const unpaidInvoices=invoices.filter(i=>i.entityId===activeEntityId&&["Sent","Viewed","Overdue"].includes(i.status)).length;
   const unreadEmails=emailThreads.filter(t=>t.entityId===activeEntityId&&t.messages[t.messages.length-1]?.direction==="inbound").length;
 
+  const fs=isFieldService(entity);
   const NAV=[
     {id:"dashboard",label:"Dashboard",icon:I.home},
     {id:"contacts",label:"Contacts",icon:I.users,badge:ec.length,badgeColor:"rgba(255,255,255,0.15)"},
     {id:"companies",label:"Companies",icon:I.building},
-    {id:"deals",label:"Pipeline",icon:I.layers},
+    {id:"deals",label:fs?"Job Board":"Pipeline",icon:I.layers},
     {id:"tasks",label:"Tasks",icon:I.check,badge:overdueTasks,badgeColor:"#EF4444"},
     {id:"inbox",label:"Inbox",icon:I.inbox,badge:unreadEmails,badgeColor:"#1D4ED8"},
     {id:"scheduler",label:"Scheduler",icon:I.meet},
+    ...(fs?[{id:"timeclock",label:"Time Clock",icon:I.clock}]:[]),
     {id:"time",label:"Time Tracking",icon:I.clock},
     {id:"invoices",label:"Invoices",icon:I.invoice,badge:unpaidInvoices,badgeColor:"#F59E0B"},
     {id:"portal",label:"Client Portal",icon:I.portal},
@@ -5375,12 +6387,18 @@ export default function App({session,onLogout,demoMode=false}={}){
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
             <span style={{fontSize:12,color:"#64748B",display:"flex",alignItems:"center",gap:4}}><div style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>{entity?.name}</span>
+            {fs&&<button onClick={()=>setFieldView(true)} style={{...S.btnSecondary,padding:"5px 12px",fontSize:12,background:"#059669",color:"#fff",borderColor:"#047857"}}><Ic d={I.truck} size={12}/>Field View</button>}
             {overdueTasks>0&&<div style={{...S.badge("#EF4444"),cursor:"pointer"}} onClick={()=>setView("tasks")}><Ic d={I.bell} size={10}/>{overdueTasks} overdue</div>}
             {unpaidInvoices>0&&<div style={{...S.badge("#F59E0B"),cursor:"pointer"}} onClick={()=>setView("invoices")}><Ic d={I.invoice} size={10}/>{unpaidInvoices} unpaid</div>}
           </div>
         </div>
 
         {/* Content */}
+        {fieldView&&fs?(
+          <div style={{flex:1,overflow:"hidden",position:"relative"}}>
+            <FieldViewShell entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} timeClockEntries={timeClockEntries} notes={notes} updateDeal={updateDeal} addNote={addNote} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setFieldView(false)} recentJobId={recentJobId} setRecentJobId={setRecentJobId} showToast={showToast}/>
+          </div>
+        ):(
         <div style={{flex:1,overflowY:"auto",padding:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} companies={companies} entity={entity} setView={setView} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
@@ -5388,10 +6406,12 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
           {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
-          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId}/>}
+          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
-          {view==="scheduler"&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
+          {view==="scheduler"&&!fs&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
+          {view==="scheduler"&&fs&&<JobScheduler entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} updateDeal={updateDeal} setSelDeal={setSelDeal} setView={setView} showToast={showToast}/>}
+          {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
           {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} showToast={showToast} entity={entity} setView={setView}/>}
@@ -5400,13 +6420,14 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
           {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
-          {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook}/>}
+          {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings}/>}
         </div>
+        )}
       </div>
       </div>
 
       {/* ─── MODALS ────────────────────────────────────── */}
-      {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} updateTask={updateTask} addNote={addNote} addEntity={addEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields} entity={entity} addQuote={addQuote} updateQuote={updateQuote} addTemplate={addTemplate} updateTemplate={updateTemplate} timeEntries={timeEntries} addInvoice={addInvoice} updateInvoice={updateInvoice} setInvoiceCounter={setInvoiceCounter} invoiceCounter={invoiceCounter}/>}
+      {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} updateTask={updateTask} addNote={addNote} addEntity={addEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields} entity={entity} addQuote={addQuote} updateQuote={updateQuote} addTemplate={addTemplate} updateTemplate={updateTemplate} timeEntries={timeEntries} addInvoice={addInvoice} updateInvoice={updateInvoice} setInvoiceCounter={setInvoiceCounter} invoiceCounter={invoiceCounter} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee}/>}
 
       {/* ─── E-SIGNATURE MODAL ─────────────────────────── */}
       {sigModal&&<SignatureModal doc={sigModal.doc} contact={sigModal.contact} onClose={()=>setSigModal(null)} onSign={(sigData)=>addSignature({...sigData,doc:sigModal.doc,contactId:sigModal.contact?.id,entityId:activeEntityId})} showToast={showToast}/>}
