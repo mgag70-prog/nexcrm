@@ -155,6 +155,19 @@ const SOURCE_SCORE = {"LinkedIn":20,"Referral":20,"Website":15,"Event":12,"Partn
 const TRIGGER_LABELS = {"new_contact":"New Contact Created","stage_change":"Deal Stage Changes","task_overdue":"Task Becomes Overdue","deal_created":"New Deal Created","deal_won":"Deal Marked Won"};
 const ACTION_LABELS = {"create_task":"Create a Task","add_note":"Log a Note","enroll_sequence":"Enroll in Sequence","update_score":"Update Lead Score"};
 
+// useIsMobile: re-renders when viewport crosses the 768px breakpoint.
+const useIsMobile = () => {
+  const [m, setM] = useState(typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 767px)");
+    const fn = e => setM(e.matches);
+    if (mq.addEventListener) mq.addEventListener("change", fn); else mq.addListener(fn);
+    return () => { if (mq.removeEventListener) mq.removeEventListener("change", fn); else mq.removeListener(fn); };
+  }, []);
+  return m;
+};
+
 const fmt$ = v => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:0}).format(v||0);
 const fmtDate = d => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
 const fmtTime = d => d ? new Date(d).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "—";
@@ -567,8 +580,8 @@ function NoteRow({note,updateNote,deleteNote}){
 }
 
 const Modal = ({title,onClose,children,wide})=>(
-  <div style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <div style={{...S.modal,maxWidth:wide?720:520}}>
+  <div className="nx-modal-overlay" style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div className="nx-modal" style={{...S.modal,maxWidth:wide?720:520}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",margin:0}}>{title}</h2>
         <button style={S.btnGhost} onClick={onClose}><Ic d={I.x} size={18}/></button>
@@ -578,7 +591,7 @@ const Modal = ({title,onClose,children,wide})=>(
   </div>
 );
 const PageHeader = ({title,sub,children})=>(
-  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:24}}>
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:24,gap:12,flexWrap:"wrap"}}>
     <div>
       <h1 style={{fontFamily:"'Sora',sans-serif",fontSize:22,fontWeight:800,color:"#0F172A",margin:0}}>{title}</h1>
       {sub&&<p style={{color:"#64748B",marginTop:3,fontSize:13,margin:"4px 0 0"}}>{sub}</p>}
@@ -783,6 +796,7 @@ function Dashboard({ed,ec,et,notes,contacts,companies=[],entity,setView,setSelCo
 // CONTACTS LIST (with duplicate detection indicator)
 // ═══════════════════════════════════════════════════════════════════════════════
 function ContactsList({ec,search,openModal,setSelContact,deleteContact,updateContact,deals,notes,tasks}){
+  const isMobile=useIsMobile();
   const [sort,setSort]=useState("name");
   const [activeFilter,setActiveFilter]=useState("active"); // all | active | inactive
   const [selected,setSelected]=useState(()=>new Set());
@@ -833,6 +847,40 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,updateCon
           </div>
         </div>
       )}
+      {isMobile?(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {sorted.length===0?<div style={{...S.card({padding:32}),textAlign:"center",color:"#475569"}}>No contacts found. Add your first contact!</div>:sorted.map(c=>{
+            const score=calcLeadScore(c,deals,notes,tasks);
+            const isDup=dupMap[c.email?.toLowerCase()]>1;
+            const checked=selected.has(c.id);
+            return(
+              <div key={c.id} onClick={()=>setSelContact(c.id)} style={{...S.card({padding:12}),borderColor:checked?"#1D4ED8":"#E2E8F0",cursor:"pointer",display:"flex",alignItems:"flex-start",gap:10}}>
+                <input type="checkbox" checked={checked} onClick={e=>e.stopPropagation()} onChange={()=>toggleOne(c.id)} style={{accentColor:"#1D4ED8",marginTop:4,width:18,height:18}}/>
+                <div style={{position:"relative",flexShrink:0}}>
+                  <Avatar name={c.name} size={36}/>
+                  {isDup&&<div title="Possible duplicate" style={{position:"absolute",top:-2,right:-2,width:10,height:10,background:"#F59E0B",borderRadius:"50%",border:"2px solid #fff"}}/>}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                    <div style={{fontWeight:700,fontSize:14,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</div>
+                    <ScoreBadge score={score}/>
+                  </div>
+                  {c.title&&<div style={{fontSize:12,color:"#475569",marginTop:2}}>{c.title}</div>}
+                  {c.companyName&&<div style={{fontSize:12,color:"#475569",marginTop:1}}>🏢 {c.companyName}</div>}
+                  <div style={{fontSize:11,color:"#64748B",marginTop:4,display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {c.email&&<a href={`mailto:${c.email}`} onClick={e=>e.stopPropagation()} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.email}</a>}
+                    {c.phone&&<a href={`tel:${c.phone}`} onClick={e=>e.stopPropagation()} style={{color:"#1D4ED8",textDecoration:"none"}}>{c.phone}</a>}
+                  </div>
+                  <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                    <span style={S.badge(isActive(c)?"#10B981":"#94A3B8")}>{isActive(c)?"Active":"Inactive"}</span>
+                    {c.source&&<span style={S.badge("#8B5CF6")}>{c.source}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ):(
       <div style={S.card({overflow:"hidden"})}>
         <table style={{width:"100%",borderCollapse:"collapse"}}>
           <thead><tr>
@@ -881,6 +929,7 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,updateCon
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -1399,6 +1448,10 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,allExpens
 // ═══════════════════════════════════════════════════════════════════════════════
 function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,setSelContact,setSelCompany,setSelDeal,setView,products,entity}){
   const fs=isFieldService(entity);
+  const isMobile=useIsMobile();
+  const stages=stagesFor(entity);
+  const [stageFocus,setStageFocus]=useState(stages[0]||"New Lead");
+  useEffect(()=>{if(!stages.includes(stageFocus))setStageFocus(stages[0]||"New Lead");},[entity?.id]);
   const [dragging,setDragging]=useState(null);
   const [dragOver,setDragOver]=useState(null);
   const [selected,setSelected]=useState(()=>new Set());
@@ -1434,14 +1487,23 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
           </div>
         </div>
       )}
-      <div style={{display:"flex",gap:14,overflowX:"auto",paddingBottom:16,alignItems:"flex-start"}}>
-        {stagesFor(entity).map(stage=>{
+      {isMobile&&(
+        <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
+          <select value={stageFocus} onChange={e=>setStageFocus(e.target.value)} style={{...S.select,flex:1,fontWeight:700}}>
+            {stages.map(s=>{const n=ed.filter(d=>d.stage===s).length;return <option key={s} value={s}>{s} ({n})</option>;})}
+          </select>
+          <button data-compact onClick={()=>{const i=stages.indexOf(stageFocus);if(i>0)setStageFocus(stages[i-1]);}} style={{...S.btnSecondary,padding:"8px 10px"}}>‹</button>
+          <button data-compact onClick={()=>{const i=stages.indexOf(stageFocus);if(i<stages.length-1)setStageFocus(stages[i+1]);}} style={{...S.btnSecondary,padding:"8px 10px"}}>›</button>
+        </div>
+      )}
+      <div style={isMobile?{display:"flex",flexDirection:"column"}:{display:"flex",gap:14,overflowX:"auto",paddingBottom:16,alignItems:"flex-start"}}>
+        {stages.filter(s=>!isMobile||s===stageFocus).map(stage=>{
           const sDeals=ed.filter(d=>d.stage===stage);
           const sVal=sDeals.reduce((s,d)=>s+(d.value||0),0);
           const isOver=dragOver===stage;
           const sCol=stageColor(entity,stage);
           return(
-            <div key={stage} style={{minWidth:240,flex:"1 0 240px",background:isOver?"#E9EEF6":"#F1F5F9",border:`1px solid ${isOver?sCol+"60":"#E2E8F0"}`,borderRadius:12,padding:14,transition:"all .15s",maxWidth:300}}
+            <div key={stage} style={isMobile?{width:"100%",background:isOver?"#E9EEF6":"#F1F5F9",border:`1px solid ${isOver?sCol+"60":"#E2E8F0"}`,borderRadius:12,padding:14,transition:"all .15s"}:{minWidth:240,flex:"1 0 240px",background:isOver?"#E9EEF6":"#F1F5F9",border:`1px solid ${isOver?sCol+"60":"#E2E8F0"}`,borderRadius:12,padding:14,transition:"all .15s",maxWidth:300}}
               onDragOver={e=>{e.preventDefault();setDragOver(stage);}} onDragLeave={()=>setDragOver(null)}
               onDrop={e=>{e.preventDefault();if(dragging)updateDeal(dragging,{stage});setDragging(null);setDragOver(null);}}>
               <div style={{marginBottom:14}}>
@@ -4606,6 +4668,7 @@ function FieldViewShell({entity,activeEntityId,deals,contacts,companies,employee
 // FIELD SERVICE — TIME CLOCK
 // ═══════════════════════════════════════════════════════════════════════════════
 function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,clockInEmployee,clockOutEmployee,addTimeClockEntry,updateTimeClockEntry,deleteTimeClockEntry,approveTimeEntry,rejectTimeEntry,resolveTimeCorrection,requestTimeCorrection,showToast,initialMode}){
+  const isMobile=useIsMobile();
   const [mode,setMode]=useState(initialMode||"supervisor"); // supervisor | worker
   const [rejecting,setRejecting]=useState(null); // entry being rejected
   const [rejectReason,setRejectReason]=useState("");
@@ -4732,6 +4795,38 @@ function TimeClockView({entity,activeEntityId,employees,deals,timeClockEntries,c
         <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>Live status</div>
         {eEmps.length===0?(
           <div style={{textAlign:"center",padding:24,color:"#94A3B8",fontSize:13}}>No employees yet. Add them in Settings → Employees.</div>
+        ):isMobile?(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {eEmps.map(emp=>{
+              const open=openEntry(emp.id);
+              const job=open&&eDeals.find(d=>d.id===open.jobId);
+              const wkH=weekHoursFor(emp.id);
+              const wkColor=wkH>40?"#EF4444":wkH>=36?"#F59E0B":"#0F172A";
+              const today=todayHours(emp.id);
+              return(
+                <div key={emp.id} style={{padding:12,border:"1px solid #E2E8F0",borderRadius:10,background:"#F8FAFC"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <div style={{fontWeight:700,color:"#0F172A"}}>{emp.name}</div>
+                    {open?<span style={S.badge("#10B981")}><span style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>Clocked in</span>:<span style={S.badge("#94A3B8")}>Out</span>}
+                  </div>
+                  <div style={{fontSize:12,color:"#64748B",marginBottom:6}}>{emp.role||"—"}{job?` · ${job.title.slice(0,32)}`:""}</div>
+                  {open&&<div style={{fontSize:12,color:"#475569",marginBottom:6}}>Since {fmtClock(open.clockIn)} · <strong>{liveDuration(open.clockIn)}</strong></div>}
+                  <div style={{display:"flex",gap:10,fontSize:12,color:"#475569",marginBottom:10,flexWrap:"wrap"}}>
+                    <span>Today: <strong style={{color:today>8?"#F97316":"#0F172A"}}>{today.toFixed(2)} hr</strong>{today>8&&" 🔶"}</span>
+                    <span>Week: <strong style={{color:wkColor}}>{wkH.toFixed(2)} hr</strong>{wkH>40&&" 🔴"}{wkH>=36&&wkH<=40&&" ⚠️"}</span>
+                  </div>
+                  {open?(
+                    <button style={{...S.btnSecondary,width:"100%",justifyContent:"center"}} onClick={()=>{clockOutEmployee(emp.id);showToast?.(`${emp.name} clocked out`);}}>Clock out</button>
+                  ):(
+                    <select defaultValue="" onChange={e=>{if(!e.target.value)return;clockInEmployee(emp.id,e.target.value||null);showToast?.(`${emp.name} clocked in`);e.target.value="";}} style={{...S.select,width:"100%"}}>
+                      <option value="">Clock in to…</option>
+                      {eDeals.filter(d=>!["Lost","Completed"].includes(d.stage)).map(d=><option key={d.id} value={d.id}>{d.title.slice(0,40)}</option>)}
+                    </select>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         ):(
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead><tr>{["Employee","Role","Status","At job","Since","Today","Week","Actions"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
@@ -6300,8 +6395,8 @@ This proposal is valid for 30 days.`;
   };
 
   return(
-    <div style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{...S.modal,maxWidth:680}}>
+    <div className="nx-modal-overlay" style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="nx-modal" style={{...S.modal,maxWidth:680}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",margin:0}}>Build Quote / Proposal</h2>
           <button style={S.btnGhost} onClick={onClose}><Ic d={I.x} size={18}/></button>
@@ -6403,6 +6498,17 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [fieldView,setFieldView]=useState(false);
   const [recentJobId,setRecentJobId]=useState(null);
   const [isOffline,setIsOffline]=useState(typeof navigator!=="undefined"?!navigator.onLine:false);
+  const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [mobileSearchOpen,setMobileSearchOpen]=useState(false);
+  const isMobile=useIsMobile();
+  // Auto-close sidebar when view changes or breakpoint crosses; lock body scroll while open on mobile
+  useEffect(()=>{setSidebarOpen(false);setMobileSearchOpen(false);},[view,selContact,selCompany,selDeal]);
+  useEffect(()=>{if(!isMobile){setSidebarOpen(false);setMobileSearchOpen(false);}},[isMobile]);
+  useEffect(()=>{
+    if(typeof document==="undefined")return;
+    document.body.classList.toggle("no-scroll",sidebarOpen&&isMobile);
+    return()=>document.body.classList.remove("no-scroll");
+  },[sidebarOpen,isMobile]);
   const [selContact,setSelContact]=useState(null);
   const [selCompany,setSelCompany]=useState(null);
   const [selDeal,setSelDeal]=useState(null);
@@ -6869,11 +6975,25 @@ export default function App({session,onLogout,demoMode=false}={}){
       <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&display=swap" rel="stylesheet"/>
 
+      {/* ─── SIDEBAR BACKDROP (mobile only) ─────────────── */}
+      {isMobile&&sidebarOpen&&(
+        <div onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"rgba(15,30,60,.55)",zIndex:90}}/>
+      )}
+
       {/* ─── SIDEBAR ─────────────────────────────────── */}
-      <div style={{width:222,background:"#0F2044",display:"flex",flexDirection:"column",flexShrink:0,overflowY:"auto"}}>
-        <div style={{padding:"16px 16px 10px",borderBottom:"1px solid #162B55"}}>
-          <div style={{fontFamily:"'Sora',sans-serif",fontSize:20,fontWeight:800,color:"#FFFFFF",letterSpacing:"-0.5px"}}>Nex<span style={{color:entity?.color||"#3B82F6"}}>CRM</span></div>
-          <div style={{fontSize:10,color:"#475569",letterSpacing:".5px",textTransform:"uppercase",marginTop:1}}>Multi-Entity Platform</div>
+      <div style={isMobile?{
+        position:"fixed",top:0,left:0,bottom:0,width:260,background:"#0F2044",display:"flex",flexDirection:"column",overflowY:"auto",zIndex:100,
+        transform:sidebarOpen?"translateX(0)":"translateX(-105%)",transition:"transform .22s ease-out",
+        boxShadow:sidebarOpen?"0 0 30px rgba(0,0,0,0.4)":"none"
+      }:{width:222,background:"#0F2044",display:"flex",flexDirection:"column",flexShrink:0,overflowY:"auto"}}>
+        <div style={{padding:"16px 16px 10px",borderBottom:"1px solid #162B55",display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontFamily:"'Sora',sans-serif",fontSize:20,fontWeight:800,color:"#FFFFFF",letterSpacing:"-0.5px"}}>Nex<span style={{color:entity?.color||"#3B82F6"}}>CRM</span></div>
+            <div style={{fontSize:10,color:"#475569",letterSpacing:".5px",textTransform:"uppercase",marginTop:1}}>Multi-Entity Platform</div>
+          </div>
+          {isMobile&&(
+            <button onClick={()=>setSidebarOpen(false)} aria-label="Close menu" style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:6,color:"#94A3B8",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic d={I.x} size={16}/></button>
+          )}
         </div>
         {/* Entity Switcher */}
         <div style={{padding:"8px 10px 4px",position:"relative"}}>
@@ -6942,19 +7062,50 @@ export default function App({session,onLogout,demoMode=false}={}){
       </div>
 
       {/* ─── MAIN ─────────────────────────────────────── */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
-        <div style={{height:50,background:"#FFFFFF",borderBottom:"1px solid #E2E8F0",display:"flex",alignItems:"center",padding:"0 20px",gap:10,flexShrink:0}}>
-          <div style={{position:"relative",flex:1,maxWidth:360}}>
-            <div style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}><Ic d={I.search} size={13} c="#94A3B8"/></div>
-            <input style={{...S.input,paddingLeft:30,background:"#F8FAFC",border:"1px solid #E2E8F0",color:"#0F172A",fontSize:12}} placeholder="Search contacts, deals, companies..." value={search} onChange={e=>setSearch(e.target.value)}/>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
-            <span style={{fontSize:12,color:"#64748B",display:"flex",alignItems:"center",gap:4}}><div style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>{entity?.name}</span>
-            {fs&&<button onClick={()=>setFieldView(true)} style={{...S.btnSecondary,padding:"5px 12px",fontSize:12,background:"#059669",color:"#fff",borderColor:"#047857"}}><Ic d={I.truck} size={12}/>Field View</button>}
-            {overdueTasks>0&&<div style={{...S.badge("#EF4444"),cursor:"pointer"}} onClick={()=>setView("tasks")}><Ic d={I.bell} size={10}/>{overdueTasks} overdue</div>}
-            {unpaidInvoices>0&&<div style={{...S.badge("#F59E0B"),cursor:"pointer"}} onClick={()=>setView("invoices")}><Ic d={I.invoice} size={10}/>{unpaidInvoices} unpaid</div>}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,width:"100%"}}>
+        <div style={{minHeight:50,background:"#FFFFFF",borderBottom:"1px solid #E2E8F0",display:"flex",alignItems:"center",padding:isMobile?"0 12px":"0 20px",gap:isMobile?8:10,flexShrink:0}}>
+          {isMobile&&(
+            <button onClick={()=>setSidebarOpen(true)} data-compact style={{background:"transparent",border:"none",padding:6,cursor:"pointer",display:"flex",alignItems:"center",color:"#0F172A"}} aria-label="Open menu">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+          )}
+          {!isMobile&&(
+            <div style={{position:"relative",flex:1,maxWidth:360}}>
+              <div style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}><Ic d={I.search} size={13} c="#94A3B8"/></div>
+              <input style={{...S.input,paddingLeft:30,background:"#F8FAFC",border:"1px solid #E2E8F0",color:"#0F172A",fontSize:12}} placeholder="Search contacts, deals, companies..." value={search} onChange={e=>setSearch(e.target.value)}/>
+            </div>
+          )}
+          {isMobile&&(
+            <div style={{flex:1,fontWeight:700,fontSize:14,color:"#0F172A",textAlign:"center",fontFamily:"'Sora',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {(NAV.find(n=>n.id===view)?.label)||"Dashboard"}
+            </div>
+          )}
+          <div style={{display:"flex",alignItems:"center",gap:isMobile?6:8,marginLeft:isMobile?0:"auto"}}>
+            {!isMobile&&<span style={{fontSize:12,color:"#64748B",display:"flex",alignItems:"center",gap:4}}><div style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>{entity?.name}</span>}
+            {isMobile&&(
+              <button data-compact onClick={()=>setMobileSearchOpen(s=>!s)} style={{background:"transparent",border:"none",padding:6,cursor:"pointer",color:"#475569"}} aria-label="Search"><Ic d={I.search} size={18}/></button>
+            )}
+            {fs&&!isMobile&&<button onClick={()=>setFieldView(true)} style={{...S.btnSecondary,padding:"5px 12px",fontSize:12,background:"#059669",color:"#fff",borderColor:"#047857"}}><Ic d={I.truck} size={12}/>Field View</button>}
+            {fs&&isMobile&&<button data-compact onClick={()=>setFieldView(true)} style={{background:"#059669",color:"#fff",border:"none",borderRadius:8,padding:"6px 8px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}><Ic d={I.truck} size={13}/>Field</button>}
+            {overdueTasks>0&&!isMobile&&<div style={{...S.badge("#EF4444"),cursor:"pointer"}} onClick={()=>setView("tasks")}><Ic d={I.bell} size={10}/>{overdueTasks} overdue</div>}
+            {unpaidInvoices>0&&!isMobile&&<div style={{...S.badge("#F59E0B"),cursor:"pointer"}} onClick={()=>setView("invoices")}><Ic d={I.invoice} size={10}/>{unpaidInvoices} unpaid</div>}
+            {isMobile&&(overdueTasks>0||unpaidInvoices>0)&&(
+              <button data-compact onClick={()=>setView(overdueTasks>0?"tasks":"invoices")} style={{position:"relative",background:"transparent",border:"none",padding:6,cursor:"pointer",color:"#475569"}} aria-label="Alerts">
+                <Ic d={I.bell} size={18}/>
+                <span style={{position:"absolute",top:0,right:0,minWidth:14,height:14,padding:"0 3px",borderRadius:7,background:"#EF4444",color:"#fff",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{overdueTasks+unpaidInvoices}</span>
+              </button>
+            )}
           </div>
         </div>
+        {isMobile&&mobileSearchOpen&&(
+          <div style={{padding:"8px 12px",background:"#FFFFFF",borderBottom:"1px solid #E2E8F0",display:"flex",gap:8}}>
+            <div style={{position:"relative",flex:1}}>
+              <div style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}><Ic d={I.search} size={14} c="#94A3B8"/></div>
+              <input autoFocus style={{...S.input,paddingLeft:32}} placeholder="Search contacts, deals, companies…" value={search} onChange={e=>setSearch(e.target.value)}/>
+            </div>
+            <button data-compact onClick={()=>{setSearch("");setMobileSearchOpen(false);}} style={{background:"transparent",border:"none",padding:"6px 10px",cursor:"pointer",color:"#475569",fontSize:13}}>Cancel</button>
+          </div>
+        )}
 
         {/* Content */}
         {fieldView&&fs?(
@@ -6962,7 +7113,7 @@ export default function App({session,onLogout,demoMode=false}={}){
             <FieldViewShell entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} timeClockEntries={timeClockEntries} notes={notes} updateDeal={updateDeal} addNote={addNote} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} onExit={()=>setFieldView(false)} recentJobId={recentJobId} setRecentJobId={setRecentJobId} showToast={showToast} requestTimeCorrection={requestTimeCorrection}/>
           </div>
         ):(
-        <div style={{flex:1,overflowY:"auto",padding:20}}>
+        <div style={{flex:1,overflowY:"auto",padding:isMobile?12:20,paddingBottom:isMobile?80:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} companies={companies} entity={entity} setView={setView} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
           {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
@@ -6989,6 +7140,31 @@ export default function App({session,onLogout,demoMode=false}={}){
       </div>
       </div>
 
+      {/* ─── MOBILE BOTTOM NAV ──────────────────────────── */}
+      {isMobile&&!fieldView&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#FFFFFF",borderTop:"1px solid #E2E8F0",display:"flex",zIndex:80,boxShadow:"0 -2px 10px rgba(15,30,60,0.05)"}}>
+          {[
+            {id:"dashboard",label:"Home",icon:I.home},
+            {id:"contacts",label:"Contacts",icon:I.users},
+            {id:"deals",label:fs?"Jobs":"Pipeline",icon:I.layers},
+            {id:"tasks",label:"Tasks",icon:I.check,badge:overdueTasks},
+            {id:"__more",label:"More",icon:I.list},
+          ].map(it=>{
+            const active=it.id==="__more"?sidebarOpen:view===it.id;
+            return(
+              <button key={it.id} data-compact onClick={()=>{
+                if(it.id==="__more"){setSidebarOpen(true);return;}
+                setView(it.id);setSelContact(null);setSelCompany(null);setSelDeal(null);
+              }} style={{flex:1,background:"transparent",border:"none",padding:"8px 0 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,color:active?(entity?.color||"#1D4ED8"):"#64748B",cursor:"pointer",fontSize:10,fontWeight:600,position:"relative"}}>
+                <Ic d={it.icon} size={20}/>
+                <span>{it.label}</span>
+                {it.badge>0&&<span style={{position:"absolute",top:4,right:"calc(50% - 18px)",background:"#EF4444",color:"#fff",fontSize:9,fontWeight:800,borderRadius:9,minWidth:14,padding:"0 4px",display:"flex",alignItems:"center",justifyContent:"center",height:14}}>{it.badge}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* ─── MODALS ────────────────────────────────────── */}
       {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} updateTask={updateTask} addNote={addNote} addEntity={addEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields} entity={entity} addQuote={addQuote} updateQuote={updateQuote} addTemplate={addTemplate} updateTemplate={updateTemplate} timeEntries={timeEntries} addInvoice={addInvoice} updateInvoice={updateInvoice} setInvoiceCounter={setInvoiceCounter} invoiceCounter={invoiceCounter} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee}/>}
 
@@ -7007,6 +7183,33 @@ export default function App({session,onLogout,demoMode=false}={}){
         ::-webkit-scrollbar{width:5px;height:5px;}::-webkit-scrollbar-track{background:#F1F5F9;}::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px;}::-webkit-scrollbar-thumb:hover{background:#94A3B8;}
         input[type="date"]::-webkit-calendar-picker-indicator{filter:none;}input[type="range"]{accent-color:#1D4ED8;}
         @keyframes fadeIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+        @keyframes slideInLeft{from{transform:translateX(-100%);}to{transform:translateX(0);}}
+        @media (max-width: 767px){
+          /* Responsive grids: 4-col stat rows → 2x2, 3-col → 1x3, 2-col forms → 1-col */
+          [style*="grid-template-columns: repeat(4, 1fr)"]{grid-template-columns:repeat(2,1fr) !important;}
+          [style*="grid-template-columns: repeat(3, 1fr)"]{grid-template-columns:1fr !important;}
+          [style*="grid-template-columns: 1fr 1fr;"]{grid-template-columns:1fr !important;}
+          [data-mobile-2col]{grid-template-columns:repeat(2,1fr) !important;}
+          [data-mobile-1col]{grid-template-columns:1fr !important;}
+          /* Tap targets: enforce 44px minimum height on buttons; data-compact opts out for tight UI (chip toggles, icon-only buttons) */
+          button:not([data-compact]){min-height:44px;}
+          /* Tables that haven't been converted to cards: make the table block-level and horizontally scrollable */
+          table{display:block;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;}
+          .mobile-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+          .mobile-table-wrap table{min-width:520px;}
+          /* Hide/show toggles */
+          .hide-mobile{display:none !important;}
+          /* Locks body scroll when overlays are open */
+          body.no-scroll{overflow:hidden;}
+          /* Modals: near full-screen on mobile (S.modal sets maxWidth:520 + maxHeight:88vh) */
+          .nx-modal{max-width:100vw !important;width:100% !important;max-height:100vh !important;height:100% !important;border-radius:0 !important;}
+          .nx-modal-overlay{padding:0 !important;align-items:stretch !important;}
+          /* Inputs: full width + larger taps */
+          input, select, textarea{font-size:16px !important;}
+        }
+        @media (min-width: 768px){
+          .show-mobile{display:none !important;}
+        }
       `}</style>
     </div>
   );
