@@ -5066,13 +5066,13 @@ function WorkerPinView({entity,eEmps,eDeals,eEntries=[],todayStr,openEntry,clock
             <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:24}}>
               {[0,1,2,3].map(i=><div key={i} style={{width:44,height:54,border:"2px solid #CBD5E1",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:800,color:"#0F172A",background:pin.length>i?"#1D4ED810":"#fff"}}>{pin.length>i?"●":""}</div>)}
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+            <div className="nx-keypad" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
               {[1,2,3,4,5,6,7,8,9].map(n=>(
-                <button key={n} onClick={()=>pad(n)} style={{padding:"22px 0",fontSize:26,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#0F172A"}}>{n}</button>
+                <button key={n} onClick={()=>pad(n)} style={{minHeight:64,padding:"18px 0",fontSize:26,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#0F172A"}}>{n}</button>
               ))}
-              <button onClick={()=>setPin("")} style={{padding:"22px 0",fontSize:14,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#64748B"}}>Clear</button>
-              <button onClick={()=>pad(0)} style={{padding:"22px 0",fontSize:26,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#0F172A"}}>0</button>
-              <button onClick={()=>setPin(p=>p.slice(0,-1))} style={{padding:"22px 0",fontSize:14,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#64748B"}}>⌫</button>
+              <button onClick={()=>setPin("")} style={{minHeight:64,padding:"18px 0",fontSize:14,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#64748B"}}>Clear</button>
+              <button onClick={()=>pad(0)} style={{minHeight:64,padding:"18px 0",fontSize:26,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#0F172A"}}>0</button>
+              <button onClick={()=>setPin(p=>p.slice(0,-1))} style={{minHeight:64,padding:"18px 0",fontSize:14,fontWeight:700,background:"#F1F5F9",border:"none",borderRadius:14,cursor:"pointer",color:"#64748B"}}>⌫</button>
             </div>
           </div>
         )}
@@ -7189,7 +7189,10 @@ export default function App({session,onLogout,demoMode=false}={}){
         @media (max-width: 767px){
           /* Responsive grids: 4-col stat rows → 2x2, 3-col → 1x3, 2-col forms → 1-col */
           [style*="grid-template-columns: repeat(4, 1fr)"]{grid-template-columns:repeat(2,1fr) !important;}
-          [style*="grid-template-columns: repeat(3, 1fr)"]{grid-template-columns:1fr !important;}
+          [style*="grid-template-columns: repeat(3, 1fr)"]:not(.nx-keypad){grid-template-columns:1fr !important;}
+          /* PIN pad: stays 3 columns on mobile, with comfortable tap targets */
+          .nx-keypad{grid-template-columns:repeat(3,1fr) !important;}
+          .nx-keypad button{min-height:64px !important;}
           [style*="grid-template-columns: 1fr 1fr;"]{grid-template-columns:1fr !important;}
           [data-mobile-2col]{grid-template-columns:repeat(2,1fr) !important;}
           [data-mobile-1col]{grid-template-columns:1fr !important;}
