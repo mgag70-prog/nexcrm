@@ -6501,14 +6501,6 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const [mobileSearchOpen,setMobileSearchOpen]=useState(false);
   const isMobile=useIsMobile();
-  // Auto-close sidebar when view changes or breakpoint crosses; lock body scroll while open on mobile
-  useEffect(()=>{setSidebarOpen(false);setMobileSearchOpen(false);},[view,selContact,selCompany,selDeal]);
-  useEffect(()=>{if(!isMobile){setSidebarOpen(false);setMobileSearchOpen(false);}},[isMobile]);
-  useEffect(()=>{
-    if(typeof document==="undefined")return;
-    document.body.classList.toggle("no-scroll",sidebarOpen&&isMobile);
-    return()=>document.body.classList.remove("no-scroll");
-  },[sidebarOpen,isMobile]);
   const [selContact,setSelContact]=useState(null);
   const [selCompany,setSelCompany]=useState(null);
   const [selDeal,setSelDeal]=useState(null);
@@ -6517,6 +6509,16 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [toast,setToast]=useState(null);
   const [entityMenuOpen,setEntityMenuOpen]=useState(false);
   const [sigModal,setSigModal]=useState(null);
+  // Auto-close sidebar when view changes or breakpoint crosses; lock body scroll while open on mobile.
+  // NOTE: these effects must come AFTER the selContact/selCompany/selDeal state declarations they reference,
+  // otherwise the deps array hits a TDZ error and the whole App fails to render (blank page).
+  useEffect(()=>{setSidebarOpen(false);setMobileSearchOpen(false);},[view,selContact,selCompany,selDeal]);
+  useEffect(()=>{if(!isMobile){setSidebarOpen(false);setMobileSearchOpen(false);}},[isMobile]);
+  useEffect(()=>{
+    if(typeof document==="undefined")return;
+    document.body.classList.toggle("no-scroll",sidebarOpen&&isMobile);
+    return()=>document.body.classList.remove("no-scroll");
+  },[sidebarOpen,isMobile]);
 
   const entity=entities.find(e=>e.id===activeEntityId)||entities[0];
   const ec=contacts.filter(c=>c.entityId===activeEntityId);
