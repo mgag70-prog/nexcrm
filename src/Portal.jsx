@@ -189,7 +189,7 @@ function ClientPortal({ navigate }) {
   )
 
   const settings = snapshot?.payload?.settings || snapshot?.settings || {}
-  const enabledTabs = settings.enabledTabs || { overview: true, invoices: true, documents: true, proposals: true, projects: true, messages: true, tasks: true }
+  const enabledTabs = settings.enabledTabs || { overview: true, invoices: true, documents: true, proposals: true, projects: true, messages: true, tasks: true, expenses: false }
   const accent = snapshot?.payload?.workspace?.color || '#1D4ED8'
   const workspaceName = snapshot?.payload?.workspace?.name || 'NexCRM'
   const welcome = settings.welcome || `Welcome to your portal.`
@@ -205,6 +205,7 @@ function ClientPortal({ navigate }) {
     ['documents', 'Documents', enabledTabs.documents],
     ['proposals', 'Proposals', enabledTabs.proposals],
     ['projects', 'Projects', enabledTabs.projects],
+    ['expenses', 'Costs & Expenses', enabledTabs.expenses],
     ['messages', 'Messages', enabledTabs.messages],
     ['tasks', 'Tasks', enabledTabs.tasks],
   ].filter(([id, label, enabled]) => id === 'overview' || enabled !== false)
@@ -244,6 +245,7 @@ function ClientPortal({ navigate }) {
         {tab === 'documents' && <DocumentsTab snapshot={snapshot} client={client} contact={contact} accent={accent} onSnapshotUpdate={setSnapshot}/>}
         {tab === 'proposals' && <ProposalsTab snapshot={snapshot} client={client} contact={contact} accent={accent}/>}
         {tab === 'projects' && <ProjectsTab snapshot={snapshot} accent={accent}/>}
+        {tab === 'expenses' && <ExpensesTab snapshot={snapshot} accent={accent}/>}
         {tab === 'messages' && <MessagesTab token={client.token} contact={contact} accent={accent}/>}
         {tab === 'tasks' && <TasksTab snapshot={snapshot} accent={accent}/>}
       </div>
@@ -494,6 +496,40 @@ function MessagesTab({ token, contact, accent }) {
         <button onClick={send} disabled={sending || !draft.trim()} style={{ ...btn(accent), opacity: (sending || !draft.trim()) ? .6 : 1 }}>Send</button>
       </div>
     </Card>
+  )
+}
+
+function ExpensesTab({ snapshot, accent }) {
+  const expenses = snapshot?.payload?.expenses || []
+  if (expenses.length === 0) return <Empty>No expenses shared with you yet.</Empty>
+  const total = expenses.reduce((s, e) => s + (+e.amount || 0), 0)
+  const invoiced = expenses.filter(e => e.invoiced).reduce((s, e) => s + (+e.amount || 0), 0)
+  const pending = total - invoiced
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 20 }}>
+        <Stat label="Total Billable Costs" value={fmt$(total)} color="#1D4ED8"/>
+        <Stat label="Already Invoiced" value={fmt$(invoiced)} color="#10B981"/>
+        <Stat label="Pending Invoice" value={fmt$(pending)} color="#F59E0B"/>
+      </div>
+      <Card style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid #E9EEF6', fontSize: 13, color: '#475569' }}>
+          Pass-through costs that may appear on your invoices. Vendor and internal details are not shown.
+        </div>
+        <table style={tbl}>
+          <thead><tr>{['Date', 'Category', 'Description', 'Amount', 'Status'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+          <tbody>{[...expenses].sort((a,b) => new Date(b.date) - new Date(a.date)).map(e => (
+            <tr key={e.id}>
+              <td style={td}>{fmtDate(e.date)}</td>
+              <td style={td}>{e.category || '—'}</td>
+              <td style={{ ...td, color: '#0F172A' }}>{e.description || '—'}</td>
+              <td style={{ ...td, fontWeight: 700, color: '#0F172A' }}>{fmt$(e.amount)}</td>
+              <td style={td}><Badge color={e.invoiced ? '#10B981' : '#F59E0B'}>{e.invoiced ? 'Invoiced' : 'Pending'}</Badge></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </Card>
+    </div>
   )
 }
 

@@ -29,6 +29,34 @@ const FS_SC = {
 const SERVICE_TYPES = ["Lawn Maintenance","Mulching","Aeration","Spring Cleanup","Fall Cleanup","Hardscaping","Tree/Shrub Care","Snow Removal","Irrigation","Landscape Design","Other"];
 const EMPLOYEE_ROLES = ["Crew Lead","Crew Member","Foreman","Supervisor","Admin"];
 const RECURRING_FREQUENCIES = ["Weekly","Bi-Weekly","Monthly","Seasonal"];
+const EXPENSE_CATEGORIES = [
+  "Labor (subcontracted)",
+  "Materials & Supplies",
+  "Equipment & Tools",
+  "Fuel & Transportation",
+  "Permits & Fees",
+  "Software & Subscriptions",
+  "Marketing & Advertising",
+  "Meals & Entertainment",
+  "Travel & Lodging",
+  "Professional Services",
+  "Office & Admin",
+  "Other",
+];
+const EXPENSE_CATEGORY_COLORS = {
+  "Labor (subcontracted)":"#8B5CF6",
+  "Materials & Supplies":"#059669",
+  "Equipment & Tools":"#F59E0B",
+  "Fuel & Transportation":"#EF4444",
+  "Permits & Fees":"#3B82F6",
+  "Software & Subscriptions":"#06B6D4",
+  "Marketing & Advertising":"#EC4899",
+  "Meals & Entertainment":"#F97316",
+  "Travel & Lodging":"#14B8A6",
+  "Professional Services":"#6366F1",
+  "Office & Admin":"#64748B",
+  "Other":"#94A3B8",
+};
 const isFieldService = e => e?.type === "Field Service Business";
 // Terminology overrides for Field Service entities. Keys are stable; UI calls t(entity, key).
 const FS_TERMS = {
@@ -205,6 +233,7 @@ const DEMO = {
   employees:[],
   timeClockEntries:[],
   fsSettings:{},
+  expenses:[],
 };
 
 const DEMO_FULL = {
@@ -336,6 +365,7 @@ const DEMO_FULL = {
     return out;
   })(),
   fsSettings:{e5:{defaultDepositPct:30,defaultLaborRate:65,serviceArea:"Greater Boston · 25-mile radius",businessHours:"Mon-Sat 7am-5pm",logo:""}},
+  expenses:[],
 };
 // GreenScape Pro demo data (Field Service entity e5) — merged into DEMO_FULL after declaration to keep shape sane.
 (function seedGreenscape(){
@@ -372,6 +402,18 @@ const DEMO_FULL = {
     {id:"jb10",entityId:FS,contactId:"gc5",companyId:"gco2",title:"Riverside drip irrigation install — courtyard",value:6800,stage:"Contacted",closeDate:dayOffset(25),probability:45,jobSiteAddress:"122 Riverside Ave, Cambridge MA 02141",serviceType:"Irrigation",crewAssigned:[],materialsCost:0,recurring:false,depositRequired:true,depositAmount:2040,depositPaid:false,createdAt:new Date(Date.now()-12*864e5).toISOString()},
     {id:"jb11",entityId:FS,contactId:"gc8",title:"Foster residence fall cleanup",value:540,stage:"Completed",closeDate:dayOffset(-3),probability:100,jobSiteAddress:"12 Birch Lane, Newton MA 02465",serviceType:"Fall Cleanup",crewAssigned:["emp3"],materialsCost:0,recurring:false,depositRequired:false,completionNotes:"Single-crew job. Hauled 9 bags off-site. Customer paid by check on completion.",createdAt:new Date(Date.now()-30*864e5).toISOString()},
     {id:"jb12",entityId:FS,contactId:"gc7",companyId:"gco4",title:"Robert Chen residence weekly lawn (executive perk)",value:240,stage:"In Progress",closeDate:dayOffset(-3),probability:100,jobSiteAddress:"77 Sunset Dr, Watertown MA 02472",serviceType:"Lawn Maintenance",crewAssigned:["emp3"],materialsCost:0,recurring:true,frequency:"Weekly",nextOccurrence:dayOffset(4),depositRequired:false,createdAt:new Date(Date.now()-60*864e5).toISOString()},
+  );
+  DEMO_FULL.expenses.push(
+    {id:"exp_g1",entityId:FS,dealId:"jb3",contactId:"gc5",companyId:"gco2",date:dayOffset(-10),category:"Materials & Supplies",description:"Belgian block edging — 240 linear ft",vendor:"New England Stone Supply",amount:1840,currency:"USD",billable:true,invoiced:true,createdAt:new Date(Date.now()-10*864e5).toISOString()},
+    {id:"exp_g2",entityId:FS,dealId:"jb3",contactId:"gc5",companyId:"gco2",date:dayOffset(-9),category:"Materials & Supplies",description:"Pavers and polymeric sand",vendor:"Stone & Co",amount:3120,currency:"USD",billable:true,invoiced:false,createdAt:new Date(Date.now()-9*864e5).toISOString()},
+    {id:"exp_g3",entityId:FS,dealId:"jb3",contactId:"gc5",companyId:"gco2",date:dayOffset(-6),category:"Labor (subcontracted)",description:"Specialty mason — 1 day patio install",vendor:"Patio Pros LLC",amount:600,currency:"USD",billable:true,invoiced:false,createdAt:new Date(Date.now()-6*864e5).toISOString()},
+    {id:"exp_g4",entityId:FS,dealId:"jb3",contactId:"gc5",companyId:"gco2",date:dayOffset(-2),category:"Equipment & Tools",description:"Plate compactor rental — 2 days",vendor:"United Rentals",amount:200,currency:"USD",billable:true,invoiced:false,createdAt:new Date(Date.now()-2*864e5).toISOString()},
+    {id:"exp_g5",entityId:FS,dealId:"jb1",contactId:"gc3",companyId:"gco1",date:dayOffset(-3),category:"Materials & Supplies",description:"Hardwood mulch — 6 yards",vendor:"Greenfield Garden Center",amount:340,currency:"USD",billable:true,invoiced:false,createdAt:new Date(Date.now()-3*864e5).toISOString()},
+    {id:"exp_g6",entityId:FS,dealId:"jb2",contactId:"gc2",date:dayOffset(-8),category:"Permits & Fees",description:"Dump fees for spring debris",vendor:"Newton DPW",amount:75,currency:"USD",billable:false,invoiced:false,createdAt:new Date(Date.now()-8*864e5).toISOString()},
+    {id:"exp_g7",entityId:FS,dealId:"jb1",contactId:"gc3",companyId:"gco1",date:dayOffset(-1),category:"Fuel & Transportation",description:"Truck fuel — weekly route",vendor:"Shell",amount:85,currency:"USD",billable:false,invoiced:false,createdAt:new Date(Date.now()-1*864e5).toISOString()},
+    {id:"exp_g8",entityId:FS,dealId:"jb8",contactId:null,companyId:"gco5",date:dayOffset(-5),category:"Equipment & Tools",description:"Snow plow blade replacement",vendor:"Tractor Supply",amount:420,currency:"USD",billable:false,invoiced:false,createdAt:new Date(Date.now()-5*864e5).toISOString()},
+    {id:"exp_g9",entityId:FS,dealId:"jb5",contactId:"gc7",companyId:"gco4",date:dayOffset(-4),category:"Materials & Supplies",description:"Fertilizer & herbicide for bi-weekly route",vendor:"SiteOne Landscape",amount:215,currency:"USD",billable:true,invoiced:true,createdAt:new Date(Date.now()-4*864e5).toISOString()},
+    {id:"exp_g10",entityId:FS,dealId:"jb11",contactId:"gc8",date:dayOffset(-3),category:"Labor (subcontracted)",description:"Day labor — Foster cleanup",vendor:"OnCall Crew",amount:240,currency:"USD",billable:true,invoiced:false,createdAt:new Date(Date.now()-3*864e5).toISOString()},
   );
 })();
 
@@ -846,7 +888,7 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,updateCon
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONTACT DETAIL (Notes, Tasks, Docs, Sequences tabs + Lead Score)
 // ═══════════════════════════════════════════════════════════════════════════════
-function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView}){
+function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[],contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView,onRequestSign}){
   const [noteText,setNoteText]=useState("");
   const [tab,setTab]=useState("notes");
   const fileRef=useRef();
@@ -856,6 +898,9 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,comp
   const cNotes=allNotes.filter(n=>n.contactId===contact.id);
   const cTasks=allTasks.filter(t=>t.contactId===contact.id);
   const cDocs=allDocs.filter(d=>d.contactId===contact.id);
+  const cDealIds=new Set(cDeals.map(d=>d.id));
+  const cExpenses=allExpenses.filter(e=>cDealIds.has(e.dealId)||e.contactId===contact.id);
+  const cExpenseTotal=cExpenses.reduce((s,e)=>s+(+e.amount||0),0);
   const cEnrollments=enrollments.filter(e=>e.contactId===contact.id);
   const hasEmail=emailIntegrations.some(e=>e.entityId===activeEntityId);
   const score=calcLeadScore(contact,allDeals,allNotes,allTasks);
@@ -948,6 +993,12 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,contacts,comp
                 <div style={{fontSize:11,color:"#475569",marginTop:4}}>Close: {fmtDate(d.closeDate)}</div>
               </div>
             ))}
+            {cExpenses.length>0&&(
+              <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #E9EEF6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5}}>Expenses logged</div>
+                <div style={{fontSize:13,fontWeight:700,color:"#8B5CF6"}}>{fmt$(cExpenseTotal)} <span style={{fontSize:11,color:"#94A3B8",fontWeight:500}}>({cExpenses.length})</span></div>
+              </div>
+            )}
           </div>
           {/* Quick Quote Button */}
           <button style={{...S.btnSecondary,width:"100%",justifyContent:"center"}} onClick={()=>openModal("buildQuote",{contactId:contact.id})}><Ic d={I.quote} size={13}/>Build Quote / Proposal</button>
@@ -1151,7 +1202,7 @@ function CompaniesList({eco,search,openModal,deleteCompany,contacts,deals=[],set
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMPANY DETAIL
 // ═══════════════════════════════════════════════════════════════════════════════
-function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,openModal,setSelContact,setSelDeal,setView,deleteCompany,deleteNote,entity}){
+function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,allExpenses=[],allInvoices=[],onBack,openModal,setSelContact,setSelDeal,setView,deleteCompany,deleteNote,entity}){
   const [tab,setTab]=useState("overview");
   if(!company){
     return(
@@ -1171,6 +1222,15 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
   const dealValue=cDeals.reduce((s,d)=>s+(+d.value||0),0);
   const wonValue=cDeals.filter(d=>d.stage==="Won").reduce((s,d)=>s+(+d.value||0),0);
   const openDeals=cDeals.filter(d=>!["Won","Lost"].includes(d.stage));
+  // Total expenses: anything tagged to this company OR to one of its deals
+  const dealIds=new Set(cDeals.map(d=>d.id));
+  const cExpenses=allExpenses.filter(e=>e.companyId===company.id||dealIds.has(e.dealId));
+  const expenseTotal=cExpenses.reduce((s,e)=>s+(+e.amount||0),0);
+  // Net margin: invoiced revenue (Paid+Sent+Viewed+Overdue) for the company's contacts minus expenses
+  const contactIdSet=new Set(cContacts.map(c=>c.id));
+  const cInvoices=allInvoices.filter(i=>contactIdSet.has(i.contactId));
+  const invoicedTotal=cInvoices.reduce((s,i)=>s+(i.items||[]).reduce((ss,it)=>ss+(+it.quantity||0)*(+it.unitPrice||0),0),0);
+  const netMargin=invoicedTotal-expenseTotal;
 
   const TAB=({id,label,count})=>(
     <button onClick={()=>setTab(id)} style={{...S.btnGhost,padding:"6px 14px",borderBottom:`2px solid ${tab===id?"#1D4ED8":"transparent"}`,color:tab===id?"#1D4ED8":"#64748B",borderRadius:0,fontSize:13,fontWeight:600}}>
@@ -1209,10 +1269,12 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,onBack,op
             <button style={{...S.btnSecondary,color:"#EF4444",borderColor:"#FECACA"}} onClick={()=>{if(confirm(`Delete ${company.name}? This won't remove its contacts or deals.`)){deleteCompany(company.id);onBack();}}}><Ic d={I.trash} size={13}/></button>
           </div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginTop:18,paddingTop:16,borderTop:"1px solid #E9EEF6"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginTop:18,paddingTop:16,borderTop:"1px solid #E9EEF6"}}>
           <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Open pipeline</div><div style={{fontSize:18,fontWeight:800,color:"#1D4ED8"}}>{fmt$(openDeals.reduce((s,d)=>s+(+d.value||0),0))}</div><div style={{fontSize:11,color:"#94A3B8"}}>{openDeals.length} open deal{openDeals.length===1?"":"s"}</div></div>
           <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Won revenue</div><div style={{fontSize:18,fontWeight:800,color:"#10B981"}}>{fmt$(wonValue)}</div><div style={{fontSize:11,color:"#94A3B8"}}>across all time</div></div>
           <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Total deal value</div><div style={{fontSize:18,fontWeight:800,color:"#0F172A"}}>{fmt$(dealValue)}</div><div style={{fontSize:11,color:"#94A3B8"}}>{cDeals.length} deal{cDeals.length===1?"":"s"}</div></div>
+          <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Total expenses</div><div style={{fontSize:18,fontWeight:800,color:"#8B5CF6"}}>{fmt$(expenseTotal)}</div><div style={{fontSize:11,color:"#94A3B8"}}>{cExpenses.length} entr{cExpenses.length===1?"y":"ies"}</div></div>
+          <div><div style={{fontSize:11,color:"#64748B",textTransform:"uppercase",fontWeight:700,letterSpacing:.5,marginBottom:4}}>Net margin</div><div style={{fontSize:18,fontWeight:800,color:netMargin>=0?"#10B981":"#EF4444"}}>{fmt$(netMargin)}</div><div style={{fontSize:11,color:"#94A3B8"}}>invoiced − expenses</div></div>
         </div>
       </div>
 
@@ -1627,8 +1689,20 @@ const REPORT_FIELDS = {
     { key:"paidAt",      label:"Paid Date",      type:"date", get: i => i.status==="Paid" ? i.updatedAt||i.createdAt : null },
     { key:"itemsCount",  label:"Line Items",     numeric:true, get: i => (i.items||[]).length },
   ],
+  expense: [
+    { key:"date",         label:"Date",         type:"date", get: e => e.date },
+    { key:"jobTitle",     label:"Job / Deal",   get: (e,ctx) => (ctx.deals||[]).find(d=>d.id===e.dealId)?.title },
+    { key:"contactName",  label:"Client",       get: (e,ctx) => (ctx.contacts||[]).find(c=>c.id===e.contactId)?.name },
+    { key:"companyName",  label:"Company",      get: (e,ctx) => { const co=(ctx.companies||[]).find(c=>c.id===e.companyId); if(co)return co.name; const ct=(ctx.contacts||[]).find(c=>c.id===e.contactId); const co2=(ctx.companies||[]).find(c=>c.id===ct?.companyId); return co2?.name||ct?.companyName; } },
+    { key:"category",     label:"Category",     get: e => e.category },
+    { key:"description",  label:"Description",  get: e => e.description },
+    { key:"vendor",       label:"Vendor",       get: e => e.vendor },
+    { key:"amount",       label:"Amount",       numeric:true, money:true, get: e => +e.amount||0 },
+    { key:"billable",     label:"Billable",     get: e => e.billable ? "Yes" : "No" },
+    { key:"invoiced",     label:"Invoiced",     get: e => e.invoiced ? "Yes" : "No" },
+  ],
 };
-const REPORT_TYPE_LABELS = { contact:"Contact List", company:"Company List", deal:"Deal Pipeline", revenue:"Revenue Summary", activity:"Activity Log", time:"Time & Billing", invoice:"Invoice Report", custom:"Custom" };
+const REPORT_TYPE_LABELS = { contact:"Contact List", company:"Company List", deal:"Deal Pipeline", revenue:"Revenue Summary", activity:"Activity Log", time:"Time & Billing", invoice:"Invoice Report", expense:"Expense Report", custom:"Custom" };
 
 // Pre-built templates (loaded as starting state for a new report)
 const REPORT_TEMPLATES = [
@@ -1639,6 +1713,9 @@ const REPORT_TEMPLATES = [
   { name:"Billable Hours This Month", type:"time", fields:["date","contact","description","hours","rate","billable"], filters:{ dateRange:"month", dateField:"date" }, sort:{field:"date",dir:"desc"}, groupBy:null },
   { name:"Outstanding Invoices", type:"invoice", fields:["number","contact","total","status","dueDate"], filters:{ statuses:["Sent","Viewed","Overdue"] }, sort:{field:"dueDate",dir:"asc"}, groupBy:"status" },
   { name:"Won Deals This Quarter", type:"deal", fields:["title","companyName","contactName","value","closeDate"], filters:{ dateRange:"quarter", dateField:"closeDate", stages:["Won"] }, sort:{field:"value",dir:"desc"}, groupBy:null },
+  { name:"Expenses by Job", type:"expense", fields:["date","jobTitle","category","description","vendor","amount","billable"], filters:{}, sort:{field:"date",dir:"desc"}, groupBy:"jobTitle" },
+  { name:"Expenses by Category", type:"expense", fields:["category","date","jobTitle","description","amount"], filters:{ dateRange:"month", dateField:"date" }, sort:{field:"amount",dir:"desc"}, groupBy:"category" },
+  { name:"Unbilled Expenses", type:"expense", fields:["date","companyName","contactName","jobTitle","description","amount"], filters:{ billableOnly:true, uninvoicedOnly:true }, sort:{field:"date",dir:"desc"}, groupBy:"companyName" },
 ];
 
 // Build the rendered rows for a report given its definition + the app context
@@ -1650,6 +1727,7 @@ const runReportRows = (report, ctx) => {
   else if (report.type === "deal") base = ctx.deals || [];
   else if (report.type === "time") base = ctx.timeEntries || [];
   else if (report.type === "invoice") base = ctx.invoices || [];
+  else if (report.type === "expense") base = ctx.expenses || [];
   else if (report.type === "revenue") base = ctx.deals || [];
   else if (report.type === "activity") base = ctx.notes || [];
   // Filter by entity (default = active entity, or all if filters.entityIds unset)
@@ -1681,6 +1759,10 @@ const runReportRows = (report, ctx) => {
   if (f.valueMax != null && f.valueMax !== "") base = base.filter(r => (+r.value || 0) <= +f.valueMax);
   // Overdue (deals)
   if (f.overdue) base = base.filter(r => r.closeDate && new Date(r.closeDate) < new Date() && !["Won","Lost"].includes(r.stage));
+  // Expense-specific filters
+  if (f.billableOnly) base = base.filter(r => r.billable);
+  if (f.uninvoicedOnly) base = base.filter(r => !r.invoiced);
+  if (f.categories?.length) base = base.filter(r => f.categories.includes(r.category));
   // Project + sort + group
   const fields = (report.fields?.length ? report.fields : fieldset.map(f => f.key)).map(k => fieldset.find(f => f.key === k)).filter(Boolean);
   let rows = base.map(r => {
@@ -1758,7 +1840,7 @@ const exportReportPDF = (report, fields, rows, summary, entity, filtersText) => 
 // ═══════════════════════════════════════════════════════════════════════════════
 // REPORTS (Pipeline, Activity, Forecasting + Custom Reports tabs)
 // ═══════════════════════════════════════════════════════════════════════════════
-function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,tasks,allNotes,meetings=[],timeEntries=[],invoices=[],customReports=[],addReport,updateReport,deleteReport,duplicateReport,showToast}){
+function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,tasks,allNotes,meetings=[],timeEntries=[],invoices=[],expenses=[],customReports=[],addReport,updateReport,deleteReport,duplicateReport,showToast}){
   const [reportType,setReportType]=useState("pipeline");
   const [pipeRange,setPipeRange]=useState("all");
   const [pipeFrom,setPipeFrom]=useState("");
@@ -1881,7 +1963,7 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
   const handleShare=()=>{const url=`${window.location.href}?report=${reportType}`;navigator.clipboard?.writeText(url).catch(()=>{});showToast("Share link copied!");};
   const handleExport=()=>{
     if(reportType==="custom"&&activeReport){
-      const ctx={contacts,companies,deals,tasks,notes:allNotes,timeEntries,invoices,activeEntityId:entity?.id};
+      const ctx={contacts,companies,deals,tasks,notes:allNotes,timeEntries,invoices,expenses,activeEntityId:entity?.id};
       const { rows, fields } = runReportRows(activeReport,ctx);
       exportReportCSV(activeReport,fields,rows);
       return;
@@ -2161,6 +2243,7 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
           notes={allNotes}
           timeEntries={timeEntries}
           invoices={invoices}
+          expenses={expenses}
           entity={entity}
           entities={entities}
           showToast={showToast}
@@ -2173,8 +2256,8 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
 // ═══════════════════════════════════════════════════════════════════════════════
 // CUSTOM REPORTS PANEL — saved reports list, builder, viewer
 // ═══════════════════════════════════════════════════════════════════════════════
-function CustomReportsPanel({reports,activeReport,editingReport,setActiveReport,setEditingReport,addReport,updateReport,deleteReport,duplicateReport,contacts,companies,deals,tasks,notes,timeEntries,invoices,entity,entities,showToast}){
-  const ctx={contacts,companies,deals,tasks,notes,timeEntries,invoices,activeEntityId:entity?.id};
+function CustomReportsPanel({reports,activeReport,editingReport,setActiveReport,setEditingReport,addReport,updateReport,deleteReport,duplicateReport,contacts,companies,deals,tasks,notes,timeEntries,invoices,expenses=[],entity,entities,showToast}){
+  const ctx={contacts,companies,deals,tasks,notes,timeEntries,invoices,expenses,activeEntityId:entity?.id};
 
   // ── Saved reports list view ──────────────────────────────────────────────
   if(!activeReport && !editingReport){
@@ -4115,7 +4198,7 @@ function InvoicesView({invoices,contacts,products,timeEntries=[],activeEntityId,
 // ═══════════════════════════════════════════════════════════════════════════════
 // CLIENT PORTAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],activeEntityId,addPortalToken,deletePortalToken,refreshPortalSnapshot,showToast,entity,setView}){
+function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],expenses=[],activeEntityId,addPortalToken,deletePortalToken,refreshPortalSnapshot,showToast,entity,setView}){
   const [tab,setTab]=useState("contact"); // contact | company
   const [generating,setGenerating]=useState(null); // {scope, scopeId, email, name} when generating
   const [credModal,setCredModal]=useState(null); // {email, password, portalUrl} after creation
@@ -4133,7 +4216,8 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
       const cQuotes=quotes.filter(q=>q.entityId===activeEntityId&&q.contactId===scopeId).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
       const cDeals=deals.filter(d=>d.entityId===activeEntityId&&d.contactId===scopeId).map(d=>({id:d.id,title:d.title,stage:d.stage,value:d.value,closeDate:d.closeDate,probability:d.probability,stageNote:d.stageNote}));
       const cTasks=tasks.filter(t=>t.entityId===activeEntityId&&t.contactId===scopeId&&t.clientVisible!==false).map(t=>({id:t.id,title:t.title,dueDate:t.dueDate,completed:!!t.completed}));
-      return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:ct?{name:ct.name,email:ct.email,companyName:ct.companyName}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,settings};
+      const cExpenses=(expenses||[]).filter(e=>e.entityId===activeEntityId&&e.contactId===scopeId&&e.billable).map(e=>({id:e.id,date:e.date,description:e.description,category:e.category,amount:+e.amount||0,invoiced:!!e.invoiced}));
+      return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:ct?{name:ct.name,email:ct.email,companyName:ct.companyName}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,expenses:cExpenses,settings};
     }
     // company scope
     const co=companies.find(c=>c.id===scopeId);
@@ -4143,13 +4227,14 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
     const cQuotes=quotes.filter(q=>q.entityId===activeEntityId&&ctIds.has(q.contactId)).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
     const cDeals=deals.filter(d=>d.entityId===activeEntityId&&d.companyId===scopeId).map(d=>({id:d.id,title:d.title,stage:d.stage,value:d.value,closeDate:d.closeDate,probability:d.probability,stageNote:d.stageNote}));
     const cTasks=tasks.filter(t=>t.entityId===activeEntityId&&ctIds.has(t.contactId)&&t.clientVisible!==false).map(t=>({id:t.id,title:t.title,dueDate:t.dueDate,completed:!!t.completed}));
-    return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:co?{name:co.name,email:co.email}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,settings};
+    const cExpenses=(expenses||[]).filter(e=>e.entityId===activeEntityId&&(e.companyId===scopeId||ctIds.has(e.contactId))&&e.billable).map(e=>({id:e.id,date:e.date,description:e.description,category:e.category,amount:+e.amount||0,invoiced:!!e.invoiced}));
+    return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:co?{name:co.name,email:co.email}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,expenses:cExpenses,settings};
   };
 
   const startGenerate=(scope,scopeId)=>{
     const rec=scope==="contact"?eContacts.find(c=>c.id===scopeId):eCompanies.find(c=>c.id===scopeId);
     if(!rec){showToast?.("Pick a record first","error");return;}
-    setGenerating({scope,scopeId,email:rec.email||"",name:rec.name,welcome:`Welcome to your portal — your account manager will keep your invoices, documents, and proposals here.`,enabledTabs:{overview:true,invoices:true,documents:true,proposals:true,projects:true,messages:true,tasks:true},color:entity?.color||"#1D4ED8"});
+    setGenerating({scope,scopeId,email:rec.email||"",name:rec.name,welcome:`Welcome to your portal — your account manager will keep your invoices, documents, and proposals here.`,enabledTabs:{overview:true,invoices:true,documents:true,proposals:true,projects:true,messages:true,tasks:true,expenses:false},color:entity?.color||"#1D4ED8"});
   };
 
   const handleCreate=async(form)=>{
@@ -5414,10 +5499,11 @@ function SignatureModal({doc,contact,onClose,onSign,showToast}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEAL DETAIL (H1)
 // ═══════════════════════════════════════════════════════════════════════════════
-function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId,employees=[],timeClockEntries=[],addDeal,showToast,onRecentJob}){
+function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId,employees=[],timeClockEntries=[],expenses=[],addExpense,updateExpense,deleteExpense,addInvoice,invoiceCounter,setInvoiceCounter,addDeal,showToast,onRecentJob}){
   const fs=isFieldService(entity);
   const [tab,setTab]=useState("overview");
   const [noteText,setNoteText]=useState("");
+  const [expenseForm,setExpenseForm]=useState(null); // null=closed, {} or {id,...}=open
   useEffect(()=>{if(deal&&onRecentJob)onRecentJob(deal.id);},[deal?.id,onRecentJob]);
   const [stageNoteDraft,setStageNoteDraft]=useState(deal?.stageNote||"");
   // Re-sync the local stage-note draft when the deal or its stage changes (e.g., after a stage transition that clears it).
@@ -5442,6 +5528,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
   const company=allCompanies.find(c=>c.id===deal.companyId)||(deal.companyName?allCompanies.find(c=>c.name?.toLowerCase()===deal.companyName.toLowerCase()):null);
   const notes=allNotes.filter(n=>n.dealId===deal.id||(n.contactId&&n.contactId===deal.contactId)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const tasks=allTasks.filter(t=>t.dealId===deal.id||(t.contactId&&t.contactId===deal.contactId));
+  const dealExpenses=(expenses||[]).filter(e=>e.dealId===deal.id).sort((a,b)=>new Date(b.date||b.createdAt)-new Date(a.date||a.createdAt));
   const stages=stagesFor(entity);
   const sCol=stageColor(entity,deal.stage);
 
@@ -5499,6 +5586,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
       <div style={{display:"flex",gap:0,borderBottom:"1px solid #E2E8F0",marginBottom:16}}>
         <TAB id="overview" label="Overview"/>
         {fs&&<TAB id="costing" label="Job Costing"/>}
+        <TAB id="expenses" label="Expenses" count={dealExpenses.length}/>
         <TAB id="notes" label="Notes" count={notes.length}/>
         <TAB id="tasks" label="Tasks" count={tasks.length}/>
         <TAB id="activity" label="Activity"/>
@@ -5576,8 +5664,13 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
         jobEntries.forEach(e=>{const emp=empMap[e.employeeId];if(!emp)return;laborByEmployee[e.employeeId]=(laborByEmployee[e.employeeId]||{name:emp.name,hours:0,rate:emp.hourlyRate||0,cost:0});laborByEmployee[e.employeeId].hours+=e.hours||0;laborByEmployee[e.employeeId].cost+=(e.hours||0)*(emp.hourlyRate||0);});
         const laborTotal=Object.values(laborByEmployee).reduce((s,x)=>s+x.cost,0);
         const totalHours=Object.values(laborByEmployee).reduce((s,x)=>s+x.hours,0);
-        const materials=+deal.materialsCost||0;
-        const totalCost=laborTotal+materials;
+        // Pull job expenses from the expense log; fall back to legacy deal.materialsCost if no expenses exist
+        const expenseTotal=dealExpenses.reduce((s,e)=>s+(+e.amount||0),0);
+        const expensesByCategory={};
+        dealExpenses.forEach(e=>{const k=e.category||"Other";expensesByCategory[k]=(expensesByCategory[k]||0)+(+e.amount||0);});
+        const legacyMaterials=dealExpenses.length===0?(+deal.materialsCost||0):0;
+        const materialsLine=expenseTotal+legacyMaterials;
+        const totalCost=laborTotal+materialsLine;
         const value=+deal.value||0;
         const profit=value-totalCost;
         const margin=value>0?(profit/value)*100:0;
@@ -5586,8 +5679,26 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
             <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:16}}>
               <StatCard label="Estimated value" value={fmt$(value)} sub="Job value" color="#1D4ED8" icon={I.dollar}/>
               <StatCard label="Labor cost" value={fmt$(laborTotal)} sub={`${totalHours.toFixed(2)} hrs × rates`} color="#F59E0B" icon={I.clock}/>
-              <StatCard label="Total cost" value={fmt$(totalCost)} sub={`Labor + ${fmt$(materials)} materials`} color="#8B5CF6" icon={I.dollar2}/>
-              <StatCard label="Gross profit" value={fmt$(profit)} sub={`${margin.toFixed(1)}% margin`} color={profit>=0?"#10B981":"#EF4444"} icon={I.trending}/>
+              <StatCard label="Expenses" value={fmt$(materialsLine)} sub={dealExpenses.length>0?`${dealExpenses.length} logged · ${Object.keys(expensesByCategory).length} categories`:legacyMaterials>0?"Legacy materialsCost":"None logged yet"} color="#8B5CF6" icon={I.dollar2}/>
+              <StatCard label="Gross profit" value={fmt$(profit)} sub={`${margin.toFixed(1)}% margin · Total cost ${fmt$(totalCost)}`} color={profit>=0?"#10B981":"#EF4444"} icon={I.trending}/>
+            </div>
+            <div style={S.card({padding:18,marginBottom:16})}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Expense breakdown by category</div>
+                <button style={{...S.btnSecondary,padding:"4px 12px",fontSize:12}} onClick={()=>setTab("expenses")}><Ic d={I.list} size={12}/>View all expenses</button>
+              </div>
+              {Object.keys(expensesByCategory).length===0?(
+                <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>No expenses logged for this job yet. {legacyMaterials>0&&<>Using legacy materialsCost: <strong>{fmt$(legacyMaterials)}</strong>.</>}</div>
+              ):(
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Category","Count","Total"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{Object.entries(expensesByCategory).sort((a,b)=>b[1]-a[1]).map(([cat,total])=>{
+                    const count=dealExpenses.filter(e=>(e.category||"Other")===cat).length;
+                    const col=EXPENSE_CATEGORY_COLORS[cat]||"#64748B";
+                    return(<tr key={cat}><td style={S.td}><span style={S.badge(col)}>{cat}</span></td><td style={S.td}>{count}</td><td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{fmt$(total)}</td></tr>);
+                  })}</tbody>
+                </table>
+              )}
             </div>
             <div style={S.card({padding:18,marginBottom:16})}>
               <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Labor breakdown</div>
@@ -5614,6 +5725,137 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
                   ))}</tbody>
                 </table>
               )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {tab==="expenses"&&(()=>{
+        const total=dealExpenses.reduce((s,e)=>s+(+e.amount||0),0);
+        const billable=dealExpenses.filter(e=>e.billable).reduce((s,e)=>s+(+e.amount||0),0);
+        const nonBillable=total-billable;
+        const unbilledBillable=dealExpenses.filter(e=>e.billable&&!e.invoiced).reduce((s,e)=>s+(+e.amount||0),0);
+        const unbilledItems=dealExpenses.filter(e=>e.billable&&!e.invoiced);
+        const startAddExpense=()=>setExpenseForm({date:new Date().toISOString().slice(0,10),category:"Materials & Supplies",billable:fs?true:false});
+        const startEditExpense=(e)=>setExpenseForm({...e});
+        const closeExpenseForm=()=>setExpenseForm(null);
+        const saveExpense=()=>{
+          const f=expenseForm;
+          if(!f?.description||f.amount==null||f.amount===""){showToast?.("Description and amount required","error");return;}
+          const payload={
+            dealId:deal.id,
+            contactId:deal.contactId||null,
+            companyId:deal.companyId||null,
+            date:f.date||new Date().toISOString().slice(0,10),
+            category:f.category||"Other",
+            description:f.description.trim(),
+            vendor:(f.vendor||"").trim(),
+            amount:+f.amount||0,
+            billable:!!f.billable,
+            receiptUrl:f.receiptUrl||"",
+          };
+          if(f.id){updateExpense(f.id,payload);showToast?.("Expense updated");}
+          else{addExpense(payload);showToast?.("Expense logged");}
+          setExpenseForm(null);
+        };
+        const handleReceiptUpload=(file)=>{
+          if(!file)return;
+          if(file.size>3*1024*1024){showToast?.("Receipt too large (max 3MB)","error");return;}
+          const r=new FileReader();
+          r.onload=ev=>setExpenseForm(p=>({...p,receiptUrl:ev.target.result,receiptName:file.name}));
+          r.readAsDataURL(file);
+        };
+        const addBillableToInvoice=()=>{
+          if(!deal.contactId){showToast?.("This deal isn't linked to a contact — add a contact first.","error");return;}
+          if(unbilledItems.length===0){showToast?.("No unbilled billable expenses to invoice","error");return;}
+          if(!addInvoice){showToast?.("Invoice creation unavailable","error");return;}
+          const number=invoiceCounter||1;
+          const items=unbilledItems.map(e=>({description:`${e.description}${e.vendor?` — ${e.vendor}`:""} (${fmtDate(e.date)})`,quantity:1,unitPrice:+e.amount||0,expenseId:e.id}));
+          addInvoice({entityId:activeEntityId,number,contactId:deal.contactId,dueDate:null,notes:`Pass-through expenses for ${deal.title}`,items,status:"Draft",createdAt:new Date().toISOString()});
+          if(setInvoiceCounter)setInvoiceCounter(number+1);
+          showToast?.(`Invoice ${fmtInvNum(number)} drafted with ${items.length} expense${items.length===1?"":"s"}`);
+          setView?.("invoices");
+        };
+        return(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,gap:10,flexWrap:"wrap"}}>
+              <div style={{fontSize:13,color:"#475569"}}>Track costs incurred to deliver this {fs?"job":"deal"} — separate from what you bill the client.</div>
+              <div style={{display:"flex",gap:8}}>
+                {unbilledItems.length>0&&<button style={{...S.btnSecondary,background:"#DCFCE7",borderColor:"#10B981",color:"#065F46"}} onClick={addBillableToInvoice}><Ic d={I.invoice} size={13}/>Add billable to invoice ({fmt$(unbilledBillable)})</button>}
+                <button style={S.btnPrimary} onClick={startAddExpense}><Ic d={I.plus} size={13}/>Add expense</button>
+              </div>
+            </div>
+
+            {expenseForm&&(
+              <div style={{...S.card({padding:18}),marginBottom:16,borderLeft:"4px solid #1D4ED8"}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:12}}>{expenseForm.id?"Edit expense":"New expense"}</div>
+                <Field label="Description *"><input style={S.input} value={expenseForm.description||""} onChange={e=>setExpenseForm(p=>({...p,description:e.target.value}))} placeholder="e.g. Mulch for backyard beds" autoFocus/></Field>
+                <div style={S.grid2}>
+                  <Field label="Date"><input type="date" style={S.input} value={expenseForm.date||""} onChange={e=>setExpenseForm(p=>({...p,date:e.target.value}))}/></Field>
+                  <Field label="Category"><select style={S.select} value={expenseForm.category||"Other"} onChange={e=>setExpenseForm(p=>({...p,category:e.target.value}))}>{EXPENSE_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field>
+                  <Field label="Vendor (optional)"><input style={S.input} value={expenseForm.vendor||""} onChange={e=>setExpenseForm(p=>({...p,vendor:e.target.value}))} placeholder="e.g. Home Depot"/></Field>
+                  <Field label="Amount (USD) *"><input type="number" step="0.01" style={S.input} value={expenseForm.amount??""} onChange={e=>setExpenseForm(p=>({...p,amount:e.target.value}))} placeholder="0.00"/></Field>
+                </div>
+                <Field label="Billable to client">
+                  <label style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"#F8FAFC",borderRadius:8,border:"1px solid #E2E8F0",cursor:"pointer",fontSize:13}}>
+                    <input type="checkbox" checked={!!expenseForm.billable} onChange={e=>setExpenseForm(p=>({...p,billable:e.target.checked}))} style={{accentColor:"#10B981",width:16,height:16}}/>
+                    {expenseForm.billable?"Yes — can pass through to invoice":"No — internal cost only"}
+                  </label>
+                </Field>
+                <Field label="Receipt (optional, max 3MB)">
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <label style={{...S.btnSecondary,cursor:"pointer"}}>
+                      <Ic d={I.upload} size={13}/>{expenseForm.receiptUrl?"Replace":"Upload"} receipt
+                      <input type="file" accept="image/*,application/pdf" style={{display:"none"}} onChange={e=>handleReceiptUpload(e.target.files?.[0])}/>
+                    </label>
+                    {expenseForm.receiptUrl&&(
+                      <>
+                        <span style={{fontSize:12,color:"#475569"}}>{expenseForm.receiptName||"Receipt attached"}</span>
+                        <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>setExpenseForm(p=>({...p,receiptUrl:"",receiptName:""}))}><Ic d={I.x} size={12}/></button>
+                      </>
+                    )}
+                  </div>
+                </Field>
+                <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+                  <button style={S.btnSecondary} onClick={closeExpenseForm}>Cancel</button>
+                  <button style={S.btnPrimary} onClick={saveExpense}>{expenseForm.id?"Save changes":"Add expense"}</button>
+                </div>
+              </div>
+            )}
+
+            <div style={S.card({overflow:"hidden",marginBottom:14})}>
+              {dealExpenses.length===0?(
+                <div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:13}}>No expenses logged for this {fs?"job":"deal"} yet.</div>
+              ):(
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Date","Category","Description","Vendor","Amount","Billable","Receipt",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{dealExpenses.map(e=>{
+                    const col=EXPENSE_CATEGORY_COLORS[e.category||"Other"]||"#64748B";
+                    return(
+                      <tr key={e.id}>
+                        <td style={S.td}>{fmtDate(e.date)}</td>
+                        <td style={S.td}><span style={S.badge(col)}>{e.category||"Other"}</span></td>
+                        <td style={{...S.td,color:"#0F172A"}}>{e.description}</td>
+                        <td style={S.td}>{e.vendor||"—"}</td>
+                        <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{fmt$(e.amount)}</td>
+                        <td style={S.td}>{e.billable?<span style={S.badge(e.invoiced?"#10B981":"#F59E0B")}>{e.invoiced?"Invoiced":"Billable"}</span>:<span style={S.badge("#94A3B8")}>Internal</span>}</td>
+                        <td style={S.td}>{e.receiptUrl?<a href={e.receiptUrl} target="_blank" rel="noreferrer" style={{color:"#1D4ED8"}} title="View receipt"><Ic d={I.eye} size={14}/></a>:"—"}</td>
+                        <td style={{...S.td,textAlign:"right",whiteSpace:"nowrap"}}>
+                          <button style={S.btnGhost} title="Edit" onClick={()=>startEditExpense(e)}><Ic d={I.edit} size={13}/></button>
+                          <button style={{...S.btnGhost,color:"#EF4444"}} title="Delete" onClick={()=>{if(confirm("Delete this expense?"))deleteExpense(e.id);}}><Ic d={I.trash} size={13}/></button>
+                        </td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              )}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+              <StatCard label="Total expenses" value={fmt$(total)} sub={`${dealExpenses.length} entr${dealExpenses.length===1?"y":"ies"}`} color="#8B5CF6" icon={I.dollar}/>
+              <StatCard label="Billable" value={fmt$(billable)} sub="Pass-through" color="#10B981" icon={I.dollar2}/>
+              <StatCard label="Non-billable" value={fmt$(nonBillable)} sub="Internal cost" color="#64748B" icon={I.dollar}/>
+              <StatCard label="Unbilled billable" value={fmt$(unbilledBillable)} sub={`${unbilledItems.length} not yet invoiced`} color="#F59E0B" icon={I.invoice}/>
             </div>
           </div>
         );
@@ -6155,6 +6397,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [employees,setEmployees]=useState(D.employees||[]);
   const [timeClockEntries,setTimeClockEntries]=useState(D.timeClockEntries||[]);
   const [fsSettings,setFsSettings]=useState(D.fsSettings||{});
+  const [expenses,setExpenses]=useState(D.expenses||[]);
   // UI state
   const [view,setView]=useState("dashboard");
   const [fieldView,setFieldView]=useState(false);
@@ -6195,7 +6438,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           if(r?.value)setter(JSON.parse(r.value));
         }catch(e){console.error("[Persistence] load failed for",key,e);}
       };
-      const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures],["crm:customReports",setCustomReports],["crm:employees",setEmployees],["crm:timeClockEntries",setTimeClockEntries],["crm:fsSettings",setFsSettings]];
+      const keys=[["crm:entities",setEntities],["crm:contacts",setContacts],["crm:companies",setCompanies],["crm:deals",setDeals],["crm:tasks",setTasks],["crm:notes",setNotes],["crm:emailInts",setEmailInts],["crm:products",setProducts],["crm:sequences",setSequences],["crm:templates",setTemplates],["crm:forms",setForms],["crm:automations",setAutomations],["crm:docs",setDocs],["crm:quotes",setQuotes],["crm:customFields",setCustomFields],["crm:enrollments",setEnrollments],["crm:timeEntries",setTimeEntries],["crm:invoices",setInvoices],["crm:meetings",setMeetings],["crm:webhooks",setWebhooks],["crm:portalTokens",setPortalTokens],["crm:emailThreads",setEmailThreads],["crm:availability",setAvailability],["crm:invoiceCounter",setInvoiceCounter],["crm:signatures",setSignatures],["crm:customReports",setCustomReports],["crm:employees",setEmployees],["crm:timeClockEntries",setTimeClockEntries],["crm:fsSettings",setFsSettings],["crm:expenses",setExpenses]];
       for(const [k,s] of keys)await load(k,s);
       try{
         const r=await window.storage?.get("crm:activeEntityId");
@@ -6284,6 +6527,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   useEffect(()=>{save("crm:employees",employees);},[employees]);
   useEffect(()=>{save("crm:timeClockEntries",timeClockEntries);},[timeClockEntries]);
   useEffect(()=>{save("crm:fsSettings",fsSettings);},[fsSettings]);
+  useEffect(()=>{save("crm:expenses",expenses);},[expenses]);
   useEffect(()=>{save("crm:activeEntityId",activeEntityId);},[activeEntityId]);
 
   // ─── OFFLINE SYNC ─────────────────────────────────────────────────────────
@@ -6448,9 +6692,19 @@ export default function App({session,onLogout,demoMode=false}={}){
   const deleteTimeEntry=(id)=>setTimeEntries(p=>p.filter(x=>x.id!==id));
 
   // ─── INVOICES ─────────────────────────────────────────────────────────────
-  const addInvoice=(data)=>{const inv={id:uid(),...data};setInvoices(p=>[...p,inv]);fireWebhook("invoice.sent",inv);return inv;};
-  const updateInvoice=(id,data)=>{setInvoices(p=>p.map(x=>{if(x.id!==id)return x;const u={...x,...data};if(data.status==="Paid"&&x.status!=="Paid")fireWebhook("invoice.paid",u);return u;}));};
+  const markExpensesInvoiced=(items)=>{
+    const ids=(items||[]).map(it=>it.expenseId).filter(Boolean);
+    if(ids.length===0)return;
+    setExpenses(p=>p.map(e=>ids.includes(e.id)?{...e,invoiced:true}:e));
+  };
+  const addInvoice=(data)=>{const inv={id:uid(),...data};setInvoices(p=>[...p,inv]);markExpensesInvoiced(inv.items);fireWebhook("invoice.sent",inv);return inv;};
+  const updateInvoice=(id,data)=>{setInvoices(p=>p.map(x=>{if(x.id!==id)return x;const u={...x,...data};if(data.items)markExpensesInvoiced(data.items);if(data.status==="Paid"&&x.status!=="Paid")fireWebhook("invoice.paid",u);return u;}));};
   const deleteInvoice=(id)=>setInvoices(p=>p.filter(x=>x.id!==id));
+
+  // ─── EXPENSES ─────────────────────────────────────────────────────────────
+  const addExpense=(data)=>setExpenses(p=>[...p,{id:uid(),entityId:activeEntityId,currency:"USD",billable:false,invoiced:false,createdAt:new Date().toISOString(),...data}]);
+  const updateExpense=(id,data)=>setExpenses(p=>p.map(x=>x.id===id?{...x,...data}:x));
+  const deleteExpense=(id)=>setExpenses(p=>p.filter(x=>x.id!==id));
 
   // ─── MEETINGS ─────────────────────────────────────────────────────────────
   const addMeeting=(data)=>{
@@ -6478,10 +6732,11 @@ export default function App({session,onLogout,demoMode=false}={}){
     }));
     const cDocs=docs.filter(d=>d.entityId===token.entityId&&d.contactId===token.contactId).map(d=>({id:d.id,name:d.name,status:d.status,createdAt:d.createdAt}));
     const cQuotes=quotes.filter(q=>q.entityId===token.entityId&&q.contactId===token.contactId).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
+    const cExpenses=expenses.filter(e=>e.entityId===token.entityId&&e.contactId===token.contactId&&e.billable).map(e=>({id:e.id,date:e.date,description:e.description,category:e.category,amount:+e.amount||0,invoiced:!!e.invoiced}));
     return {
       workspace:ent?{name:ent.name,color:ent.color}:null,
       contact:ct?{name:ct.name,email:ct.email}:null,
-      invoices:cInvoices,docs:cDocs,quotes:cQuotes,
+      invoices:cInvoices,docs:cDocs,quotes:cQuotes,expenses:cExpenses,
     };
   };
   const addPortalToken=(data)=>{
@@ -6710,11 +6965,11 @@ export default function App({session,onLogout,demoMode=false}={}){
         <div style={{flex:1,overflowY:"auto",padding:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} companies={companies} entity={entity} setView={setView} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
-          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
+          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
-          {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
+          {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} allExpenses={expenses} allInvoices={invoices} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
           {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
-          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId}/>}
+          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} expenses={expenses} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} addInvoice={addInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
           {view==="scheduler"&&!fs&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
@@ -6722,12 +6977,12 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} approveTimeEntry={approveTimeEntry} rejectTimeEntry={rejectTimeEntry} resolveTimeCorrection={resolveTimeCorrection} requestTimeCorrection={requestTimeCorrection} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
-          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} showToast={showToast} entity={entity} setView={setView}/>}
+          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} showToast={showToast} entity={entity} setView={setView}/>}
           {view==="import"&&<ImportView activeEntityId={activeEntityId} entity={entity} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
-          {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
+          {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} expenses={expenses} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
           {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings}/>}
         </div>
         )}
