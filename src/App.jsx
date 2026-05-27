@@ -6632,9 +6632,16 @@ export default function App({session,onLogout,demoMode=false}={}){
   // with the initial DEMO=[] state and overwrite the user's real data before
   // the async load can read it back.
   const loadedRef=useRef(false);
+  // hydrated mirrors loadedRef but as React state, so downstream useEffects
+  // (snapshot rebuild, portal messages fetch) actually re-fire once initial
+  // hydration completes. A ref is not reactive — gating on it alone causes the
+  // rebuild effect to skip every change until some unrelated state update
+  // happens to retrigger it.
+  const [hydrated,setHydrated]=useState(demoMode);
   useEffect(()=>{
-    if(demoMode){loadedRef.current=true;return;}
+    if(demoMode){loadedRef.current=true;setHydrated(true);return;}
     loadedRef.current=false;
+    setHydrated(false);
     let cancelled=false;
     (async()=>{
       const load=async(key,setter)=>{
@@ -6652,6 +6659,7 @@ export default function App({session,onLogout,demoMode=false}={}){
       }catch(e){console.error("[Persistence] load failed for crm:activeEntityId",e);}
       if(!cancelled){
         loadedRef.current=true;
+        setHydrated(true);
         console.log("[Persistence] initial load complete — saves enabled");
       }
     })();
@@ -6986,19 +6994,26 @@ export default function App({session,onLogout,demoMode=false}={}){
 
   // Auto-rebuild portal snapshots whenever any portal-visible CRM data changes.
   // Debounced 700ms so a batch of edits (drag a deal, then update its stage
-  // note, then add a task) only triggers one snapshot write per token.
+  // note, then add a task) only triggers one snapshot write per token. Gated
+  // on `hydrated` (state, not ref) so the effect properly re-fires once
+  // initial Supabase hydration completes — previously it skipped silently for
+  // every change made while loadedRef.current was still false, and refs don't
+  // trigger React re-renders so the effect never retried on its own.
   useEffect(()=>{
-    if(demoMode||!loadedRef.current)return;
+    if(demoMode||!hydrated)return;
     if(!portalTokens.length)return;
     const timer=setTimeout(()=>{
       portalTokens.forEach(tok=>{
-        try{writePortalSnapshot(tok.token,buildSnapshotPayload(tok));}
-        catch(e){console.error("[portal snapshot rebuild]",tok.token,e);}
+        try{
+          const payload=buildSnapshotPayload(tok);
+          writePortalSnapshot(tok.token,payload);
+          console.log("[portal snapshot] rebuilt",tok.token.slice(0,8),"deals:",payload.deals?.length||0);
+        }catch(e){console.error("[portal snapshot rebuild]",tok.token,e);}
       });
     },700);
     return ()=>clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[demoMode,portalTokens,invoices,docs,quotes,deals,notes,tasks,expenses,timeClockEntries,contacts,companies,entities]);
+  },[demoMode,hydrated,portalTokens,invoices,docs,quotes,deals,notes,tasks,expenses,timeClockEntries,contacts,companies,entities]);
 
   // Portal → CRM bridge: track recent portal_messages so the Inbox can render
   // [Portal] threads, and process structured action markers (sign / approve /
@@ -7057,37 +7072,54 @@ export default function App({session,onLogout,demoMode=false}={}){
   // Initial load of recent portal messages for the entity's tokens + realtime sub.
   // Fires whenever portalTokens or activeEntityId changes — on first mount the
   // tokens array is empty until the load loop populates it, which triggers this
-  // effect again. Don't gate on loadedRef.current: a ref isn't reactive so the
-  // effect would never re-fire once loading completes.
+  // effect again. A 15s polling fallback catches new messages even if Supabase
+  // realtime isn't enabled on portal_messages (silent no-op otherwise).
   useEffect(()=>{
     if(demoMode)return;
     const tokens=portalTokens.filter(t=>t.entityId===activeEntityId).map(t=>t.token).filter(Boolean);
     if(tokens.length===0){setPortalMessages([]);setPortalUnread(0);return;}
     let cancelled=false;
     let unsub=()=>{};
-    (async()=>{
+    const fetchMessages=async(notify=false)=>{
       try{
         const msgs=await portalListMessagesForTokens(tokens);
         if(cancelled)return;
-        setPortalMessages(msgs);
-        setPortalUnread(msgs.filter(m=>m.sender_type==="client"&&!m.read).length);
-      }catch(e){console.error("[portal messages initial load]",e);}
-      try{
-        unsub=subscribePortalMessagesForTokens(tokens,(m)=>{
-          setPortalMessages(prev=>prev.some(x=>x.id===m.id)?prev:[m,...prev]);
-          if(m.sender_type==="client"){
-            setPortalUnread(u=>u+1);
-            applyPortalAction(m);
-            const tok=portalTokens.find(t=>t.token===m.token);
-            const rec=tok?.scope==="contact"?contacts.find(c=>c.id===tok.scopeId):companies.find(c=>c.id===tok?.scopeId);
-            if(!parsePortalAction(m.content)){
-              showToast(`💬 New portal message from ${rec?.name||m.sender_name||"client"}`);
-            }
+        setPortalMessages(prev=>{
+          if(notify){
+            const prevIds=new Set(prev.map(x=>x.id));
+            msgs.filter(m=>!prevIds.has(m.id)&&m.sender_type==="client").forEach(m=>{
+              applyPortalAction(m);
+              if(!parsePortalAction(m.content)){
+                const tok=portalTokens.find(t=>t.token===m.token);
+                const rec=tok?.scope==="contact"?contacts.find(c=>c.id===tok.scopeId):companies.find(c=>c.id===tok?.scopeId);
+                showToast(`💬 New portal message from ${rec?.name||m.sender_name||"client"}`);
+              }
+            });
           }
+          return msgs;
         });
-      }catch(e){console.warn("[portal messages subscribe]",e);}
-    })();
-    return ()=>{cancelled=true;try{unsub();}catch{}};
+        setPortalUnread(msgs.filter(m=>m.sender_type==="client"&&!m.read).length);
+      }catch(e){console.error("[portal messages fetch]",e);}
+    };
+    fetchMessages(false);
+    try{
+      unsub=subscribePortalMessagesForTokens(tokens,(m)=>{
+        setPortalMessages(prev=>prev.some(x=>x.id===m.id)?prev:[m,...prev]);
+        if(m.sender_type==="client"){
+          setPortalUnread(u=>u+1);
+          applyPortalAction(m);
+          const tok=portalTokens.find(t=>t.token===m.token);
+          const rec=tok?.scope==="contact"?contacts.find(c=>c.id===tok.scopeId):companies.find(c=>c.id===tok?.scopeId);
+          if(!parsePortalAction(m.content)){
+            showToast(`💬 New portal message from ${rec?.name||m.sender_name||"client"}`);
+          }
+        }
+      });
+    }catch(e){console.warn("[portal messages subscribe]",e);}
+    // Polling fallback — runs every 15s in case realtime publication isn't
+    // enabled on portal_messages. Cheap query (limit 500, indexed token).
+    const pollId=setInterval(()=>fetchMessages(true),15000);
+    return ()=>{cancelled=true;clearInterval(pollId);try{unsub();}catch{}};
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[demoMode,portalTokens,activeEntityId]);
 

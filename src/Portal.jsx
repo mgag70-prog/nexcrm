@@ -688,30 +688,36 @@ function MessagesTab({ token, contact, accent, onMarkRead }) {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, 60)
 
-  // Single effect: initial fetch + realtime subscribe + cleanup. Deps are only
-  // [token] so the channel survives parent re-renders.
+  // Single effect: initial fetch + realtime subscribe + 15s polling fallback.
+  // Deps are only [token] so the channel survives parent re-renders.
   useEffect(() => {
     if (!token) { setLoading(false); return }
     let cancelled = false
     let unsub = () => {}
     setLoading(true)
     setError(null)
-    ;(async () => {
+    const fetchAndApply = async (markRead) => {
       try {
         const list = await portalListMessages(token)
         if (cancelled) return
-        setMessages(Array.isArray(list) ? list : [])
+        setMessages(prev => {
+          const fresh = Array.isArray(list) ? list : []
+          // Cheap dedup: keep prev order if nothing changed (preserves scroll).
+          if (prev.length === fresh.length && prev.every((p, i) => p.id === fresh[i].id)) return prev
+          return fresh
+        })
         scrollToBottom()
-        // Mark any owner messages read while we're viewing the tab — non-fatal
-        // if the update RLS denies it.
-        try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch {}
+        if (markRead) {
+          try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch {}
+        }
       } catch (e) {
         console.error('[MessagesTab load]', e)
         if (!cancelled) setError('Could not load messages. You can still send a new one.')
       } finally {
         if (!cancelled) setLoading(false)
       }
-    })()
+    }
+    fetchAndApply(true)
     try {
       unsub = subscribePortalMessages(token, async (payload) => {
         const m = payload?.new
@@ -723,11 +729,14 @@ function MessagesTab({ token, contact, accent, onMarkRead }) {
         }
       })
     } catch (e) {
-      // Realtime not enabled? Subscription fails silently — the polling-style
-      // fetch on send + on tab open still keeps things usable.
+      // Realtime not enabled? Subscription fails silently — the polling below
+      // and on-send refetch keep things usable.
       console.warn('[MessagesTab subscribe]', e)
     }
-    return () => { cancelled = true; try { unsub() } catch {} }
+    // 15s polling fallback so owner replies show up even when the realtime
+    // publication isn't enabled on portal_messages.
+    const pollId = setInterval(() => fetchAndApply(false), 15000)
+    return () => { cancelled = true; clearInterval(pollId); try { unsub() } catch {} }
   }, [token])
 
   const send = async () => {
