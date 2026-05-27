@@ -285,7 +285,7 @@ function ClientPortal({ navigate }) {
       <div style={{ background: '#FFFFFF', borderBottom: '1px solid #E2E8F0' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px', display: 'flex', gap: 4, overflowX: 'auto' }}>
           {TABS.map(([id, label]) => (
-            <button key={id} onClick={() => { setTab(id); if (id === 'messages') { portalMarkMessagesRead(client.token, 'owner').then(() => setUnread(0)) } }} style={{
+            <button key={id} onClick={() => setTab(id)} style={{
               background: 'none', border: 'none', cursor: 'pointer',
               padding: '14px 18px', borderBottom: `3px solid ${tab === id ? accent : 'transparent'}`,
               color: tab === id ? '#0F172A' : '#64748B', fontWeight: 600, fontSize: 13,
@@ -677,61 +677,129 @@ function MessagesTab({ token, contact, accent, onMarkRead }) {
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const scrollRef = useRef(null)
-  const refresh = async () => {
-    const m = await portalListMessages(token)
-    setMessages(m)
-    setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight }, 50)
-  }
-  // Initial load + mark owner messages as read while we're looking at the tab.
+  // Stable ref for onMarkRead so the subscribe effect doesn't churn every render.
+  const onMarkReadRef = useRef(onMarkRead)
+  useEffect(() => { onMarkReadRef.current = onMarkRead }, [onMarkRead])
+
+  const scrollToBottom = () => setTimeout(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, 60)
+
+  // Single effect: initial fetch + realtime subscribe + cleanup. Deps are only
+  // [token] so the channel survives parent re-renders.
   useEffect(() => {
-    if (!token) return
-    refresh()
-    portalMarkMessagesRead(token, 'owner').then(() => onMarkRead?.())
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!token) { setLoading(false); return }
+    let cancelled = false
+    let unsub = () => {}
+    setLoading(true)
+    setError(null)
+    ;(async () => {
+      try {
+        const list = await portalListMessages(token)
+        if (cancelled) return
+        setMessages(Array.isArray(list) ? list : [])
+        scrollToBottom()
+        // Mark any owner messages read while we're viewing the tab — non-fatal
+        // if the update RLS denies it.
+        try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch {}
+      } catch (e) {
+        console.error('[MessagesTab load]', e)
+        if (!cancelled) setError('Could not load messages. You can still send a new one.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    try {
+      unsub = subscribePortalMessages(token, async (payload) => {
+        const m = payload?.new
+        if (!m) return
+        setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m])
+        scrollToBottom()
+        if (m.sender_type === 'owner') {
+          try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch {}
+        }
+      })
+    } catch (e) {
+      // Realtime not enabled? Subscription fails silently — the polling-style
+      // fetch on send + on tab open still keeps things usable.
+      console.warn('[MessagesTab subscribe]', e)
+    }
+    return () => { cancelled = true; try { unsub() } catch {} }
   }, [token])
-  // Realtime: append new messages live so the conversation feels like chat.
-  useEffect(() => {
-    if (!token) return
-    const unsub = subscribePortalMessages(token, async (payload) => {
-      const m = payload?.new
-      if (!m) return
-      setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m])
-      setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight }, 50)
-      if (m.sender_type === 'owner') { await portalMarkMessagesRead(token, 'owner'); onMarkRead?.() }
-    })
-    return unsub
-  }, [token, onMarkRead])
+
   const send = async () => {
     const v = draft.trim()
-    if (!v) return
+    if (!v || sending || !token) return
     setSending(true)
-    await portalSendMessage(token, 'client', contact?.name || 'Client', v)
-    setDraft('')
-    await refresh()
-    setSending(false)
+    setError(null)
+    try {
+      const res = await portalSendMessage(token, 'client', contact?.name || 'Client', v)
+      if (res?.error) throw res.error
+      setDraft('')
+      // Refetch immediately so the new message is visible even if the realtime
+      // publication isn't enabled on portal_messages yet.
+      const fresh = await portalListMessages(token)
+      setMessages(Array.isArray(fresh) ? fresh : [])
+      scrollToBottom()
+    } catch (e) {
+      console.error('[MessagesTab send]', e)
+      setError(e?.message || 'Could not send your message. Please try again.')
+    } finally {
+      setSending(false)
+    }
   }
+
   return (
     <Card>
-      <div ref={scrollRef} style={{ maxHeight: 480, overflowY: 'auto', padding: '6px 0' }}>
-        {messages.length === 0 && <Empty>No messages yet. Send your account manager a note below.</Empty>}
-        {messages.map(m => (
-          <div key={m.id} style={{ display: 'flex', justifyContent: m.sender_type === 'client' ? 'flex-end' : 'flex-start', marginBottom: 10 }}>
-            <div style={{
-              maxWidth: '70%',
-              background: m.sender_type === 'client' ? accent : '#F1F5F9',
-              color: m.sender_type === 'client' ? '#FFFFFF' : '#0F172A',
-              padding: '10px 14px', borderRadius: 12, fontSize: 13,
-            }}>
-              <div style={{ fontSize: 10, fontWeight: 700, opacity: .8, marginBottom: 4 }}>{m.sender_name || (m.sender_type === 'client' ? 'You' : 'Account manager')} · {fmtTime(m.created_at)}</div>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{stripActionMarker(m.content)}</div>
+      {error && (
+        <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', marginBottom: 12, color: '#B91C1C', fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+          <span>{error}</span>
+          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', color: '#B91C1C', cursor: 'pointer', padding: 0, fontSize: 14 }}>×</button>
+        </div>
+      )}
+      <div ref={scrollRef} style={{ maxHeight: 480, minHeight: 140, overflowY: 'auto', padding: '6px 0' }}>
+        {loading ? (
+          <Empty>Loading conversation…</Empty>
+        ) : messages.length === 0 ? (
+          <Empty>No messages yet. Send your account manager a note below.</Empty>
+        ) : (
+          messages.map(m => (
+            <div key={m.id} style={{ display: 'flex', justifyContent: m.sender_type === 'client' ? 'flex-end' : 'flex-start', marginBottom: 10 }}>
+              <div style={{
+                maxWidth: '70%',
+                background: m.sender_type === 'client' ? accent : '#F1F5F9',
+                color: m.sender_type === 'client' ? '#FFFFFF' : '#0F172A',
+                padding: '10px 14px', borderRadius: 12, fontSize: 13,
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 700, opacity: .8, marginBottom: 4 }}>{m.sender_name || (m.sender_type === 'client' ? 'You' : 'Account manager')} · {fmtTime(m.created_at)}</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{stripActionMarker(m.content)}</div>
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 14, paddingTop: 14, borderTop: '1px solid #E9EEF6' }}>
-        <textarea rows={2} value={draft} onChange={e => setDraft(e.target.value)} placeholder="Type a message…" style={{ ...inp, fontFamily: 'inherit', resize: 'vertical' }}/>
-        <button onClick={send} disabled={sending || !draft.trim()} style={{ ...btn(accent), opacity: (sending || !draft.trim()) ? .6 : 1 }}>Send</button>
+      {/* Input row uses CSS grid (not flex+width:100%) so the textarea and
+          Send button always lay out predictably regardless of parent width. */}
+      <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #E9EEF6', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'flex-end' }}>
+        <textarea
+          rows={2}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send() }}
+          placeholder="Type a message…"
+          disabled={sending}
+          style={{ ...inp, width: '100%', fontFamily: 'inherit', resize: 'vertical', minHeight: 60 }}
+        />
+        <button
+          onClick={send}
+          disabled={sending || !draft.trim()}
+          style={{ background: accent, color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '0 22px', fontSize: 14, fontWeight: 600, cursor: 'pointer', height: 60, opacity: (sending || !draft.trim()) ? .6 : 1, whiteSpace: 'nowrap' }}
+        >
+          {sending ? 'Sending…' : 'Send'}
+        </button>
       </div>
     </Card>
   )

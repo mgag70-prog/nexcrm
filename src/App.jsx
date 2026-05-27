@@ -7054,34 +7054,42 @@ export default function App({session,onLogout,demoMode=false}={}){
     }
   };
 
-  // Initial load of recent portal messages for the entity's tokens + realtime sub
+  // Initial load of recent portal messages for the entity's tokens + realtime sub.
+  // Fires whenever portalTokens or activeEntityId changes — on first mount the
+  // tokens array is empty until the load loop populates it, which triggers this
+  // effect again. Don't gate on loadedRef.current: a ref isn't reactive so the
+  // effect would never re-fire once loading completes.
   useEffect(()=>{
-    if(demoMode||!loadedRef.current)return;
+    if(demoMode)return;
     const tokens=portalTokens.filter(t=>t.entityId===activeEntityId).map(t=>t.token).filter(Boolean);
     if(tokens.length===0){setPortalMessages([]);setPortalUnread(0);return;}
+    let cancelled=false;
     let unsub=()=>{};
     (async()=>{
       try{
         const msgs=await portalListMessagesForTokens(tokens);
+        if(cancelled)return;
         setPortalMessages(msgs);
         setPortalUnread(msgs.filter(m=>m.sender_type==="client"&&!m.read).length);
       }catch(e){console.error("[portal messages initial load]",e);}
-      unsub=subscribePortalMessagesForTokens(tokens,(m)=>{
-        setPortalMessages(prev=>prev.some(x=>x.id===m.id)?prev:[m,...prev]);
-        if(m.sender_type==="client"){
-          setPortalUnread(u=>u+1);
-          applyPortalAction(m);
-          const tok=portalTokens.find(t=>t.token===m.token);
-          const rec=tok?.scope==="contact"?contacts.find(c=>c.id===tok.scopeId):companies.find(c=>c.id===tok?.scopeId);
-          if(!parsePortalAction(m.content)){
-            showToast(`💬 New portal message from ${rec?.name||m.sender_name||"client"}`);
+      try{
+        unsub=subscribePortalMessagesForTokens(tokens,(m)=>{
+          setPortalMessages(prev=>prev.some(x=>x.id===m.id)?prev:[m,...prev]);
+          if(m.sender_type==="client"){
+            setPortalUnread(u=>u+1);
+            applyPortalAction(m);
+            const tok=portalTokens.find(t=>t.token===m.token);
+            const rec=tok?.scope==="contact"?contacts.find(c=>c.id===tok.scopeId):companies.find(c=>c.id===tok?.scopeId);
+            if(!parsePortalAction(m.content)){
+              showToast(`💬 New portal message from ${rec?.name||m.sender_name||"client"}`);
+            }
           }
-        }
-      });
+        });
+      }catch(e){console.warn("[portal messages subscribe]",e);}
     })();
-    return ()=>{try{unsub();}catch{}};
+    return ()=>{cancelled=true;try{unsub();}catch{}};
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[demoMode,portalTokens,activeEntityId,loadedRef.current]);
+  },[demoMode,portalTokens,activeEntityId]);
 
   const sendOwnerPortalMessage=async(token,content)=>{
     if(!content?.trim())return;
