@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { writePortalSnapshot, deletePortalSnapshot } from "./lib/supabase.js";
+import { writePortalSnapshot, deletePortalSnapshot, portalListMessagesForTokens, portalSendMessage, portalMarkMessagesRead, subscribePortalMessagesForTokens } from "./lib/supabase.js";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend, LineChart, Line, AreaChart, Area } from "recharts";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -3931,10 +3931,14 @@ const EmptyState = ({icon,title,message,ctaLabel,ctaSecondaryLabel,onCta,onCtaSe
 // ═══════════════════════════════════════════════════════════════════════════════
 // INBOX
 // ═══════════════════════════════════════════════════════════════════════════════
-function InboxView({emailThreads,contacts,activeEntityId,emailIntegrations,addEmailThread,addEmailMessage,setSelContact,setView,showToast}){
+function InboxView({emailThreads,contacts,companies=[],activeEntityId,emailIntegrations,addEmailThread,addEmailMessage,setSelContact,setView,showToast,portalTokens=[],portalMessages=[],sendOwnerPortalMessage,markPortalMessagesRead}){
   const [composing,setComposing]=useState(false);
   const [form,setForm]=useState({contactId:"",subject:"",body:""});
+  const [openPortalTokenId,setOpenPortalTokenId]=useState(null); // selected portal thread (token row id)
+  const [reply,setReply]=useState("");
   const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
+  const eTokens=(portalTokens||[]).filter(t=>t.entityId===activeEntityId);
+  const ePortalMsgs=(portalMessages||[]).filter(m=>eTokens.some(t=>t.token===m.token));
   const submit=()=>{
     if(!form.contactId||!form.subject){showToast?.("Pick a contact and add a subject","error");return;}
     addEmailThread?.({
@@ -3946,12 +3950,33 @@ function InboxView({emailThreads,contacts,activeEntityId,emailIntegrations,addEm
     setComposing(false);
     showToast?.("Email logged");
   };
-  return _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,setSelContact,setView,composing,setComposing,form,setForm,submit,eContacts});
+  // Group portal messages by token to form virtual threads
+  const portalThreads=eTokens.map(tok=>{
+    const msgs=ePortalMsgs.filter(m=>m.token===tok.token).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+    if(msgs.length===0)return null;
+    const rec=tok.scope==="contact"?contacts.find(c=>c.id===tok.scopeId):companies.find(c=>c.id===tok.scopeId);
+    const last=msgs[msgs.length-1];
+    const unread=msgs.filter(m=>m.sender_type==="client"&&!m.read).length;
+    return {token:tok,rec,messages:msgs,last,unread};
+  }).filter(Boolean).sort((a,b)=>new Date(b.last.created_at)-new Date(a.last.created_at));
+  const openPortal=portalThreads.find(t=>t.token.id===openPortalTokenId);
+  useEffect(()=>{
+    if(openPortal&&openPortal.unread>0&&markPortalMessagesRead){markPortalMessagesRead(openPortal.token.token);}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[openPortalTokenId]);
+  const sendReply=async()=>{
+    const v=reply.trim();
+    if(!v||!openPortal)return;
+    await sendOwnerPortalMessage?.(openPortal.token.token,v);
+    setReply("");
+  };
+  return _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,setSelContact,setView,composing,setComposing,form,setForm,submit,eContacts,portalThreads,openPortal,openPortalTokenId,setOpenPortalTokenId,reply,setReply,sendReply});
 }
-function _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,setSelContact,setView,composing,setComposing,form,setForm,submit,eContacts}){
+function _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,setSelContact,setView,composing,setComposing,form,setForm,submit,eContacts,portalThreads,openPortal,openPortalTokenId,setOpenPortalTokenId,reply,setReply,sendReply}){
   const eThreads=(emailThreads||[]).filter(t=>t.entityId===activeEntityId);
   const noIntegration=(emailIntegrations||[]).length===0;
-  if(eThreads.length===0){
+  const totalConversations=eThreads.length+portalThreads.length;
+  if(totalConversations===0){
     return(
       <div>
         <PageHeader title="Inbox" sub="Email conversations with your contacts"/>
@@ -3959,7 +3984,7 @@ function _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,
           <EmptyState
             icon={I.mail}
             title="Connect your email to get started"
-            message="Link Gmail, Outlook, or any SMTP account to send and receive messages directly inside NexCRM. Once connected, conversations with your contacts will appear here."
+            message="Link Gmail, Outlook, or any SMTP account to send and receive messages directly inside NexCRM. Once connected, conversations with your contacts will appear here. Portal client messages will also surface here."
             ctaLabel="Connect email"
             onCta={()=>setView("settings")}
           />
@@ -3967,7 +3992,7 @@ function _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,
           <EmptyState
             icon={I.inbox}
             title="No conversations yet"
-            message="Open a contact's profile to send your first email. Replies and follow-ups will land here."
+            message="Open a contact's profile to send your first email. Portal messages from active client portals will also appear here."
             ctaLabel="Browse contacts"
             onCta={()=>setView("contacts")}
           />
@@ -3975,9 +4000,11 @@ function _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,
       </div>
     );
   }
+  // Strip [[PORTAL_ACTION:...]] markers for inbox display
+  const fmtPortalContent=(c)=>{if(!c)return"";if(!c.startsWith("[[PORTAL_ACTION:"))return c;const end=c.indexOf("]] ");return end<0?c:c.slice(end+3);};
   return(
     <div>
-      <PageHeader title="Inbox" sub={`${eThreads.length} conversation${eThreads.length===1?"":"s"}`}>
+      <PageHeader title="Inbox" sub={`${eThreads.length} email · ${portalThreads.length} portal thread${portalThreads.length===1?"":"s"}`}>
         {!composing&&<button style={S.btnPrimary} onClick={()=>setComposing(true)}><Ic d={I.plus} size={14}/>Log email</button>}
       </PageHeader>
       {composing&&(
@@ -3994,22 +4021,64 @@ function _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,
           </div>
         </div>
       )}
-      <div style={S.card({overflow:"hidden"})}>
-        {eThreads.sort((a,b)=>new Date(b.lastActivity||0)-new Date(a.lastActivity||0)).map(t=>{
-          const c=contacts.find(x=>x.id===t.contactId);
-          const lastMsg=t.messages?.[t.messages.length-1];
-          return(
-            <div key={t.id} style={{padding:"14px 18px",borderBottom:"1px solid #E9EEF6",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}
-              onClick={()=>{setSelContact(t.contactId);setView("contacts");}}>
-              <Avatar name={c?.name||"?"} size={32}/>
+      <div style={{display:"grid",gridTemplateColumns:openPortal?"1fr 1.4fr":"1fr",gap:16}}>
+        <div style={S.card({overflow:"hidden"})}>
+          {portalThreads.map(pt=>(
+            <div key={pt.token.id} onClick={()=>setOpenPortalTokenId(pt.token.id)} style={{padding:"14px 18px",borderBottom:"1px solid #E9EEF6",cursor:"pointer",display:"flex",alignItems:"center",gap:12,background:openPortalTokenId===pt.token.id?"#EFF6FF":"transparent"}}>
+              <Avatar name={pt.rec?.name||pt.token.scopeName||"?"} size={32}/>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{c?.name||"Unknown contact"}</div>
-                <div style={{fontSize:12,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject||lastMsg?.subject||"(no subject)"}</div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pt.rec?.name||pt.token.scopeName||"Portal client"}</div>
+                  <span style={{...S.badge("#1D4ED8"),fontSize:10}}>[Portal]</span>
+                  {pt.unread>0&&<span style={{background:"#EF4444",color:"#fff",borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>{pt.unread}</span>}
+                </div>
+                <div style={{fontSize:12,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pt.last.sender_type==="client"?"":"You: "}{fmtPortalContent(pt.last.content)}</div>
               </div>
-              <div style={{fontSize:11,color:"#94A3B8",flexShrink:0}}>{fmtTime(t.lastActivity)}</div>
+              <div style={{fontSize:11,color:"#94A3B8",flexShrink:0}}>{fmtTime(pt.last.created_at)}</div>
             </div>
-          );
-        })}
+          ))}
+          {eThreads.sort((a,b)=>new Date(b.lastActivity||0)-new Date(a.lastActivity||0)).map(t=>{
+            const c=contacts.find(x=>x.id===t.contactId);
+            const lastMsg=t.messages?.[t.messages.length-1];
+            return(
+              <div key={t.id} style={{padding:"14px 18px",borderBottom:"1px solid #E9EEF6",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}
+                onClick={()=>{setSelContact(t.contactId);setView("contacts");}}>
+                <Avatar name={c?.name||"?"} size={32}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{c?.name||"Unknown contact"}</div>
+                  <div style={{fontSize:12,color:"#64748B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject||lastMsg?.subject||"(no subject)"}</div>
+                </div>
+                <div style={{fontSize:11,color:"#94A3B8",flexShrink:0}}>{fmtTime(t.lastActivity)}</div>
+              </div>
+            );
+          })}
+        </div>
+        {openPortal&&(
+          <div style={S.card({padding:0,overflow:"hidden",display:"flex",flexDirection:"column",height:"70vh"})}>
+            <div style={{padding:"14px 18px",borderBottom:"1px solid #E9EEF6",display:"flex",alignItems:"center",gap:10}}>
+              <Avatar name={openPortal.rec?.name||"?"} size={28}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{openPortal.rec?.name||openPortal.token.scopeName||"Portal client"}</div>
+                <div style={{fontSize:11,color:"#94A3B8"}}>{openPortal.token.email||""} · <span style={S.badge("#1D4ED8")}>[Portal]</span></div>
+              </div>
+              <button style={S.btnGhost} onClick={()=>setOpenPortalTokenId(null)}><Ic d={I.x} size={14}/></button>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"14px 18px",background:"#F8FAFC"}}>
+              {openPortal.messages.map(m=>(
+                <div key={m.id} style={{display:"flex",justifyContent:m.sender_type==="owner"?"flex-end":"flex-start",marginBottom:10}}>
+                  <div style={{maxWidth:"75%",background:m.sender_type==="owner"?"#1D4ED8":"#FFFFFF",color:m.sender_type==="owner"?"#fff":"#0F172A",padding:"8px 12px",borderRadius:12,fontSize:13,border:m.sender_type==="owner"?"none":"1px solid #E2E8F0"}}>
+                    <div style={{fontSize:10,fontWeight:700,opacity:.8,marginBottom:3}}>{m.sender_name||(m.sender_type==="owner"?"You":"Client")} · {fmtTime(m.created_at)}</div>
+                    <div style={{whiteSpace:"pre-wrap"}}>{fmtPortalContent(m.content)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"12px 18px",borderTop:"1px solid #E9EEF6",display:"flex",gap:8}}>
+              <textarea rows={2} style={{...S.textarea,resize:"vertical"}} placeholder="Reply to client…" value={reply} onChange={e=>setReply(e.target.value)} onKeyDown={e=>{if(e.metaKey&&e.key==="Enter")sendReply();}}/>
+              <button style={S.btnPrimary} disabled={!reply.trim()} onClick={sendReply}><Ic d={I.send} size={13}/>Send</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4260,57 +4329,67 @@ function InvoicesView({invoices,contacts,products,timeEntries=[],activeEntityId,
 // ═══════════════════════════════════════════════════════════════════════════════
 // CLIENT PORTAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],expenses=[],activeEntityId,addPortalToken,deletePortalToken,refreshPortalSnapshot,showToast,entity,setView}){
+function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],expenses=[],activeEntityId,addPortalToken,updatePortalToken,deletePortalToken,refreshPortalSnapshot,buildSnapshotPayload,showToast,entity,setView}){
   const [tab,setTab]=useState("contact"); // contact | company
   const [generating,setGenerating]=useState(null); // {scope, scopeId, email, name} when generating
+  const [editing,setEditing]=useState(null); // token being edited
   const [credModal,setCredModal]=useState(null); // {email, password, portalUrl} after creation
   const eTokens=(portalTokens||[]).filter(t=>t.entityId===activeEntityId);
   const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
   const eCompanies=companies.filter(c=>c.entityId===activeEntityId);
   const linkFor=tok=>`${typeof window!=="undefined"?window.location.origin:""}/portal/login?token=${tok.token}`;
 
-  const buildPayloadFor=(scope,scopeId,settings)=>{
-    const ent=entity;
-    if(scope==="contact"){
-      const ct=contacts.find(c=>c.id===scopeId);
-      const cInvoices=invoices.filter(i=>i.entityId===activeEntityId&&i.contactId===scopeId).map(i=>({number:i.number,createdAt:i.createdAt,dueDate:i.dueDate,status:i.status,total:(i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0),items:i.items}));
-      const cDocs=docs.filter(d=>d.entityId===activeEntityId&&d.contactId===scopeId).map(d=>({id:d.id,name:d.name,status:d.status,createdAt:d.createdAt}));
-      const cQuotes=quotes.filter(q=>q.entityId===activeEntityId&&q.contactId===scopeId).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
-      const cDeals=deals.filter(d=>d.entityId===activeEntityId&&d.contactId===scopeId).map(d=>({id:d.id,title:d.title,stage:d.stage,value:d.value,closeDate:d.closeDate,probability:d.probability,stageNote:d.stageNote}));
-      const cTasks=tasks.filter(t=>t.entityId===activeEntityId&&t.contactId===scopeId&&t.clientVisible!==false).map(t=>({id:t.id,title:t.title,dueDate:t.dueDate,completed:!!t.completed}));
-      const cExpenses=(expenses||[]).filter(e=>e.entityId===activeEntityId&&e.contactId===scopeId&&e.billable).map(e=>({id:e.id,date:e.date,description:e.description,category:e.category,amount:+e.amount||0,invoiced:!!e.invoiced}));
-      return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:ct?{name:ct.name,email:ct.email,companyName:ct.companyName}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,expenses:cExpenses,settings};
-    }
-    // company scope
-    const co=companies.find(c=>c.id===scopeId);
-    const ctIds=new Set(contacts.filter(c=>c.companyId===scopeId).map(c=>c.id));
-    const cInvoices=invoices.filter(i=>i.entityId===activeEntityId&&ctIds.has(i.contactId)).map(i=>({number:i.number,createdAt:i.createdAt,dueDate:i.dueDate,status:i.status,total:(i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0),items:i.items}));
-    const cDocs=docs.filter(d=>d.entityId===activeEntityId&&ctIds.has(d.contactId)).map(d=>({id:d.id,name:d.name,status:d.status,createdAt:d.createdAt}));
-    const cQuotes=quotes.filter(q=>q.entityId===activeEntityId&&ctIds.has(q.contactId)).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
-    const cDeals=deals.filter(d=>d.entityId===activeEntityId&&d.companyId===scopeId).map(d=>({id:d.id,title:d.title,stage:d.stage,value:d.value,closeDate:d.closeDate,probability:d.probability,stageNote:d.stageNote}));
-    const cTasks=tasks.filter(t=>t.entityId===activeEntityId&&ctIds.has(t.contactId)&&t.clientVisible!==false).map(t=>({id:t.id,title:t.title,dueDate:t.dueDate,completed:!!t.completed}));
-    const cExpenses=(expenses||[]).filter(e=>e.entityId===activeEntityId&&(e.companyId===scopeId||ctIds.has(e.contactId))&&e.billable).map(e=>({id:e.id,date:e.date,description:e.description,category:e.category,amount:+e.amount||0,invoiced:!!e.invoiced}));
-    return {workspace:ent?{name:ent.name,color:ent.color}:null,contact:co?{name:co.name,email:co.email}:null,invoices:cInvoices,docs:cDocs,quotes:cQuotes,deals:cDeals,tasks:cTasks,expenses:cExpenses,settings};
-  };
-
   const startGenerate=(scope,scopeId)=>{
     const rec=scope==="contact"?eContacts.find(c=>c.id===scopeId):eCompanies.find(c=>c.id===scopeId);
     if(!rec){showToast?.("Pick a record first","error");return;}
-    setGenerating({scope,scopeId,email:rec.email||"",name:rec.name,welcome:`Welcome to your portal — your account manager will keep your invoices, documents, and proposals here.`,enabledTabs:{overview:true,invoices:true,documents:true,proposals:true,projects:true,messages:true,tasks:true,expenses:false},color:entity?.color||"#1D4ED8"});
+    setGenerating({
+      scope,scopeId,email:rec.email||"",name:rec.name,
+      welcome:`Welcome to your portal — your account manager will keep your invoices, documents, and proposals here.`,
+      enabledTabs:{overview:true,invoices:true,documents:true,proposals:true,projects:true,messages:true,tasks:false,expenses:false},
+      color:entity?.color||"#1D4ED8",
+      showDealValues:true,
+      showExpenses:false,
+      notifyEmail:"",
+    });
   };
 
   const handleCreate=async(form)=>{
     if(!form.email){showToast?.("Email required","error");return;}
     try{
-      const settings={welcome:form.welcome,enabledTabs:form.enabledTabs,color:form.color};
-      const payload=buildPayloadFor(form.scope,form.scopeId,settings);
+      const settings={
+        welcome:form.welcome,
+        enabledTabs:form.enabledTabs,
+        color:form.color,
+        showDealValues:form.showDealValues!==false,
+        showExpenses:!!form.showExpenses,
+        notifyEmail:form.notifyEmail||"",
+      };
+      // Build the initial snapshot using the unified builder so it stays in sync
+      // with what auto-rebuilds will produce on every change after this.
+      const synthToken={entityId:activeEntityId,scope:form.scope,scopeId:form.scopeId,settings};
+      const payload=buildSnapshotPayload?buildSnapshotPayload(synthToken):{settings};
       const { adminCreatePortal } = await import("./lib/supabase.js");
       const res=await adminCreatePortal({email:form.email,scope:form.scope,scopeId:form.scopeId,entityId:activeEntityId,payload,settings});
-      // Mirror to local CRM state for the reports/list views
-      addPortalToken({entityId:activeEntityId,scope:form.scope,scopeId:form.scopeId,scopeName:form.name,email:form.email,token:res.token,userId:res.userId,createdAt:new Date().toISOString()});
+      // Mirror to local CRM state for the reports/list views. Settings are stored
+      // on the token so the auto-rebuild useEffect can apply them.
+      addPortalToken({entityId:activeEntityId,scope:form.scope,scopeId:form.scopeId,scopeName:form.name,email:form.email,token:res.token,userId:res.userId,settings,createdAt:new Date().toISOString()});
       setGenerating(null);
       setCredModal({email:res.email,password:res.password,portalUrl:res.portalUrl||linkFor({token:res.token})});
     }catch(e){showToast?.(e.message||"Could not create portal","error");}
+  };
+
+  const handleSaveSettings=(form)=>{
+    const settings={
+      welcome:form.welcome,
+      enabledTabs:form.enabledTabs,
+      color:form.color,
+      showDealValues:form.showDealValues!==false,
+      showExpenses:!!form.showExpenses,
+      notifyEmail:form.notifyEmail||"",
+    };
+    updatePortalToken?.(editing.id,{settings});
+    setEditing(null);
+    showToast?.("Portal settings saved — snapshot will refresh in a moment");
   };
 
   const handleRegenerate=async(t)=>{
@@ -4391,6 +4470,8 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
                 <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
                   <button style={S.btnSecondary} title="Copy link" onClick={()=>copy(url)}><Ic d={I.copy} size={12}/></button>
                   <button style={S.btnSecondary} title="Preview portal in new tab" onClick={()=>window.open(url,"_blank")}><Ic d={I.share} size={12}/></button>
+                  <button style={S.btnSecondary} title="Refresh snapshot" onClick={()=>refreshPortalSnapshot?.(t.id)}><Ic d={I.repeat} size={12}/></button>
+                  <button style={S.btnSecondary} title="Edit portal settings" onClick={()=>setEditing({id:t.id,name:rec?.name||t.scopeName||"Client",email:t.email||"",welcome:t.settings?.welcome||"",color:t.settings?.color||entity?.color||"#1D4ED8",enabledTabs:t.settings?.enabledTabs||{overview:true,invoices:true,documents:true,proposals:true,projects:true,messages:true,tasks:false,expenses:false},showDealValues:t.settings?.showDealValues!==false,showExpenses:!!t.settings?.showExpenses,notifyEmail:t.settings?.notifyEmail||""})}><Ic d={I.gear} size={12}/></button>
                   <button style={S.btnSecondary} title="Regenerate password" onClick={()=>handleRegenerate(t)}><Ic d={I.zap} size={12}/></button>
                   <button style={{...S.btnGhost,color:"#EF4444"}} title="Revoke" onClick={()=>handleRevoke(t)}><Ic d={I.trash} size={13}/></button>
                 </div>
@@ -4400,34 +4481,51 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
         </div>
       )}
 
-      {generating&&<GeneratePortalModal initial={generating} onCancel={()=>setGenerating(null)} onSubmit={handleCreate}/>}
+      {generating&&<GeneratePortalModal initial={generating} mode="create" onCancel={()=>setGenerating(null)} onSubmit={handleCreate}/>}
+      {editing&&<GeneratePortalModal initial={editing} mode="edit" onCancel={()=>setEditing(null)} onSubmit={handleSaveSettings}/>}
       {credModal&&<PortalCredentialsModal info={credModal} onClose={()=>setCredModal(null)} copy={copy}/>}
     </div>
   );
 }
 
-function GeneratePortalModal({initial,onCancel,onSubmit}){
+function GeneratePortalModal({initial,mode="create",onCancel,onSubmit}){
   const [form,setForm]=useState(initial);
   const toggleTab=(k)=>setForm(p=>({...p,enabledTabs:{...p.enabledTabs,[k]:!p.enabledTabs[k]}}));
+  const isEdit=mode==="edit";
   return(
-    <Modal title={`Generate portal for ${initial.name}`} onClose={onCancel} wide>
-      <Field label="Client email *"><input style={S.input} type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="client@company.com"/></Field>
-      <Field label="Welcome message"><textarea style={S.textarea} rows={2} value={form.welcome} onChange={e=>setForm({...form,welcome:e.target.value})}/></Field>
-      <Field label="Accent color"><input type="color" value={form.color} onChange={e=>setForm({...form,color:e.target.value})} style={{width:60,height:36,border:"1px solid #E2E8F0",borderRadius:6,cursor:"pointer"}}/></Field>
+    <Modal title={isEdit?`Portal settings — ${initial.name}`:`Generate portal for ${initial.name}`} onClose={onCancel} wide>
+      <Field label="Client email *"><input style={S.input} type="email" value={form.email||""} onChange={e=>setForm({...form,email:e.target.value})} placeholder="client@company.com" disabled={isEdit}/></Field>
+      <Field label="Welcome message"><textarea style={S.textarea} rows={2} value={form.welcome||""} onChange={e=>setForm({...form,welcome:e.target.value})}/></Field>
+      <div style={S.grid2}>
+        <Field label="Accent color"><input type="color" value={form.color||"#1D4ED8"} onChange={e=>setForm({...form,color:e.target.value})} style={{width:60,height:36,border:"1px solid #E2E8F0",borderRadius:6,cursor:"pointer"}}/></Field>
+        <Field label="Notification email (optional)"><input style={S.input} type="email" value={form.notifyEmail||""} onChange={e=>setForm({...form,notifyEmail:e.target.value})} placeholder="ops@workspace.com"/></Field>
+      </div>
+      <Field label="Visibility">
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer",padding:"8px 10px",background:"#F8FAFC",borderRadius:6,border:"1px solid #E2E8F0"}}>
+            <input type="checkbox" checked={form.showDealValues!==false} onChange={e=>setForm({...form,showDealValues:e.target.checked})} style={{accentColor:"#1D4ED8"}}/>
+            <span><strong>Show deal/job values</strong><div style={{fontSize:10,color:"#94A3B8"}}>Off hides $ on the Projects tab</div></span>
+          </label>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer",padding:"8px 10px",background:"#F8FAFC",borderRadius:6,border:"1px solid #E2E8F0"}}>
+            <input type="checkbox" checked={!!form.showExpenses} onChange={e=>{setForm({...form,showExpenses:e.target.checked,enabledTabs:{...form.enabledTabs,expenses:e.target.checked}});}} style={{accentColor:"#10B981"}}/>
+            <span><strong>Show billable expenses</strong><div style={{fontSize:10,color:"#94A3B8"}}>Pass-through costs visible to client</div></span>
+          </label>
+        </div>
+      </Field>
       <Field label="Sections to enable">
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
           {Object.keys(form.enabledTabs).filter(k=>k!=="overview").map(k=>(
             <label key={k} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer",padding:"6px 10px",background:"#F8FAFC",borderRadius:6}}>
-              <input type="checkbox" checked={form.enabledTabs[k]} onChange={()=>toggleTab(k)} style={{accentColor:"#1D4ED8"}}/>
+              <input type="checkbox" checked={!!form.enabledTabs[k]} onChange={()=>toggleTab(k)} style={{accentColor:"#1D4ED8"}}/>
               <span style={{textTransform:"capitalize"}}>{k}</span>
             </label>
           ))}
         </div>
       </Field>
-      <div style={{fontSize:11,color:"#94A3B8",background:"#F8FAFC",padding:10,borderRadius:6,marginBottom:14}}>A temporary password will be generated automatically. You'll see it once after creation — copy and send it to the client. They'll be forced to change it on first login.</div>
+      {!isEdit&&<div style={{fontSize:11,color:"#94A3B8",background:"#F8FAFC",padding:10,borderRadius:6,marginBottom:14}}>A temporary password will be generated automatically. You'll see it once after creation — copy and send it to the client. They'll be forced to change it on first login.</div>}
       <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
         <button style={S.btnSecondary} onClick={onCancel}>Cancel</button>
-        <button style={S.btnPrimary} onClick={()=>onSubmit(form)}>Create portal & generate password</button>
+        <button style={S.btnPrimary} onClick={()=>onSubmit(form)}>{isEdit?"Save settings":"Create portal & generate password"}</button>
       </div>
     </Modal>
   );
@@ -6831,32 +6929,187 @@ export default function App({session,onLogout,demoMode=false}={}){
   const deleteWebhook=(id)=>setWebhooks(p=>p.filter(x=>x.id!==id));
 
   // ─── PORTAL TOKENS ────────────────────────────────────────────────────────
-  const buildPortalPayload=(token)=>{
+  // Single source of truth for what a client sees in their portal. Handles both
+  // contact-scope and company-scope tokens, applies the token's settings
+  // (value-visibility toggle, expense toggle, etc.), and returns the full
+  // payload that gets written to portal_snapshots.
+  const buildSnapshotPayload=(token)=>{
     const ent=entities.find(e=>e.id===token.entityId);
-    const ct=contacts.find(c=>c.id===token.contactId);
-    const cInvoices=invoices.filter(i=>i.entityId===token.entityId&&i.contactId===token.contactId).map(i=>({
-      number:i.number,createdAt:i.createdAt,dueDate:i.dueDate,status:i.status,
-      total:(i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0),
-    }));
-    const cDocs=docs.filter(d=>d.entityId===token.entityId&&d.contactId===token.contactId).map(d=>({id:d.id,name:d.name,status:d.status,createdAt:d.createdAt}));
-    const cQuotes=quotes.filter(q=>q.entityId===token.entityId&&q.contactId===token.contactId).map(q=>({number:q.number,title:q.title,total:q.total,status:q.status,createdAt:q.createdAt}));
-    const cExpenses=expenses.filter(e=>e.entityId===token.entityId&&e.contactId===token.contactId&&e.billable).map(e=>({id:e.id,date:e.date,description:e.description,category:e.category,amount:+e.amount||0,invoiced:!!e.invoiced}));
+    const scope=token.scope||"contact";
+    const settings=token.settings||{};
+    const showDealValues=settings.showDealValues!==false; // default on
+    const showExpenses=settings.showExpenses===true&&settings.enabledTabs?.expenses!==false;
+
+    let contact=null, company=null, cInvoices, cDocs, cQuotes, cDeals, cTasks, cExpenses;
+    if(scope==="company"){
+      company=companies.find(c=>c.id===token.scopeId)||null;
+      const ctIds=new Set(contacts.filter(c=>c.companyId===token.scopeId).map(c=>c.id));
+      cInvoices=invoices.filter(i=>i.entityId===token.entityId&&ctIds.has(i.contactId));
+      cDocs=docs.filter(d=>d.entityId===token.entityId&&ctIds.has(d.contactId));
+      cQuotes=quotes.filter(q=>q.entityId===token.entityId&&ctIds.has(q.contactId));
+      cDeals=deals.filter(d=>d.entityId===token.entityId&&d.companyId===token.scopeId);
+      cTasks=tasks.filter(t=>t.entityId===token.entityId&&ctIds.has(t.contactId)&&t.clientVisible===true);
+      const dealIds=new Set(cDeals.map(d=>d.id));
+      cExpenses=expenses.filter(e=>e.entityId===token.entityId&&e.billable&&(e.companyId===token.scopeId||ctIds.has(e.contactId)||dealIds.has(e.dealId)));
+    }else{
+      contact=contacts.find(c=>c.id===token.scopeId)||null;
+      company=contact?.companyId?(companies.find(c=>c.id===contact.companyId)||null):null;
+      cInvoices=invoices.filter(i=>i.entityId===token.entityId&&i.contactId===token.scopeId);
+      cDocs=docs.filter(d=>d.entityId===token.entityId&&d.contactId===token.scopeId);
+      cQuotes=quotes.filter(q=>q.entityId===token.entityId&&q.contactId===token.scopeId);
+      cDeals=deals.filter(d=>d.entityId===token.entityId&&d.contactId===token.scopeId);
+      cTasks=tasks.filter(t=>t.entityId===token.entityId&&t.contactId===token.scopeId&&t.clientVisible===true);
+      const dealIds=new Set(cDeals.map(d=>d.id));
+      cExpenses=expenses.filter(e=>e.entityId===token.entityId&&e.billable&&(e.contactId===token.scopeId||dealIds.has(e.dealId)));
+    }
+    const stages=stagesFor(ent);
+
     return {
-      workspace:ent?{name:ent.name,color:ent.color}:null,
-      contact:ct?{name:ct.name,email:ct.email}:null,
-      invoices:cInvoices,docs:cDocs,quotes:cQuotes,expenses:cExpenses,
+      workspace:ent?{name:ent.name,color:ent.color,industry:ent.industry,website:ent.website}:null,
+      contact:contact?{name:contact.name,email:contact.email,phone:contact.phone,companyName:contact.companyName||company?.name||null}:(company?{name:company.name,email:company.email,companyName:company.name}:null),
+      company:company?{name:company.name,industry:company.industry,website:company.website,phone:company.phone,city:company.city,state:company.state}:null,
+      invoices:cInvoices.map(i=>({
+        id:i.id,number:i.number,createdAt:i.createdAt,dueDate:i.dueDate,status:i.status,notes:i.notes||"",
+        total:(i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0),
+        items:(i.items||[]).map(it=>({description:it.description,quantity:+it.quantity||0,unitPrice:+it.unitPrice||0})),
+        stripeLink:i.stripeLink||null,
+      })),
+      docs:cDocs.map(d=>({id:d.id,name:d.name,status:d.status||"Draft",createdAt:d.uploadedAt||d.createdAt,type:d.type,size:d.size,data:d.data})),
+      quotes:cQuotes.map(q=>({id:q.id,number:q.number,title:q.title||q.number,total:+q.total||0,status:q.status,createdAt:q.createdAt,dealId:q.dealId||null,items:q.items||[],notes:q.notes||""})),
+      deals:cDeals.map(d=>({id:d.id,title:d.title,stage:d.stage,value:showDealValues?d.value:null,closeDate:d.closeDate,probability:d.probability,stageNote:d.stageNote||"",nextStep:d.nextStep||"",stages})),
+      tasks:cTasks.map(t=>({id:t.id,title:t.title,dueDate:t.dueDate,completed:!!t.completed})),
+      expenses:showExpenses?cExpenses.map(e=>({id:e.id,date:e.date,description:e.description,category:e.category,amount:+e.amount||0,invoiced:!!e.invoiced})):[],
+      settings:settings,
+      lastUpdated:new Date().toISOString(),
     };
   };
+
+  // Auto-rebuild portal snapshots whenever any portal-visible CRM data changes.
+  // Debounced 700ms so a batch of edits (drag a deal, then update its stage
+  // note, then add a task) only triggers one snapshot write per token.
+  useEffect(()=>{
+    if(demoMode||!loadedRef.current)return;
+    if(!portalTokens.length)return;
+    const timer=setTimeout(()=>{
+      portalTokens.forEach(tok=>{
+        try{writePortalSnapshot(tok.token,buildSnapshotPayload(tok));}
+        catch(e){console.error("[portal snapshot rebuild]",tok.token,e);}
+      });
+    },700);
+    return ()=>clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[demoMode,portalTokens,invoices,docs,quotes,deals,notes,tasks,expenses,timeClockEntries,contacts,companies,entities]);
+
+  // Portal → CRM bridge: track recent portal_messages so the Inbox can render
+  // [Portal] threads, and process structured action markers (sign / approve /
+  // request changes) by mutating crm:docs, crm:quotes, crm:deals, and adding a
+  // note to the contact's timeline. Realtime subscription keeps this live.
+  const [portalMessages,setPortalMessages]=useState([]);
+  const [portalUnread,setPortalUnread]=useState(0);
+  const processedActionIdsRef=useRef(new Set());
+  const PORTAL_ACTION_PREFIX="[[PORTAL_ACTION:";
+  const parsePortalAction=(content)=>{
+    if(!content||!content.startsWith(PORTAL_ACTION_PREFIX))return null;
+    const end=content.indexOf("]] ");
+    if(end<0)return null;
+    const tag=content.slice(PORTAL_ACTION_PREFIX.length,end);
+    const friendly=content.slice(end+3);
+    const parts=tag.split(":");
+    const type=parts[0]; const refId=parts[1]||null;
+    let extra=null;
+    if(parts[2]){try{extra=JSON.parse(decodeURIComponent(parts[2]));}catch{}}
+    return {type,refId,extra,friendly};
+  };
+  const applyPortalAction=(msg)=>{
+    if(!msg||msg.sender_type!=="client")return;
+    if(processedActionIdsRef.current.has(msg.id))return;
+    const act=parsePortalAction(msg.content);
+    if(!act)return;
+    processedActionIdsRef.current.add(msg.id);
+    const tok=portalTokens.find(t=>t.token===msg.token);
+    const contactId=tok?.scope==="contact"?tok.scopeId:null;
+    if(act.type==="sign_doc"&&act.refId){
+      setDocs(p=>p.map(d=>d.id===act.refId?{...d,status:"Signed",signedAt:act.extra?.signedAt||new Date().toISOString(),signedVia:"portal"}:d));
+      const docName=act.extra?.name||"document";
+      setNotes(p=>[...p,{id:uid(),entityId:tok?.entityId||activeEntityId,contactId,dealId:null,content:`📝 Client signed "${docName}" via portal`,type:"system",createdAt:new Date().toISOString()}]);
+      showToast(`${msg.sender_name||"Client"} signed ${docName}`);
+    }else if(act.type==="approve_quote"&&act.refId){
+      setQuotes(p=>p.map(q=>(q.id===act.refId||String(q.number)===String(act.refId))?{...q,status:"Approved",approvedAt:new Date().toISOString(),approvedVia:"portal"}:q));
+      const dealId=act.extra?.dealId;
+      if(dealId){
+        setDeals(p=>p.map(d=>{
+          if(d.id!==dealId)return d;
+          if(d.stage==="Won"||d.stage==="Won / Scheduled")return d;
+          const allowed=stagesFor(entities.find(e=>e.id===d.entityId));
+          const winStage=allowed.includes("Won / Scheduled")?"Won / Scheduled":(allowed.includes("Won")?"Won":d.stage);
+          return {...d,stage:winStage,stageHistory:[...(d.stageHistory||[]),{from:d.stage,to:winStage,note:"Client approved via portal",at:new Date().toISOString()}],stageNote:""};
+        }));
+      }
+      setNotes(p=>[...p,{id:uid(),entityId:tok?.entityId||activeEntityId,contactId,dealId:dealId||null,content:`✅ Client approved proposal #${act.refId} via portal`,type:"system",createdAt:new Date().toISOString()}]);
+      showToast(`${msg.sender_name||"Client"} approved a proposal`,"success");
+    }else if(act.type==="request_changes_quote"&&act.refId){
+      const req=act.extra?.request||"(no detail)";
+      setNotes(p=>[...p,{id:uid(),entityId:tok?.entityId||activeEntityId,contactId,dealId:null,content:`📋 Client requested changes to proposal #${act.refId}: ${req}`,type:"system",createdAt:new Date().toISOString()}]);
+      showToast(`${msg.sender_name||"Client"} requested changes`,"success");
+    }
+  };
+
+  // Initial load of recent portal messages for the entity's tokens + realtime sub
+  useEffect(()=>{
+    if(demoMode||!loadedRef.current)return;
+    const tokens=portalTokens.filter(t=>t.entityId===activeEntityId).map(t=>t.token).filter(Boolean);
+    if(tokens.length===0){setPortalMessages([]);setPortalUnread(0);return;}
+    let unsub=()=>{};
+    (async()=>{
+      try{
+        const msgs=await portalListMessagesForTokens(tokens);
+        setPortalMessages(msgs);
+        setPortalUnread(msgs.filter(m=>m.sender_type==="client"&&!m.read).length);
+      }catch(e){console.error("[portal messages initial load]",e);}
+      unsub=subscribePortalMessagesForTokens(tokens,(m)=>{
+        setPortalMessages(prev=>prev.some(x=>x.id===m.id)?prev:[m,...prev]);
+        if(m.sender_type==="client"){
+          setPortalUnread(u=>u+1);
+          applyPortalAction(m);
+          const tok=portalTokens.find(t=>t.token===m.token);
+          const rec=tok?.scope==="contact"?contacts.find(c=>c.id===tok.scopeId):companies.find(c=>c.id===tok?.scopeId);
+          if(!parsePortalAction(m.content)){
+            showToast(`💬 New portal message from ${rec?.name||m.sender_name||"client"}`);
+          }
+        }
+      });
+    })();
+    return ()=>{try{unsub();}catch{}};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[demoMode,portalTokens,activeEntityId,loadedRef.current]);
+
+  const sendOwnerPortalMessage=async(token,content)=>{
+    if(!content?.trim())return;
+    try{
+      await portalSendMessage(token,"owner",session?.user?.email?.split("@")[0]||"Account manager",content.trim());
+    }catch(e){console.error("[sendOwnerPortalMessage]",e);showToast("Could not send message","error");}
+  };
+  const markPortalMessagesRead=async(token)=>{
+    try{
+      await portalMarkMessagesRead(token,"client");
+      setPortalMessages(prev=>prev.map(m=>m.token===token&&m.sender_type==="client"?{...m,read:true}:m));
+      setPortalUnread(u=>Math.max(0,u-portalMessages.filter(m=>m.token===token&&m.sender_type==="client"&&!m.read).length));
+    }catch(e){console.error("[markPortalMessagesRead]",e);}
+  };
+
   const addPortalToken=(data)=>{
     const tok={id:uid(),...data};
     setPortalTokens(p=>[...p,tok]);
-    if(!demoMode)writePortalSnapshot(tok.token,buildPortalPayload(tok));
+    if(!demoMode)writePortalSnapshot(tok.token,buildSnapshotPayload(tok));
     return tok;
+  };
+  const updatePortalToken=(id,data)=>{
+    setPortalTokens(p=>p.map(t=>t.id===id?{...t,...data}:t));
   };
   const refreshPortalSnapshot=(tokenId)=>{
     const t=portalTokens.find(x=>x.id===tokenId);
     if(!t)return;
-    if(!demoMode)writePortalSnapshot(t.token,buildPortalPayload(t));
+    if(!demoMode)writePortalSnapshot(t.token,buildSnapshotPayload(t));
     showToast("Portal data refreshed");
   };
   const deletePortalToken=(id)=>{
@@ -6936,7 +7189,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   // ─── NAVIGATION ───────────────────────────────────────────────────────────
   const overdueTasks=et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length;
   const unpaidInvoices=invoices.filter(i=>i.entityId===activeEntityId&&["Sent","Viewed","Overdue"].includes(i.status)).length;
-  const unreadEmails=emailThreads.filter(t=>t.entityId===activeEntityId&&t.messages[t.messages.length-1]?.direction==="inbound").length;
+  const unreadEmails=emailThreads.filter(t=>t.entityId===activeEntityId&&t.messages[t.messages.length-1]?.direction==="inbound").length+portalUnread;
 
   const fs=isFieldService(entity);
   const NAV=[
@@ -7124,13 +7377,13 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
           {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} expenses={expenses} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} addInvoice={addInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
-          {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
+          {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} companies={eco} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast} portalTokens={portalTokens} portalMessages={portalMessages} sendOwnerPortalMessage={sendOwnerPortalMessage} markPortalMessagesRead={markPortalMessagesRead}/>}
           {view==="scheduler"&&!fs&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
           {view==="scheduler"&&fs&&<JobScheduler entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} updateDeal={updateDeal} setSelDeal={setSelDeal} setView={setView} showToast={showToast}/>}
           {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} approveTimeEntry={approveTimeEntry} rejectTimeEntry={rejectTimeEntry} resolveTimeCorrection={resolveTimeCorrection} requestTimeCorrection={requestTimeCorrection} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
-          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} showToast={showToast} entity={entity} setView={setView}/>}
+          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} updatePortalToken={updatePortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} buildSnapshotPayload={buildSnapshotPayload} showToast={showToast} entity={entity} setView={setView}/>}
           {view==="import"&&<ImportView activeEntityId={activeEntityId} entity={entity} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}

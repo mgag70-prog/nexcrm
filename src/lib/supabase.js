@@ -222,13 +222,28 @@ export async function portalMarkSignedIn(userId) {
   } catch (e) { console.error('[portalMarkSignedIn]', e) }
 }
 
-export async function portalListMessages(token) {
+export async function portalListMessages(token, limit = 200) {
   const { data, error } = await supabase
     .from('portal_messages')
     .select('*')
     .eq('token', token)
     .order('created_at', { ascending: true })
+    .limit(limit)
   if (error) { console.error('[portalListMessages]', error); return [] }
+  return data || []
+}
+
+// Fetch messages for many tokens at once — used by the CRM Inbox to surface
+// every active portal thread for the current entity in a single query.
+export async function portalListMessagesForTokens(tokens) {
+  if (!tokens?.length) return []
+  const { data, error } = await supabase
+    .from('portal_messages')
+    .select('*')
+    .in('token', tokens)
+    .order('created_at', { ascending: false })
+    .limit(500)
+  if (error) { console.error('[portalListMessagesForTokens]', error); return [] }
   return data || []
 }
 
@@ -243,6 +258,52 @@ export async function portalMarkMessagesRead(token, sender_type) {
     .eq('token', token)
     .eq('sender_type', sender_type)
     .eq('read', false)
+}
+
+// ─── REALTIME ────────────────────────────────────────────────────────────────
+// Subscribe to row-level changes on portal_snapshots / portal_messages for a
+// single token. Requires that the tables be in the supabase_realtime publication
+// (one-time SQL — see CLAUDE.md). Returns an unsubscribe function.
+export function subscribePortalSnapshot(token, onChange) {
+  if (!token) return () => {}
+  const channel = supabase
+    .channel(`portal_snapshot:${token}`)
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'portal_snapshots', filter: `token=eq.${token}` },
+      payload => { try { onChange?.(payload) } catch (e) { console.error('[subscribePortalSnapshot cb]', e) } },
+    )
+    .subscribe()
+  return () => { try { supabase.removeChannel(channel) } catch (e) { console.error('[unsub snapshot]', e) } }
+}
+
+export function subscribePortalMessages(token, onChange) {
+  if (!token) return () => {}
+  const channel = supabase
+    .channel(`portal_messages:${token}`)
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'portal_messages', filter: `token=eq.${token}` },
+      payload => { try { onChange?.(payload) } catch (e) { console.error('[subscribePortalMessages cb]', e) } },
+    )
+    .subscribe()
+  return () => { try { supabase.removeChannel(channel) } catch (e) { console.error('[unsub messages]', e) } }
+}
+
+// Listen to message inserts across many tokens — used by the CRM Inbox so the
+// owner sees new portal messages live.
+export function subscribePortalMessagesForTokens(tokens, onInsert) {
+  if (!tokens?.length) return () => {}
+  const channel = supabase
+    .channel(`portal_messages_multi:${tokens.length}_${Date.now()}`)
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'portal_messages' },
+      payload => {
+        if (tokens.includes(payload?.new?.token)) {
+          try { onInsert?.(payload.new) } catch (e) { console.error('[subscribePortalMessagesForTokens cb]', e) }
+        }
+      },
+    )
+    .subscribe()
+  return () => { try { supabase.removeChannel(channel) } catch (e) { console.error('[unsub messages multi]', e) } }
 }
 
 export async function signUp(email, password) {
