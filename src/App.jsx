@@ -1890,7 +1890,7 @@ const exportReportPDF = (report, fields, rows, summary, entity, filtersText) => 
       return `<td>${String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;")}</td>`;
     }).join("")}</tr>`).join("")}</tbody>
   </table>
-  <div class="footer">${rows.length} row${rows.length===1?"":"s"} · NexCRM</div>
+  <div class="footer">${rows.length} row${rows.length===1?"":"s"} · HQOps</div>
   <script>setTimeout(()=>window.print(),300);</script>
 </body></html>`;
   const w = window.open("", "_blank");
@@ -2021,6 +2021,19 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
     quarterMap[key].won+=m.won;quarterMap[key].weighted+=m.weighted;quarterMap[key].best+=m.best;quarterMap[key].worst+=m.worst;quarterMap[key].total+=m.total;
   });
   const quarterRollup=Object.values(quarterMap);
+
+  // Six-scenario forecast rollup: Forecast Call / Worst Case / Won / Commit / Best Case / Pipeline
+  const horizonStart=new Date(now.getFullYear(),now.getMonth(),1);
+  const horizonEnd=new Date(now.getFullYear(),now.getMonth()+6,0,23,59,59);
+  const inHorizon=d=>{if(!d.closeDate)return false;const cd=new Date(d.closeDate);return cd>=horizonStart&&cd<=horizonEnd;};
+  const openHorizonDeals=ed.filter(d=>!["Won","Lost"].includes(d.stage)&&inHorizon(d));
+  const fcWon=forecastMonths.reduce((s,m)=>s+m.won,0);
+  const fcExpected=forecastMonths.reduce((s,m)=>s+m.expected,0);
+  const fcBest=forecastMonths.reduce((s,m)=>s+m.best,0);
+  const fcWorst=forecastMonths.reduce((s,m)=>s+m.worst,0);
+  const fcPipeline=openHorizonDeals.reduce((s,d)=>s+(+d.value||0),0);
+  const fcCommit=openHorizonDeals.filter(d=>(d.probability??50)>=70).reduce((s,d)=>s+(+d.value||0),0);
+  const fcCall=fcWon+fcExpected;
 
   const handleShare=()=>{const url=`${window.location.href}?report=${reportType}`;navigator.clipboard?.writeText(url).catch(()=>{});showToast("Share link copied!");};
   const handleExport=()=>{
@@ -2229,9 +2242,12 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
           </div>
 
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:20}}>
-            <StatCard label="6-Month Won" value={fmt$(forecastMonths.reduce((s,m)=>s+m.won,0))} color="#10B981" icon={I.ok}/>
-            <StatCard label="Expected Pipeline" value={fmt$(forecastMonths.reduce((s,m)=>s+m.expected,0))} sub={`Confidence ${confidence}%`} color="#1D4ED8" icon={I.trending}/>
-            <StatCard label="Best Case" value={fmt$(forecastMonths.reduce((s,m)=>s+m.best,0))} sub="1.5× weighted" color="#8B5CF6" icon={I.dollar}/>
+            <StatCard label="Forecast Call" value={fmt$(fcCall)} sub={`Won + expected (confidence ${confidence}%)`} color="#1D4ED8" icon={I.trending}/>
+            <StatCard label="Worst Case" value={fmt$(fcWon+fcWorst)} sub="Won + 0.5× weighted" color="#EF4444" icon={I.dollar}/>
+            <StatCard label="Won" value={fmt$(fcWon)} sub="Closed in next 6 months" color="#10B981" icon={I.ok}/>
+            <StatCard label="Commit" value={fmt$(fcCommit)} sub="Open deals ≥70% probability" color="#F59E0B" icon={I.ok}/>
+            <StatCard label="Best Case" value={fmt$(fcWon+fcBest)} sub="Won + 1.5× weighted" color="#8B5CF6" icon={I.dollar}/>
+            <StatCard label="Pipeline" value={fmt$(fcPipeline)} sub="All open deals in period" color="#64748B" icon={I.trending}/>
           </div>
 
           <div style={{...S.card({padding:20}),marginBottom:20}}>
@@ -2763,7 +2779,7 @@ function ImportView({activeEntityId,entity,contacts,companies,addContact,addComp
     dealname:"title",amount:"value",closedate:"closeDate",dealstage:"stage",pipeline:"",
   };
   const HUBSPOT_DEAL_SKIP=new Set(["deal description","record id","deal owner","create date","last modified date","deal type","forecast amount","weighted amount","days to close"]);
-  // HubSpot's default sales pipeline → NexCRM's default stages
+  // HubSpot's default sales pipeline → HQOps's default stages
   const HUBSPOT_STAGE_MAP={
     "appointment scheduled":"New Lead",
     "qualified to buy":"Contacted",
@@ -3403,8 +3419,8 @@ function FormsView({forms,activeEntityId,addForm,updateForm,deleteForm,showToast
   const eForms=forms.filter(f=>f.entityId===activeEntityId);
 
   const generateEmbed=(form)=>{
-    return `<!-- NexCRM Web-to-Lead Form: ${form.name} -->
-<form id="nexcrm-form-${form.id}" style="font-family:sans-serif;max-width:480px">
+    return `<!-- HQOps Web-to-Lead Form: ${form.name} -->
+<form id="hqops-form-${form.id}" style="font-family:sans-serif;max-width:480px">
 ${form.fields.filter(f=>f.enabled!==false).map(f=>`  <div style="margin-bottom:14px">
     <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">${f.label}${f.required?' *':''}</label>
     ${f.type==='textarea'?`<textarea name="${f.name}" style="width:100%;padding:8px;border:1px solid #CBD5E1;border-radius:6px" rows="4"${f.required?' required':''}></textarea>`:`<input type="${f.type}" name="${f.name}" style="width:100%;padding:8px;border:1px solid #CBD5E1;border-radius:6px"${f.required?' required':''}>`}
@@ -3412,10 +3428,10 @@ ${form.fields.filter(f=>f.enabled!==false).map(f=>`  <div style="margin-bottom:1
   <button type="submit" style="background:#1D4ED8;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer">Submit</button>
 </form>
 <script>
-document.getElementById('nexcrm-form-${form.id}').onsubmit=function(e){
+document.getElementById('hqops-form-${form.id}').onsubmit=function(e){
   e.preventDefault();
   const data=Object.fromEntries(new FormData(e.target));
-  fetch('https://nexcrm.app/api/forms/${form.id}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  fetch('https://hqops.app/api/forms/${form.id}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
 };
 </script>`;
   };
@@ -3430,7 +3446,7 @@ document.getElementById('nexcrm-form-${form.id}').onsubmit=function(e){
 
   return(
     <div>
-      <PageHeader title="Web-to-Lead Forms" sub="Embed forms on your website to capture leads directly into NexCRM">
+      <PageHeader title="Web-to-Lead Forms" sub="Embed forms on your website to capture leads directly into HQOps">
         <button style={S.btnPrimary} onClick={()=>setShowNew(true)}><Ic d={I.plus} size={14}/>New Form</button>
       </PageHeader>
       {showNew&&(
@@ -3652,6 +3668,7 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
                       <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{e.type} · {e.industry||"General"}{e.website&&` · ${e.website}`}</div>
                     </div>
                     {e.id===entity?.id&&<span style={S.badge("#10B981")}>Active</span>}
+                    <button style={S.btnSecondary} onClick={()=>openModal("editEntity",e)}><Ic d={I.edit} size={13}/>Edit</button>
                     <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>{if(entities.length===1)return showToast("Cannot delete last entity","error");if(confirm("Delete entity and all its data?"))setEntities(p=>p.filter(x=>x.id!==e.id));}}><Ic d={I.trash} size={14}/></button>
                   </div>
                 ))}
@@ -3896,7 +3913,7 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
               <h3 style={{margin:"0 0 16px",fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Profile & Roadmap</h3>
               <div style={{background:"#F8FAFC",borderRadius:10,padding:16,border:"1px solid #E2E8F0",marginBottom:16}}>
                 <div style={{fontSize:13,fontWeight:600,color:"#0F172A",marginBottom:6}}>🚀 Current: Personal Mode</div>
-                <div style={{fontSize:13,color:"#64748B",lineHeight:1.6}}>NexCRM is running in personal/demo mode. Deploy to Vercel or Netlify to access it from any device. When ready for multi-user SaaS: add user auth, 2FA, team invites, RBAC, billing, and white-labeling.</div>
+                <div style={{fontSize:13,color:"#64748B",lineHeight:1.6}}>HQOps is running in personal/demo mode. Deploy to Vercel or Netlify to access it from any device. When ready for multi-user SaaS: add user auth, 2FA, team invites, RBAC, billing, and white-labeling.</div>
               </div>
               <div style={{background:"#F8FAFC",borderRadius:10,padding:16,border:"1px solid #E2E8F0"}}>
                 <div style={{fontSize:13,fontWeight:600,color:"#0F172A",marginBottom:10}}>📋 Integration Roadmap</div>
@@ -3984,7 +4001,7 @@ function _InboxViewBody({emailThreads,contacts,activeEntityId,emailIntegrations,
           <EmptyState
             icon={I.mail}
             title="Connect your email to get started"
-            message="Link Gmail, Outlook, or any SMTP account to send and receive messages directly inside NexCRM. Once connected, conversations with your contacts will appear here. Portal client messages will also surface here."
+            message="Link Gmail, Outlook, or any SMTP account to send and receive messages directly inside HQOps. Once connected, conversations with your contacts will appear here. Portal client messages will also surface here."
             ctaLabel="Connect email"
             onCta={()=>setView("settings")}
           />
@@ -4329,7 +4346,7 @@ function InvoicesView({invoices,contacts,products,timeEntries=[],activeEntityId,
 // ═══════════════════════════════════════════════════════════════════════════════
 // CLIENT PORTAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],expenses=[],activeEntityId,addPortalToken,updatePortalToken,deletePortalToken,refreshPortalSnapshot,buildSnapshotPayload,showToast,entity,setView}){
+function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],expenses=[],activeEntityId,addPortalToken,updatePortalToken,deletePortalToken,refreshPortalSnapshot,buildSnapshotPayload,showToast,entity,setView,demoMode=false}){
   const [tab,setTab]=useState("contact"); // contact | company
   const [generating,setGenerating]=useState(null); // {scope, scopeId, email, name} when generating
   const [editing,setEditing]=useState(null); // token being edited
@@ -4364,6 +4381,15 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
         showExpenses:!!form.showExpenses,
         notifyEmail:form.notifyEmail||"",
       };
+      if(demoMode){
+        // Demo is session-only and must never create real Supabase auth users.
+        // Simulate the portal locally so the demo flow still completes.
+        const fakeToken=Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,10);
+        addPortalToken({entityId:activeEntityId,scope:form.scope,scopeId:form.scopeId,scopeName:form.name,email:form.email,token:fakeToken,settings,createdAt:new Date().toISOString(),demo:true});
+        setGenerating(null);
+        setCredModal({email:form.email,password:"demo-only",portalUrl:linkFor({token:fakeToken}),demo:true});
+        return;
+      }
       // Build the initial snapshot using the unified builder so it stays in sync
       // with what auto-rebuilds will produce on every change after this.
       const synthToken={entityId:activeEntityId,scope:form.scope,scopeId:form.scopeId,settings};
@@ -4375,7 +4401,7 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
       addPortalToken({entityId:activeEntityId,scope:form.scope,scopeId:form.scopeId,scopeName:form.name,email:form.email,token:res.token,userId:res.userId,settings,createdAt:new Date().toISOString()});
       setGenerating(null);
       setCredModal({email:res.email,password:res.password,portalUrl:res.portalUrl||linkFor({token:res.token})});
-    }catch(e){showToast?.(e.message||"Could not create portal","error");}
+    }catch(e){showToast?.(e.message==="Not authenticated"?"Your session has expired — refresh the page and sign in again.":(e.message||"Could not create portal"),"error");}
   };
 
   const handleSaveSettings=(form)=>{
@@ -4393,6 +4419,10 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
   };
 
   const handleRegenerate=async(t)=>{
+    if(demoMode){
+      setCredModal({email:t.email,password:"demo-only",portalUrl:linkFor(t),title:"New temporary password",demo:true});
+      return;
+    }
     try{
       const { adminRegeneratePortalPassword } = await import("./lib/supabase.js");
       const res=await adminRegeneratePortalPassword({userId:t.userId,token:t.token});
@@ -4402,6 +4432,11 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
 
   const handleRevoke=async(t)=>{
     if(!confirm(`Revoke portal access for ${t.email||t.scopeName||"this client"}? Their login will be deleted immediately.`))return;
+    if(demoMode){
+      deletePortalToken(t.id);
+      showToast?.("Portal revoked (demo)");
+      return;
+    }
     try{
       const { adminRevokePortal } = await import("./lib/supabase.js");
       await adminRevokePortal({userId:t.userId,token:t.token});
@@ -4535,6 +4570,9 @@ function PortalCredentialsModal({info,onClose,copy}){
   const text=`Portal URL: ${info.portalUrl}\nEmail: ${info.email}\nTemporary password: ${info.password}`;
   return(
     <Modal title={info.title||"Portal credentials"} onClose={onClose}>
+      {info.demo&&(
+        <div style={{fontSize:12,fontWeight:600,color:"#92400E",background:"#FEF3C7",border:"1px solid #FDE68A",borderRadius:8,padding:"8px 12px",marginBottom:12}}>Demo mode — this portal is simulated. No real login was created; the URL and password won't work. Sign up to create real client portals.</div>
+      )}
       <div style={{fontSize:13,color:"#475569",marginBottom:14}}>Share these credentials with your client. The temporary password is shown only once.</div>
       <div style={{...S.card({padding:14,background:"#F8FAFC"}),marginBottom:14}}>
         <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,fontSize:13}}>
@@ -6127,7 +6165,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════════════════════════════════════════
-function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,addContact,updateContact,addCompany,updateCompany,addDeal,updateDeal,addTask,updateTask,addNote,addEntity,connectEmail,showToast,products,sequences,addEnrollment,customFields,entity,addQuote,updateQuote,addTemplate,updateTemplate,timeEntries,addInvoice,updateInvoice,setInvoiceCounter,invoiceCounter,employees=[],addEmployee,updateEmployee}){
+function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,addContact,updateContact,addCompany,updateCompany,addDeal,updateDeal,addTask,updateTask,addNote,addEntity,updateEntity,connectEmail,showToast,products,sequences,addEnrollment,customFields,entity,addQuote,updateQuote,addTemplate,updateTemplate,timeEntries,addInvoice,updateInvoice,setInvoiceCounter,invoiceCounter,employees=[],addEmployee,updateEmployee}){
   const {type,data}=modal;
   const [form,setForm]=useState(data||{});
   const set=(k,v)=>setForm(p=>({...p,[k]:v}));
@@ -6181,9 +6219,12 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
         <button style={S.btnPrimary} onClick={()=>{
           if(!form.name)return;
           const {_lockCompany,...rest}=form;
-          // Resolve companyId from companyName if not already set (datalist user-typed match)
-          const co=rest.companyName?companies.find(c=>c.name?.toLowerCase()===rest.companyName.toLowerCase()):null;
-          const payload={...rest,companyId:co?co.id:rest.companyId||null};
+          // Resolve companyId from companyName; auto-create the company record
+          // when the typed name doesn't match an existing one.
+          const typedName=(rest.companyName||"").trim();
+          let co=typedName?companies.find(c=>c.name?.toLowerCase()===typedName.toLowerCase()):null;
+          if(typedName&&!co&&addCompany){co=addCompany({name:typedName});showToast?.(`Company "${typedName}" created and linked`);}
+          const payload={...rest,companyName:co?co.name:typedName,companyId:co?co.id:rest.companyId||null};
           type==="addContact"?addContact(payload):updateContact(data.id,payload);
           closeModal();
         }}>
@@ -6214,7 +6255,21 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
       </div>
       <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
-        <button style={S.btnPrimary} onClick={()=>{if(!form.name)return;type==="addCompany"?addCompany(form):updateCompany(data.id,form);closeModal();}}>
+        <button style={S.btnPrimary} onClick={()=>{
+          if(!form.name)return;
+          if(type==="addCompany"){
+            const created=addCompany(form);
+            // Back-link contacts: the chosen primary contact, plus any contacts that
+            // referenced this company by free-text name before the record existed.
+            if(created?.id){
+              contacts.forEach(c=>{
+                const nameMatch=c.companyName&&c.companyName.toLowerCase()===form.name.toLowerCase()&&!c.companyId;
+                if(c.id===form.primaryContactId||nameMatch)updateContact(c.id,{companyId:created.id,companyName:created.name});
+              });
+            }
+          }else{updateCompany(data.id,form);}
+          closeModal();
+        }}>
           {type==="addCompany"?"Add Company":"Save Changes"}
         </button>
       </div>
@@ -6371,9 +6426,9 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
     </Modal>
   );
 
-  if(type==="addEntity") return(
-    <Modal title="Add Legal Entity" onClose={closeModal}>
-      <div style={{background:"#F1F5F9",borderRadius:8,padding:12,marginBottom:14,fontSize:13,color:"#475569",lineHeight:1.6}}>Each entity is completely isolated — separate contacts, deals, tasks, notes, and email integrations.</div>
+  if(type==="addEntity"||type==="editEntity") return(
+    <Modal title={type==="addEntity"?"Add Legal Entity":"Edit Entity"} onClose={closeModal}>
+      <div style={{background:"#F1F5F9",borderRadius:8,padding:12,marginBottom:14,fontSize:13,color:"#475569",lineHeight:1.6}}>Each entity is completely isolated — separate contacts, deals, tasks, notes, and email integrations.{type==="editEntity"&&" Setting the type to \"Field Service Business\" enables the Job Board, Time Clock, Employees, and Field Service settings."}</div>
       <F form={form} set={set} label="Entity Name *" name="name" placeholder="e.g. Apex Ventures LLC" required/>
       <div style={S.grid2}>
         <F form={form} set={set} label="Entity Type" name="type" options={ETYPES}/>
@@ -6389,7 +6444,12 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
       </Field>
       <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
         <button style={S.btnSecondary} onClick={closeModal}>Cancel</button>
-        <button style={S.btnPrimary} onClick={()=>{if(!form.name)return;addEntity({...form,color:form.color||"#1D4ED8"});closeModal();}}>Create Entity</button>
+        <button style={S.btnPrimary} onClick={()=>{
+          if(!form.name)return;
+          if(type==="addEntity")addEntity({...form,color:form.color||"#1D4ED8"});
+          else updateEntity(data.id,{name:form.name,type:form.type,industry:form.industry,website:form.website,color:form.color||data.color});
+          closeModal();
+        }}>{type==="addEntity"?"Create Entity":"Save Changes"}</button>
       </div>
     </Modal>
   );
@@ -6793,7 +6853,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   const deleteContact=(id)=>{setContacts(p=>p.filter(c=>c.id!==id));if(selContact===id)setSelContact(null);};
 
   // ─── COMPANIES ────────────────────────────────────────────────────────────
-  const addCompany=(data)=>setCompanies(p=>[...p,{id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()}]);
+  const addCompany=(data)=>{const c={id:uid(),entityId:activeEntityId,...data,createdAt:new Date().toISOString()};setCompanies(p=>[...p,c]);return c;};
   const updateCompany=(id,data)=>setCompanies(p=>p.map(c=>c.id===id?{...c,...data}:c));
   const deleteCompany=(id)=>setCompanies(p=>p.filter(c=>c.id!==id));
 
@@ -7225,6 +7285,7 @@ export default function App({session,onLogout,demoMode=false}={}){
 
   // ─── ENTITY ───────────────────────────────────────────────────────────────
   const addEntity=(data)=>{const e={id:uid(),...data};setEntities(p=>[...p,e]);setActiveEntityId(e.id);setView("dashboard");showToast(`Switched to ${e.name}`);};
+  const updateEntity=(id,data)=>{setEntities(p=>p.map(e=>e.id===id?{...e,...data}:e));showToast("Entity updated");};
 
   // ─── NAVIGATION ───────────────────────────────────────────────────────────
   const overdueTasks=et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length;
@@ -7283,7 +7344,7 @@ export default function App({session,onLogout,demoMode=false}={}){
       }:{width:222,background:"#0F2044",display:"flex",flexDirection:"column",flexShrink:0,overflowY:"auto"}}>
         <div style={{padding:"16px 16px 10px",borderBottom:"1px solid #162B55",display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
           <div>
-            <div style={{fontFamily:"'Sora',sans-serif",fontSize:20,fontWeight:800,color:"#FFFFFF",letterSpacing:"-0.5px"}}>Nex<span style={{color:entity?.color||"#3B82F6"}}>CRM</span></div>
+            <div style={{fontFamily:"'Sora',sans-serif",fontSize:20,fontWeight:800,color:"#FFFFFF",letterSpacing:"-0.5px"}}>HQ<span style={{color:entity?.color||"#3B82F6"}}>Ops</span></div>
             <div style={{fontSize:10,color:"#475569",letterSpacing:".5px",textTransform:"uppercase",marginTop:1}}>Multi-Entity Platform</div>
           </div>
           {isMobile&&(
@@ -7423,7 +7484,7 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} approveTimeEntry={approveTimeEntry} rejectTimeEntry={rejectTimeEntry} resolveTimeCorrection={resolveTimeCorrection} requestTimeCorrection={requestTimeCorrection} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
-          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} updatePortalToken={updatePortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} buildSnapshotPayload={buildSnapshotPayload} showToast={showToast} entity={entity} setView={setView}/>}
+          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} updatePortalToken={updatePortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} buildSnapshotPayload={buildSnapshotPayload} showToast={showToast} entity={entity} setView={setView} demoMode={demoMode}/>}
           {view==="import"&&<ImportView activeEntityId={activeEntityId} entity={entity} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
@@ -7461,7 +7522,7 @@ export default function App({session,onLogout,demoMode=false}={}){
       )}
 
       {/* ─── MODALS ────────────────────────────────────── */}
-      {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} updateTask={updateTask} addNote={addNote} addEntity={addEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields} entity={entity} addQuote={addQuote} updateQuote={updateQuote} addTemplate={addTemplate} updateTemplate={updateTemplate} timeEntries={timeEntries} addInvoice={addInvoice} updateInvoice={updateInvoice} setInvoiceCounter={setInvoiceCounter} invoiceCounter={invoiceCounter} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee}/>}
+      {modal&&<Modals modal={modal} closeModal={closeModal} contacts={ec} companies={eco} entities={entities} activeEntityId={activeEntityId} addContact={addContact} updateContact={updateContact} addCompany={addCompany} updateCompany={updateCompany} addDeal={addDeal} updateDeal={updateDeal} addTask={addTask} updateTask={updateTask} addNote={addNote} addEntity={addEntity} updateEntity={updateEntity} connectEmail={connectEmail} showToast={showToast} products={products} sequences={sequences} addEnrollment={addEnrollment} customFields={customFields} entity={entity} addQuote={addQuote} updateQuote={updateQuote} addTemplate={addTemplate} updateTemplate={updateTemplate} timeEntries={timeEntries} addInvoice={addInvoice} updateInvoice={updateInvoice} setInvoiceCounter={setInvoiceCounter} invoiceCounter={invoiceCounter} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee}/>}
 
       {/* ─── E-SIGNATURE MODAL ─────────────────────────── */}
       {sigModal&&<SignatureModal doc={sigModal.doc} contact={sigModal.contact} onClose={()=>setSigModal(null)} onSign={(sigData)=>addSignature({...sigData,doc:sigModal.doc,contactId:sigModal.contact?.id,entityId:activeEntityId})} showToast={showToast}/>}

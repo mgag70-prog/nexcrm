@@ -1,21 +1,21 @@
-# NexCRM — Claude Code Context
+# HQOps — Claude Code Context
 
 Standing context for Claude Code and any AI assistant working in this repo.
 Read this first.
 
 ## Project Overview
 
-NexCRM is a multi-entity CRM platform built for professionals who run more
+HQOps (formerly NexCRM) is a multi-entity CRM platform built for professionals who run more
 than one business or client practice and need a single tool to manage all
 of them without data mixing between entities. It combines contact and
 pipeline management with invoicing, time tracking, document storage,
 e-signatures, email sequences, web-to-lead forms, workflow automation,
 AI-powered data import, and a branded authenticated client portal.
 
-- **App URL:** https://nexcrm.app
-- **Demo URL:** https://nexcrm.app/demo (no login required, session-only data)
-- **Client portal login:** https://nexcrm.app/portal/login
-- **Netlify site name:** nexcrm-io
+- **App URL:** https://hqops.app (nexcrm.app redirects here)
+- **Demo URL:** https://hqops.app/demo (no login required, session-only data)
+- **Client portal login:** https://hqops.app/portal/login
+- **Netlify site name:** hqops
 - **Founder:** Matt Gray (mgag70@gmail.com)
 - **Stage:** Personal use (Fairway Circuit LLC and Crestfolio LLC), with
   plans for public launch. The client portal is already designed for
@@ -24,7 +24,7 @@ AI-powered data import, and a branded authenticated client portal.
 ## Repository
 
 - **Repo:** github.com/mgag70-prog/nexcrm
-- **Working directory:** /Users/mattgray/Desktop/nexcrm
+- **Working directory:** /Users/mattgray/dev/nexcrm
 - **Default branch:** main
 - **Deploy:** Netlify auto-deploys on push to main
 
@@ -36,8 +36,8 @@ AI-powered data import, and a branded authenticated client portal.
 - **Hosting:** Netlify (with Netlify Functions for server-side portal ops)
 - **Database:** Supabase (PostgreSQL)
 - **Auth:** Supabase Auth
-  - CRM owners: email/password at nexcrm.app
-  - Portal clients: separate email/password at nexcrm.app/portal/login,
+  - CRM owners: email/password at hqops.app
+  - Portal clients: separate email/password at hqops.app/portal/login,
     created via Netlify Function using service role key
 - **AI:** Anthropic Claude API (AI-powered contact/company import from
   PDFs, images, and unstructured text)
@@ -48,7 +48,7 @@ AI-powered data import, and a branded authenticated client portal.
 
 ## Supabase Project (IMPORTANT)
 
-**The NexCRM project ID is `knnacndatngcgfzdcdgv`.**
+**The HQOps project ID is `knnacndatngcgfzdcdgv`.**
 URL: https://knnacndatngcgfzdcdgv.supabase.co
 
 When querying Supabase via MCP tools, always pass
@@ -149,7 +149,7 @@ Demo entities (visible only at /demo, never saved to Supabase):
 ## Current State (as of May 2026)
 
 Working:
-- Full CRM at nexcrm.app with email/password auth
+- Full CRM at hqops.app with email/password auth
 - Contacts, Companies, Deals with proper bidirectional relationships
 - Pipeline with 8 stages (New Lead → Contacted → Responded / Interested → Follow-up / Discovery → Demo Scheduled → Proposal Sent → Won → Lost)
 - HubSpot CSV import (Contacts, Companies, Deals) with auto-detection and column mapping
@@ -185,4 +185,4 @@ This project was built entirely in a Claude.ai conversation starting May 2026. T
 - localStorage replaced by Supabase crm_store on deployment
 - Demo mode uses in-memory state, never touches Supabase
 - Portal clients are real Supabase Auth users created via service role key in a Netlify Function (not client-side signUp)
-- Stage migration runs once per session to remap legacy HubSpot stage names to NexCRM pipeline stages
+- Stage migration runs once per session to remap legacy HubSpot stage names to HQOps pipeline stages

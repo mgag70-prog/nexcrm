@@ -7,7 +7,9 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: false,
+    // Required so emailed password-recovery links (#access_token=…&type=recovery)
+    // establish a session when the user lands back on the app.
+    detectSessionInUrl: true,
   },
 })
 
@@ -324,8 +326,18 @@ export async function getSession() {
 }
 
 export function onAuthChange(callback) {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session)
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    callback(session, event)
   })
   return () => data.subscription.unsubscribe()
+}
+
+// CRM owner password reset — sends the recovery email, link lands on the app root.
+export async function sendPasswordReset(email) {
+  const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/` : undefined
+  return supabase.auth.resetPasswordForEmail(email, { redirectTo })
+}
+
+export async function updateOwnPassword(newPassword) {
+  return supabase.auth.updateUser({ password: newPassword })
 }

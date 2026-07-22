@@ -99,7 +99,7 @@ function PortalLogin({ navigate }) {
   }, [navigate])
 
   const accent = brand?.workspace?.color || '#1D4ED8'
-  const workspaceName = brand?.workspace?.name || 'NexCRM'
+  const workspaceName = brand?.workspace?.name || 'HQOps'
 
   const submit = async (e) => {
     e.preventDefault()
@@ -242,7 +242,7 @@ function ClientPortal({ navigate }) {
   const settings = snapshot?.payload?.settings || snapshot?.settings || {}
   const enabledTabs = settings.enabledTabs || { overview: true, invoices: true, documents: true, proposals: true, projects: true, messages: true, tasks: true, expenses: false }
   const accent = snapshot?.payload?.workspace?.color || '#1D4ED8'
-  const workspaceName = snapshot?.payload?.workspace?.name || 'NexCRM'
+  const workspaceName = snapshot?.payload?.workspace?.name || 'HQOps'
   const welcome = settings.welcome || `Welcome to your portal.`
   const contact = snapshot?.payload?.contact
 

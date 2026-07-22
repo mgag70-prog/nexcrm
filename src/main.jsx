@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { getSession, onAuthChange, signOut } from './lib/supabase.js'
 import App from './App.jsx'
-import Auth from './Auth.jsx'
+import Auth, { ResetPassword } from './Auth.jsx'
 import Portal from './Portal.jsx'
 
 const path = typeof window !== 'undefined' ? window.location.pathname : ''
@@ -13,13 +13,15 @@ const isPortalRoute = path === '/portal' || path === '/portal/' || path.startsWi
 function AuthGate() {
   const [status, setStatus] = useState('loading')
   const [session, setSession] = useState(null)
+  const [recovery, setRecovery] = useState(false)
 
   useEffect(() => {
     getSession().then((s) => {
       setSession(s)
       setStatus('ready')
     })
-    const unsubscribe = onAuthChange((s) => {
+    const unsubscribe = onAuthChange((s, event) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true)
       setSession(s)
       setStatus('ready')
     })
@@ -43,6 +45,8 @@ function AuthGate() {
   }
 
   if (!session) return <Auth />
+
+  if (recovery) return <ResetPassword onDone={() => setRecovery(false)} />
 
   return <App key={session.user.id} session={session} onLogout={() => signOut()} />
 }

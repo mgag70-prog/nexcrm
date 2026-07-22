@@ -8,3 +8,6 @@ dist
 
 # Local Netlify folder
 .netlify
+
+# Playwright MCP browser artifacts
+.playwright-mcp

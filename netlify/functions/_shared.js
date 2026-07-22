@@ -26,6 +26,9 @@ export async function requireOwner(authHeader) {
   })
   const { data, error } = await client.auth.getUser(token)
   if (error || !data?.user) return null
+  // Portal clients are auth users of this same project — a portal client's JWT
+  // must not pass owner validation for admin operations.
+  if (data.user.user_metadata?.role === 'portal_client') return null
   return data.user
 }
 
