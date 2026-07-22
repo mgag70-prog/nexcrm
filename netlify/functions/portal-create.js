@@ -5,6 +5,7 @@
 //         inserts portal_clients row + portal_snapshots row,
 //         returns { token, password, portalUrl }
 
+import { randomBytes } from 'node:crypto'
 import { adminClient, requireOwner, requireAccountRole, ok, bad, preflight, genTempPassword } from './_shared.js'
 
 export async function handler(event) {
@@ -44,8 +45,9 @@ export async function handler(event) {
   const userId = created?.user?.id
   if (!userId) return bad(500, 'User created but no id returned')
 
-  // Generate portal token (16 chars)
-  const token = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10)
+  // Portal token: with snapshot reads gated only by token knowledge, this is
+  // the sole barrier — 192 bits from a CSPRNG, never Math.random().
+  const token = randomBytes(24).toString('hex')
 
   // Insert portal_clients row
   const { error: clientErr } = await admin.from('portal_clients').insert({

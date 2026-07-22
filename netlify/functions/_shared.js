@@ -1,6 +1,7 @@
 // Shared helpers for portal admin Netlify Functions.
 // These run server-side so the SUPABASE_SERVICE_ROLE_KEY never reaches the client.
 
+import { randomInt } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
@@ -76,10 +77,12 @@ export function preflight() {
   }
 }
 
-// Random temp password — 12 chars, mixed alphabet
+// Random temp password — 12 chars, mixed alphabet. CSPRNG, not Math.random():
+// whoever logs in first with this password owns the portal account, so a
+// predictable value is a takeover path.
 export function genTempPassword() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
   let out = ''
-  for (let i = 0; i < 12; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)]
+  for (let i = 0; i < 12; i++) out += alphabet[randomInt(alphabet.length)]
   return out
 }

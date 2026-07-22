@@ -6847,8 +6847,21 @@ This proposal is valid for 30 days.`;
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
+// Starter seed for real (non-demo) sessions: one generic entity named after
+// the account, default pipeline, zero sample data. The id stays "e3" so any
+// account that stored data against the old seed's default entity (without
+// ever persisting crm:entities) keeps seeing that data. The DEMO constants
+// with their sample entities are used exclusively by /demo mode.
+function makeStarterSeed(account){
+  return {
+    ...DEMO,
+    entities:[{id:"e3",name:account?.name||"My Business",type:"Business",color:"#1D4ED8"}],
+    customFields:[],
+  };
+}
+
 export default function App({session,onLogout,demoMode=false,account=null,accounts=[],onSwitchAccount}={}){
-  const D = demoMode ? DEMO_FULL : DEMO;
+  const D = demoMode ? DEMO_FULL : makeStarterSeed(account);
   // Role of the current user in the active account. Demo mode acts as owner
   // so every surface is explorable; real sessions get it from account_members.
   const myRole = demoMode ? "owner" : (account?.role || "member");
