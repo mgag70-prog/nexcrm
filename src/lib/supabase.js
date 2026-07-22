@@ -54,7 +54,12 @@ export async function resolveAccounts() {
     .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
   if (!accounts.length) {
     const { data: sess } = await supabase.auth.getSession()
-    const email = sess?.session?.user?.email || ''
+    const user = sess?.session?.user
+    // Never bootstrap a CRM account for a portal client that strays here.
+    if (user?.user_metadata?.role === 'portal_client') {
+      throw new Error('Portal client accounts cannot use the CRM — visit /portal/login instead')
+    }
+    const email = user?.email || ''
     const name = email ? email.split('@')[0] : 'My Workspace'
     const { data: newId, error: cErr } = await supabase.rpc('create_account', { p_name: name })
     if (cErr) throw cErr

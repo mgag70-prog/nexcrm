@@ -86,6 +86,14 @@ function AuthGate() {
 
   if (!session) return <Auth />
 
+  // Portal clients share this Supabase auth project. If one lands on the CRM
+  // root, send them to their portal — rendering App would bootstrap a CRM
+  // account for them via resolveAccounts().
+  if (session.user?.user_metadata?.role === 'portal_client') {
+    window.location.replace('/portal/dashboard')
+    return <CenteredScreen>Redirecting to your portal…</CenteredScreen>
+  }
+
   if (recovery) return <ResetPassword onDone={() => setRecovery(false)} />
 
   if (!acct) return <CenteredScreen>Loading your workspace…</CenteredScreen>
