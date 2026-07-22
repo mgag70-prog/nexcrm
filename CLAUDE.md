@@ -58,16 +58,35 @@ default to the wrong one.
 
 ### Tables
 
-- `crm_store` — primary data store. Columns: `key` (text PK), `value`
-  (text, JSON-serialized), `user_id` (uuid). RLS restricts rows to the
-  authenticated owner's `auth.uid()`. Composite PK on (user_id, key).
+Data belongs to an ACCOUNT (the team + billing unit); users are members of
+one or more accounts with a role in each (multi-user team access, July 2026).
+
+- `accounts` — the team/billing unit. Columns: `id`, `name`, `created_by`,
+  `plan`, `created_at`. Matt's account is "GrayHQ Consulting"
+  (`0c7fd6a5-3e40-48b2-9920-4c5d0135e07b`).
+- `account_members` — membership + role. Columns: `id`, `account_id`,
+  `user_id`, `role` ('owner'|'admin'|'member'; 'field' reserved),
+  `created_at`. Unique on (account_id, user_id). Exactly one owner per
+  account. Writes go ONLY through SECURITY DEFINER functions
+  (`set_member_role`, `remove_member`, `transfer_ownership`,
+  `create_account`, `accept_invite`) — there are no direct write policies.
+- `account_invites` — pending team invites. Columns: `id`, `account_id`,
+  `email`, `role`, `token` (unique, the invite URL secret), `invited_by`,
+  `accepted`, `created_at`, `expires_at` (14 days). Owner/admin only via RLS.
+  Accept flow uses `get_invite(token)` / `accept_invite(token)` RPCs.
+- `crm_store` — primary data store. Columns: `key`, `value` (text,
+  JSON-serialized), `account_id` (uuid), `user_id` (uuid, legacy safety net,
+  records last writer). Composite PK on (account_id, key). RLS gates all
+  four verbs on `is_account_member(account_id)` (SECURITY DEFINER helper;
+  `get_my_role(account_id)` is the role-checking sibling).
 - `portal_snapshots` — snapshot of data exposed to a client portal.
   Columns: `token`, `payload` (jsonb), `scope`, `scope_id`, `entity_id`,
-  `settings`, `created_at`. Public read, authenticated write.
+  `settings`, `account_id`, `created_at`. Public read, authenticated write.
 - `portal_clients` — links a Supabase auth user to a portal token.
-  Columns: `id`, `user_id`, `token`, `entity_id`, `scope`,
-  `scope_id`, `first_login`, `created_at`, `last_accessed`.
-  RLS: users see only their own row.
+  Columns: `id`, `user_id`, `token`, `entity_id`, `scope`, `scope_id`,
+  `first_login`, `account_id`, `created_at`, `last_accessed`.
+  RLS: users see only their own row. The portal admin Netlify Functions
+  verify the caller is owner/admin of the row's `account_id`.
 - `portal_messages` — bidirectional messages between client and CRM owner.
   Columns: `id`, `token`, `sender_type` (client|owner), `sender_name`,
   `content`, `created_at`, `read`. Authenticated read/write.
@@ -150,6 +169,10 @@ Demo entities (visible only at /demo, never saved to Supabase):
 
 Working:
 - Full CRM at hqops.app with email/password auth
+- Multi-user team access (July 2026): accounts + roles (owner/admin/member),
+  account switcher in the sidebar, Settings → Team tab with copy-link
+  invites, /invite/:token accept flow. Role checks enforced in RLS/definer
+  functions and in the portal admin Netlify Functions, not just the UI.
 - Contacts, Companies, Deals with proper bidirectional relationships
 - Pipeline with 8 stages (New Lead → Contacted → Responded / Interested → Follow-up / Discovery → Demo Scheduled → Proposal Sent → Won → Lost)
 - HubSpot CSV import (Contacts, Companies, Deals) with auto-detection and column mapping
@@ -175,7 +198,8 @@ Roadmap (not yet built):
 - QuickBooks / accounting sync
 - DocuSign eSignature (currently using built-in canvas signing)
 - Twilio SMS sequences
-- Multi-user / team access
+- 'field' role for account_members (reserved in the check constraint, not implemented)
+- Invite emails (invites are copy-link only until transactional email exists)
 
 ## Reference Context
 
