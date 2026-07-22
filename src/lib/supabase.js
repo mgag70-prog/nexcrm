@@ -202,16 +202,15 @@ if (typeof window !== 'undefined') {
 //   create policy "portal owner delete" on public.portal_snapshots for delete to authenticated using (true);
 export async function fetchPortalSnapshot(token) {
   try {
-    const { data, error } = await supabase
-      .from('portal_snapshots')
-      .select('payload, created_at')
-      .eq('token', token)
-      .maybeSingle()
+    // SECURITY DEFINER RPC: returns only the row for this token. Direct table
+    // selects are member-only now — public reads would allow enumerating
+    // every account's snapshots with just the anon key.
+    const { data, error } = await supabase.rpc('get_portal_snapshot', { p_token: token })
     if (error) {
       console.error('[fetchPortalSnapshot]', error)
       return null
     }
-    return data
+    return data?.[0] || null
   } catch (e) {
     console.error('[fetchPortalSnapshot] threw', e)
     return null

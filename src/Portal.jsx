@@ -208,11 +208,25 @@ function ClientPortal({ navigate }) {
   // up so the client portal updates without a manual refresh.
   useEffect(() => {
     if (!client?.token) return
-    const unsub = subscribePortalSnapshot(client.token, async () => {
+    const refresh = async () => {
       const fresh = await fetchPortalSnapshot(client.token)
       if (fresh) setSnapshot(fresh)
-    })
-    return unsub
+    }
+    // Realtime events are RLS-filtered: portal clients can no longer SELECT
+    // portal_snapshots directly, so change events never reach them. Keep the
+    // subscription (still fires for account members previewing a portal) and
+    // fall back to polling + refetch-on-focus for clients.
+    const unsub = subscribePortalSnapshot(client.token, refresh)
+    const interval = setInterval(refresh, 60000)
+    const onFocus = () => { if (document.visibilityState !== 'hidden') refresh() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      unsub()
+      clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
   }, [client?.token])
 
   // Realtime: new owner messages bump the unread badge (unless we're already on
