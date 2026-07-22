@@ -3,7 +3,7 @@
 // Auth: Bearer <owner JWT>
 // Action: deletes Supabase auth user, deletes portal_clients + portal_snapshots rows
 
-import { adminClient, requireOwner, ok, bad, preflight } from './_shared.js'
+import { adminClient, requireOwner, requireAccountRole, ok, bad, preflight } from './_shared.js'
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return preflight()
@@ -18,10 +18,18 @@ export async function handler(event) {
   if (!userId && !token) return bad(400, 'Missing userId or token')
 
   const admin = adminClient()
-  if (!userId && token) {
-    const { data } = await admin.from('portal_clients').select('user_id').eq('token', token).maybeSingle()
-    userId = data?.user_id
-  }
+  // Resolve the portal row for its owning account; the caller must be
+  // owner/admin of that account before anything is deleted.
+  const query = admin.from('portal_clients').select('user_id, token, account_id')
+  const { data: portalRow, error: rowErr } = await (userId
+    ? query.eq('user_id', userId).maybeSingle()
+    : query.eq('token', token).maybeSingle())
+  if (rowErr || !portalRow) return bad(404, 'Portal client not found')
+  userId = portalRow.user_id
+  token = token || portalRow.token
+
+  const role = await requireAccountRole(admin, owner.id, portalRow.account_id)
+  if (!role) return bad(403, 'You must be an owner or admin of the account that owns this portal')
 
   // Each call is wrapped in try/catch — Supabase query builders aren't vanilla Promises
   // and don't have .catch(); they reject the awaited promise normally.

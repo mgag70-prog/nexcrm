@@ -32,6 +32,22 @@ export async function requireOwner(authHeader) {
   return data.user
 }
 
+// Verify the calling user is an owner or admin of the given account.
+// Returns their role string, or null if they aren't (or accountId is missing).
+// Uses the service-role client — account_members RLS doesn't apply here, so
+// the check itself is authoritative.
+export async function requireAccountRole(admin, userId, accountId, roles = ['owner', 'admin']) {
+  if (!userId || !accountId) return null
+  const { data, error } = await admin
+    .from('account_members')
+    .select('role')
+    .eq('account_id', accountId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error || !data) return null
+  return roles.includes(data.role) ? data.role : null
+}
+
 export function ok(body) {
   return {
     statusCode: 200,

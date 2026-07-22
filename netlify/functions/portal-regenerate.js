@@ -3,7 +3,7 @@
 // Auth: Bearer <owner JWT>
 // Action: generates new temp password, updates auth user, sets first_login=true
 
-import { adminClient, requireOwner, ok, bad, preflight, genTempPassword } from './_shared.js'
+import { adminClient, requireOwner, requireAccountRole, ok, bad, preflight, genTempPassword } from './_shared.js'
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return preflight()
@@ -18,11 +18,18 @@ export async function handler(event) {
   if (!userId && !token) return bad(400, 'Missing userId or token')
 
   const admin = adminClient()
-  if (!userId && token) {
-    const { data, error } = await admin.from('portal_clients').select('user_id').eq('token', token).maybeSingle()
-    if (error || !data?.user_id) return bad(404, 'Portal client not found for token')
-    userId = data.user_id
-  }
+  // Look up the portal row to learn both the target user and, critically,
+  // which account owns this portal — the caller must be owner/admin of THAT
+  // account, not merely an authenticated CRM user.
+  const query = admin.from('portal_clients').select('user_id, account_id')
+  const { data: portalRow, error: rowErr } = await (userId
+    ? query.eq('user_id', userId).maybeSingle()
+    : query.eq('token', token).maybeSingle())
+  if (rowErr || !portalRow?.user_id) return bad(404, 'Portal client not found')
+  userId = portalRow.user_id
+
+  const role = await requireAccountRole(admin, owner.id, portalRow.account_id)
+  if (!role) return bad(403, 'You must be an owner or admin of the account that owns this portal')
 
   const password = genTempPassword()
   const { error: updErr } = await admin.auth.admin.updateUserById(userId, { password })

@@ -5,7 +5,7 @@
 //         inserts portal_clients row + portal_snapshots row,
 //         returns { token, password, portalUrl }
 
-import { adminClient, requireOwner, ok, bad, preflight, genTempPassword } from './_shared.js'
+import { adminClient, requireOwner, requireAccountRole, ok, bad, preflight, genTempPassword } from './_shared.js'
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return preflight()
@@ -16,11 +16,18 @@ export async function handler(event) {
 
   let body
   try { body = JSON.parse(event.body || '{}') } catch { return bad(400, 'Invalid JSON') }
-  const { email, scope, scopeId, entityId, payload, settings } = body
+  const { email, scope, scopeId, entityId, payload, settings, accountId } = body
   if (!email || !scope || !scopeId || !entityId) return bad(400, 'Missing required fields')
+  if (!accountId) return bad(400, 'Missing accountId')
   if (scope !== 'contact' && scope !== 'company') return bad(400, 'Invalid scope')
 
   const admin = adminClient()
+
+  // The caller must be an owner/admin of the account this portal will belong
+  // to — being any authenticated CRM user is not enough.
+  const role = await requireAccountRole(admin, owner.id, accountId)
+  if (!role) return bad(403, 'You must be an owner or admin of this account to create portals')
+
   const password = genTempPassword()
 
   // Create auth user
@@ -48,6 +55,7 @@ export async function handler(event) {
     scope,
     scope_id: scopeId,
     first_login: true,
+    account_id: accountId,
   })
   if (clientErr) {
     // Roll back the auth user to avoid orphan
@@ -64,6 +72,7 @@ export async function handler(event) {
     entity_id: entityId,
     settings: settings || {},
     created_at: new Date().toISOString(),
+    account_id: accountId,
   })
   if (snapErr) {
     try { await admin.from('portal_clients').delete().eq('user_id', userId) } catch (e) { console.error('[portal-create] rollback portal_clients failed:', e?.message || e) }

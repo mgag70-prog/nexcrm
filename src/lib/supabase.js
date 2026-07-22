@@ -20,14 +20,95 @@ async function requireUserId() {
   return id
 }
 
+// ─── ACCOUNTS (multi-user team access) ──────────────────────────────────────
+// Data belongs to an ACCOUNT; users are members of one or more accounts with a
+// role in each. The storage adapter below is account-scoped: nothing reads or
+// writes crm_store until resolveAccounts() has picked an active account.
+
+let activeAccountId = null
+let myAccounts = [] // [{ id, name, plan, role, createdAt }]
+
+const activeAccountStorageKey = (userId) => `hqops:activeAccount:${userId}`
+
+// Resolve the accounts this user belongs to and pick the active one
+// (last used from localStorage if still a member, else the first).
+// A brand-new signup has no account yet — bootstrap one via create_account().
+export async function resolveAccounts() {
+  const userId = await requireUserId()
+  // RLS lets members see ALL membership rows of their accounts (the Team tab
+  // needs that) — filter to OUR rows or a teammate's role would leak in here.
+  const { data, error } = await supabase
+    .from('account_members')
+    .select('role, account:accounts(id, name, plan, created_at)')
+    .eq('user_id', userId)
+  if (error) throw error
+  let accounts = (data || [])
+    .filter((r) => r.account)
+    .map((r) => ({
+      id: r.account.id,
+      name: r.account.name,
+      plan: r.account.plan,
+      role: r.role,
+      createdAt: r.account.created_at,
+    }))
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+  if (!accounts.length) {
+    const { data: sess } = await supabase.auth.getSession()
+    const email = sess?.session?.user?.email || ''
+    const name = email ? email.split('@')[0] : 'My Workspace'
+    const { data: newId, error: cErr } = await supabase.rpc('create_account', { p_name: name })
+    if (cErr) throw cErr
+    accounts = [{ id: newId, name, plan: 'free', role: 'owner', createdAt: new Date().toISOString() }]
+  }
+  myAccounts = accounts
+  let saved = null
+  try { saved = localStorage.getItem(activeAccountStorageKey(userId)) } catch { /* private mode */ }
+  const active = accounts.find((a) => a.id === saved) || accounts[0]
+  activeAccountId = active.id
+  try { localStorage.setItem(activeAccountStorageKey(userId), active.id) } catch { /* private mode */ }
+  return { accounts, active }
+}
+
+export function listMyAccounts() {
+  return myAccounts
+}
+
+export function getActiveAccount() {
+  return myAccounts.find((a) => a.id === activeAccountId) || null
+}
+
+export function getMyRole(accountId) {
+  const acc = myAccounts.find((a) => a.id === (accountId || activeAccountId))
+  return acc?.role || null
+}
+
+// Persist + activate an account choice. When called before resolveAccounts()
+// (e.g. from the invite-accept page) membership can't be validated locally,
+// so we just persist the choice for the next load.
+export async function setActiveAccount(id) {
+  if (!id) throw new Error('Missing account id')
+  if (myAccounts.length && !myAccounts.some((a) => a.id === id)) {
+    throw new Error('Not a member of that account')
+  }
+  const userId = await requireUserId()
+  try { localStorage.setItem(activeAccountStorageKey(userId), id) } catch { /* private mode */ }
+  activeAccountId = id
+}
+
+function requireAccountId() {
+  if (!activeAccountId) throw new Error('No active account — resolveAccounts() has not completed')
+  return activeAccountId
+}
+
 export const storage = {
   async get(key) {
     try {
-      const userId = await requireUserId()
+      await requireUserId()
+      const accountId = requireAccountId()
       const { data, error } = await supabase
         .from('crm_store')
         .select('key, value')
-        .eq('user_id', userId)
+        .eq('account_id', accountId)
         .eq('key', key)
         .maybeSingle()
       if (error) {
@@ -44,11 +125,13 @@ export const storage = {
   async set(key, value) {
     try {
       const userId = await requireUserId()
+      const accountId = requireAccountId()
       const { error } = await supabase
         .from('crm_store')
         .upsert(
-          { key, value: String(value), user_id: userId },
-          { onConflict: 'user_id,key' },
+          // user_id records the last writer; it is no longer part of the PK.
+          { key, value: String(value), account_id: accountId, user_id: userId },
+          { onConflict: 'account_id,key' },
         )
       if (error) {
         console.error('[storage.set]', key, error)
@@ -61,11 +144,12 @@ export const storage = {
   },
   async delete(key) {
     try {
-      const userId = await requireUserId()
+      await requireUserId()
+      const accountId = requireAccountId()
       const { error } = await supabase
         .from('crm_store')
         .delete()
-        .eq('user_id', userId)
+        .eq('account_id', accountId)
         .eq('key', key)
       if (error) console.error('[storage.delete]', key, error)
     } catch (e) {
@@ -74,11 +158,12 @@ export const storage = {
   },
   async list(prefix) {
     try {
-      const userId = await requireUserId()
+      await requireUserId()
+      const accountId = requireAccountId()
       const { data, error } = await supabase
         .from('crm_store')
         .select('key')
-        .eq('user_id', userId)
+        .eq('account_id', accountId)
         .like('key', `${prefix}%`)
       if (error) {
         console.error('[storage.list]', prefix, error)
@@ -130,9 +215,12 @@ export async function fetchPortalSnapshot(token) {
 
 export async function writePortalSnapshot(token, payload) {
   try {
-    const { error } = await supabase
-      .from('portal_snapshots')
-      .upsert({ token, payload, created_at: new Date().toISOString() })
+    const row = { token, payload, created_at: new Date().toISOString() }
+    // Stamp the owning account so the portal admin functions can verify who
+    // may manage this portal. Only the CRM side calls this, so the active
+    // account is the owner; portal pages never write snapshots.
+    if (activeAccountId) row.account_id = activeAccountId
+    const { error } = await supabase.from('portal_snapshots').upsert(row)
     if (error) console.error('[writePortalSnapshot]', error)
   } catch (e) {
     console.error('[writePortalSnapshot] threw', e)
@@ -173,7 +261,8 @@ async function postFn(name, body) {
 }
 
 export async function adminCreatePortal({ email, scope, scopeId, entityId, payload, settings }) {
-  return postFn('portal-create', { email, scope, scopeId, entityId, payload, settings })
+  const accountId = requireAccountId()
+  return postFn('portal-create', { email, scope, scopeId, entityId, payload, settings, accountId })
 }
 
 export async function adminRegeneratePortalPassword({ userId, token }) {
@@ -182,6 +271,78 @@ export async function adminRegeneratePortalPassword({ userId, token }) {
 
 export async function adminRevokePortal({ userId, token }) {
   return postFn('portal-revoke', { userId, token })
+}
+
+// ─── TEAM MANAGEMENT ────────────────────────────────────────────────────────
+// Member mutations go through SECURITY DEFINER functions in Postgres so the
+// role rules (exactly one owner, owner untouchable) hold even if the UI is
+// bypassed. Reads use RLS-gated tables/RPCs.
+
+export async function listAccountMembers(accountId) {
+  const { data, error } = await supabase.rpc('list_account_members', { p_account_id: accountId })
+  if (error) throw error
+  return data || []
+}
+
+export async function listAccountInvites(accountId) {
+  const { data, error } = await supabase
+    .from('account_invites')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+
+export async function createAccountInvite({ accountId, email, role }) {
+  const userId = await requireUserId()
+  const { data, error } = await supabase
+    .from('account_invites')
+    .insert({ account_id: accountId, email, role, invited_by: userId })
+    .select()
+    .single()
+  if (error) throw error
+  return data // includes the generated token
+}
+
+export async function revokeAccountInvite(inviteId) {
+  const { error } = await supabase.from('account_invites').delete().eq('id', inviteId)
+  if (error) throw error
+}
+
+export async function setMemberRole(accountId, userId, role) {
+  const { error } = await supabase.rpc('set_member_role', {
+    p_account_id: accountId, p_user_id: userId, p_role: role,
+  })
+  if (error) throw error
+}
+
+export async function removeMember(accountId, userId) {
+  const { error } = await supabase.rpc('remove_member', {
+    p_account_id: accountId, p_user_id: userId,
+  })
+  if (error) throw error
+}
+
+export async function transferOwnership(accountId, newOwnerUserId) {
+  const { error } = await supabase.rpc('transfer_ownership', {
+    p_account_id: accountId, p_new_owner: newOwnerUserId,
+  })
+  if (error) throw error
+}
+
+// ─── INVITE ACCEPT FLOW (/invite/:token) ────────────────────────────────────
+
+export async function getInvite(token) {
+  const { data, error } = await supabase.rpc('get_invite', { p_token: token })
+  if (error) throw error
+  return data?.[0] || null // null → invalid token
+}
+
+export async function acceptInvite(token) {
+  const { data, error } = await supabase.rpc('accept_invite', { p_token: token })
+  if (error) throw error
+  return data // the joined account's id
 }
 
 // ─── PORTAL CLIENT — runtime helpers used by the portal pages ────────────────

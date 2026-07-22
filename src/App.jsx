@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { writePortalSnapshot, deletePortalSnapshot, portalListMessagesForTokens, portalSendMessage, portalMarkMessagesRead, subscribePortalMessagesForTokens } from "./lib/supabase.js";
+import { writePortalSnapshot, deletePortalSnapshot, portalListMessagesForTokens, portalSendMessage, portalMarkMessagesRead, subscribePortalMessagesForTokens, listAccountMembers, listAccountInvites, createAccountInvite, revokeAccountInvite, setMemberRole, removeMember, transferOwnership } from "./lib/supabase.js";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend, LineChart, Line, AreaChart, Area } from "recharts";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -3598,7 +3598,228 @@ function AutomationView({automations,activeEntityId,addAutomation,updateAutomati
 // ═══════════════════════════════════════════════════════════════════════════════
 // SETTINGS VIEW (Entities, Products, Custom Fields, Email, Profile)
 // ═══════════════════════════════════════════════════════════════════════════════
-function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,openModal,setEntities,showToast,products,activeEntityId,addProduct,updateProduct,deleteProduct,customFields,addCustomField,deleteCustomField,webhooks,addWebhook,updateWebhook,deleteWebhook,employees=[],addEmployee,updateEmployee,deleteEmployee,fsSettings={},updateFsSettings}){
+// ─── TEAM MANAGEMENT (Settings → Team, owner/admin only) ─────────────────────
+function InviteLinkModal({info,onClose,copy}){
+  return(
+    <Modal title="Invite link" onClose={onClose}>
+      <div style={{fontSize:13,color:"#475569",marginBottom:14}}>
+        Email sending isn't wired up yet — copy this link and send it to <strong>{info.email}</strong> yourself. The invite expires in 14 days.
+      </div>
+      <div style={{...S.card({padding:14,background:"#F8FAFC"}),marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"90px 1fr",gap:8,fontSize:13}}>
+          <div style={{color:"#94A3B8"}}>Invite link</div><div style={{color:"#0F172A",wordBreak:"break-all"}}>{info.url}</div>
+          <div style={{color:"#94A3B8"}}>Email</div><div style={{color:"#0F172A"}}>{info.email}</div>
+          <div style={{color:"#94A3B8"}}>Role</div><div style={{color:"#0F172A",textTransform:"capitalize"}}>{info.role}</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button style={S.btnSecondary} onClick={onClose}>Close</button>
+        <button style={S.btnPrimary} onClick={()=>copy(info.url,"Invite link copied")}><Ic d={I.copy} size={13}/>Copy link</button>
+      </div>
+    </Modal>
+  );
+}
+
+function TeamPanel({account,myRole,session,demoMode,showToast}){
+  const [members,setMembers]=useState(null); // null = loading
+  const [invites,setInvites]=useState([]);
+  const [loadError,setLoadError]=useState(null);
+  const [showInvite,setShowInvite]=useState(false);
+  const [inviteForm,setInviteForm]=useState({email:"",role:"member"});
+  const [busy,setBusy]=useState(false);
+  const [linkModal,setLinkModal]=useState(null); // {email, role, url}
+
+  const myUserId=session?.user?.id;
+  const inviteUrl=(token)=>`${window.location.origin}/invite/${token}`;
+  const copy=async(text,msg="Copied")=>{try{await navigator.clipboard.writeText(text);showToast?.(msg);}catch{showToast?.("Could not copy","error");}};
+
+  const refresh=async()=>{
+    try{
+      const [m,i]=await Promise.all([listAccountMembers(account.id),listAccountInvites(account.id)]);
+      setMembers(m);setInvites(i);setLoadError(null);
+    }catch(e){
+      console.error("[team] load failed",e);
+      setLoadError(e?.message||String(e));
+      if(members===null)setMembers([]);
+    }
+  };
+  useEffect(()=>{if(demoMode||!account?.id)return;refresh();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[account?.id,demoMode]);
+
+  if(demoMode){
+    return <EmptyState icon={I.gear} title="Team management is unavailable in demo mode" message="Sign up to invite teammates, assign roles, and share an account."/>;
+  }
+
+  const submitInvite=async()=>{
+    const email=inviteForm.email.trim().toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showToast?.("Enter a valid email address","error");return;}
+    if(members?.some(m=>m.email?.toLowerCase()===email)){showToast?.("That person is already a member","error");return;}
+    setBusy(true);
+    try{
+      const row=await createAccountInvite({accountId:account.id,email,role:inviteForm.role});
+      setShowInvite(false);
+      setInviteForm({email:"",role:"member"});
+      setLinkModal({email:row.email,role:row.role,url:inviteUrl(row.token)});
+      refresh();
+    }catch(e){showToast?.(e?.message||"Could not create invite","error");}
+    finally{setBusy(false);}
+  };
+
+  const changeRole=async(m,role)=>{
+    try{
+      await setMemberRole(account.id,m.user_id,role);
+      showToast?.(`${m.email} is now ${role==="admin"?"an admin":"a member"}`);
+      if(m.user_id===myUserId){window.location.reload();return;} // my own permissions changed
+      refresh();
+    }catch(e){showToast?.(e?.message||"Could not change role","error");}
+  };
+
+  const handleRemove=async(m)=>{
+    const self=m.user_id===myUserId;
+    const q=self
+      ?`Remove yourself from ${account.name}? You will immediately lose access to this account.`
+      :`Remove ${m.email} from ${account.name}? They will immediately lose access.`;
+    if(!confirm(q))return;
+    try{
+      await removeMember(account.id,m.user_id);
+      if(self){window.location.reload();return;}
+      showToast?.(`${m.email} removed`);
+      refresh();
+    }catch(e){showToast?.(e?.message||"Could not remove member","error");}
+  };
+
+  const handleTransfer=async(m)=>{
+    if(!confirm(`Transfer ownership of ${account.name} to ${m.email}? You will become an admin. This cannot be undone by you.`))return;
+    try{
+      await transferOwnership(account.id,m.user_id);
+      // Roles changed for both parties — reload so everything re-resolves.
+      window.location.reload();
+    }catch(e){showToast?.(e?.message||"Could not transfer ownership","error");}
+  };
+
+  const revokeInvite=async(inv)=>{
+    if(!confirm(`Revoke the invite for ${inv.email}? The link will stop working.`))return;
+    try{
+      await revokeAccountInvite(inv.id);
+      showToast?.("Invite revoked");
+      refresh();
+    }catch(e){showToast?.(e?.message||"Could not revoke invite","error");}
+  };
+
+  const pendingInvites=invites.filter(i=>!i.accepted);
+  const roleRank={owner:0,admin:1,member:2,field:3};
+  const sortedMembers=[...(members||[])].sort((a,b)=>(roleRank[a.role]??9)-(roleRank[b.role]??9)||(a.created_at||"").localeCompare(b.created_at||""));
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <h3 style={{margin:0,fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Team</h3>
+          <p style={{margin:"4px 0 0",color:"#475569",fontSize:13}}>Everyone here shares all of <strong>{account.name}</strong>'s data across every entity.</p>
+        </div>
+        <button style={S.btnPrimary} onClick={()=>setShowInvite(true)}><Ic d={I.plus} size={14}/>Invite member</button>
+      </div>
+
+      {loadError&&(
+        <div style={{background:"#FEF2F2",border:"1px solid #FECACA",color:"#B91C1C",borderRadius:8,padding:"9px 12px",fontSize:12.5,marginBottom:14}}>
+          Could not load team data: {loadError} <button style={{background:"none",border:"none",color:"#B91C1C",cursor:"pointer",fontSize:12.5,padding:0,textDecoration:"underline"}} onClick={refresh}>Retry</button>
+        </div>
+      )}
+
+      {members===null?(
+        <div style={{fontSize:13,color:"#94A3B8",padding:"20px 0"}}>Loading team…</div>
+      ):(
+        <div style={{...S.card({overflow:"hidden"}),marginBottom:20}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #E9EEF6",fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,display:"grid",gridTemplateColumns:"2fr 130px 110px 200px",gap:12}}>
+            <div>Member</div><div>Role</div><div>Joined</div><div style={{textAlign:"right"}}>Actions</div>
+          </div>
+          {sortedMembers.map((m,i)=>{
+            const isOwnerRow=m.role==="owner";
+            const isSelf=m.user_id===myUserId;
+            return(
+              <div key={m.user_id} style={{padding:"13px 16px",borderTop:i?"1px solid #E9EEF6":"none",display:"grid",gridTemplateColumns:"2fr 130px 110px 200px",gap:12,alignItems:"center"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                  <Avatar name={m.email||"?"} size={28}/>
+                  <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {m.email}{isSelf&&<span style={{color:"#94A3B8",fontWeight:400}}> (you)</span>}
+                  </div>
+                </div>
+                <div>
+                  {isOwnerRow?(
+                    <span style={{display:"inline-block",background:"#EEF2FF",color:"#1D4ED8",borderRadius:6,padding:"3px 10px",fontSize:11.5,fontWeight:700}}>Owner</span>
+                  ):(
+                    <select style={{...S.select,padding:"5px 8px",fontSize:12}} value={m.role} onChange={e=>changeRole(m,e.target.value)}>
+                      <option value="admin">Admin</option>
+                      <option value="member">Member</option>
+                    </select>
+                  )}
+                </div>
+                <div style={{fontSize:11.5,color:"#475569"}}>{fmtDate(m.created_at)}</div>
+                <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                  {myRole==="owner"&&!isOwnerRow&&(
+                    <button style={{...S.btnSecondary,fontSize:11.5}} title="Transfer ownership to this member" onClick={()=>handleTransfer(m)}>Make owner</button>
+                  )}
+                  {!isOwnerRow&&(
+                    <button style={{...S.btnSecondary,color:"#EF4444",fontSize:11.5}} onClick={()=>handleRemove(m)}>Remove</button>
+                  )}
+                  {isOwnerRow&&<span style={{fontSize:11,color:"#94A3B8"}}>Can't be removed</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <h4 style={{margin:"0 0 10px",fontSize:13.5,fontWeight:700,color:"#0F172A"}}>Pending invites</h4>
+      {pendingInvites.length===0?(
+        <div style={{fontSize:12.5,color:"#94A3B8"}}>No pending invites.</div>
+      ):(
+        <div style={S.card({overflow:"hidden"})}>
+          {pendingInvites.map((inv,i)=>{
+            const expired=inv.expires_at&&new Date(inv.expires_at)<new Date();
+            return(
+              <div key={inv.id} style={{padding:"12px 16px",borderTop:i?"1px solid #E9EEF6":"none",display:"grid",gridTemplateColumns:"2fr 110px 1fr 170px",gap:12,alignItems:"center"}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{inv.email}</div>
+                <div style={{fontSize:12,color:"#475569",textTransform:"capitalize"}}>{inv.role}</div>
+                <div style={{fontSize:11.5,color:expired?"#B91C1C":"#94A3B8"}}>
+                  {expired?"Expired":`Expires ${fmtDate(inv.expires_at)}`}
+                </div>
+                <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                  {!expired&&(
+                    <button style={{...S.btnSecondary,fontSize:11.5}} onClick={()=>copy(inviteUrl(inv.token),"Invite link copied")}><Ic d={I.copy} size={12}/>Copy link</button>
+                  )}
+                  <button style={{...S.btnSecondary,color:"#EF4444",fontSize:11.5}} onClick={()=>revokeInvite(inv)}>Revoke</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showInvite&&(
+        <Modal title="Invite a team member" onClose={()=>setShowInvite(false)}>
+          <Field label="Email">
+            <input style={S.input} type="email" autoFocus placeholder="teammate@company.com" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter")submitInvite();}}/>
+          </Field>
+          <Field label="Role">
+            <select style={S.select} value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value}))}>
+              <option value="member">Member — full data access, no team or account management</option>
+              <option value="admin">Admin — everything except billing and account deletion</option>
+            </select>
+          </Field>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16}}>
+            <button style={S.btnSecondary} onClick={()=>setShowInvite(false)}>Cancel</button>
+            <button style={{...S.btnPrimary,opacity:busy?0.6:1}} disabled={busy} onClick={submitInvite}>{busy?"Creating…":"Create invite"}</button>
+          </div>
+        </Modal>
+      )}
+      {linkModal&&<InviteLinkModal info={linkModal} onClose={()=>setLinkModal(null)} copy={copy}/>}
+    </div>
+  );
+}
+
+function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,openModal,setEntities,showToast,products,activeEntityId,addProduct,updateProduct,deleteProduct,customFields,addCustomField,deleteCustomField,webhooks,addWebhook,updateWebhook,deleteWebhook,employees=[],addEmployee,updateEmployee,deleteEmployee,fsSettings={},updateFsSettings,account=null,myRole="member",canManageTeam=false,session=null,demoMode=false}){
   const fs=isFieldService(entity);
   const [tab,setTab]=useState("entities");
   const [connecting,setConnecting]=useState(null);
@@ -3633,6 +3854,8 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
 
   const tabList=[
     ["entities","Entities"],
+    // Team management is owner/admin only — members don't even see the tab.
+    ...(canManageTeam?[["team","Team"]]:[]),
     ...(fs?[["employees","Employees"],["fsettings","Field Service"]]:[]),
     ["products","Product Catalog"],
     ["fields","Custom Fields"],
@@ -3651,6 +3874,11 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
           ))}
         </div>
         <div style={{flex:1,padding:24,overflowY:"auto"}}>
+
+          {/* TEAM (owner/admin only) */}
+          {tab==="team"&&canManageTeam&&(
+            <TeamPanel account={account} myRole={myRole} session={session} demoMode={demoMode} showToast={showToast}/>
+          )}
 
           {/* ENTITIES */}
           {tab==="entities"&&(
@@ -4346,7 +4574,10 @@ function InvoicesView({invoices,contacts,products,timeEntries=[],activeEntityId,
 // ═══════════════════════════════════════════════════════════════════════════════
 // CLIENT PORTAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],expenses=[],activeEntityId,addPortalToken,updatePortalToken,deletePortalToken,refreshPortalSnapshot,buildSnapshotPayload,showToast,entity,setView,demoMode=false}){
+function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[],quotes=[],deals=[],tasks=[],expenses=[],activeEntityId,addPortalToken,updatePortalToken,deletePortalToken,refreshPortalSnapshot,buildSnapshotPayload,showToast,entity,setView,demoMode=false,myRole="member"}){
+  // Creating/regenerating/revoking portal logins is owner/admin only — the
+  // Netlify functions enforce this server-side; the UI hides it for members.
+  const canAdminPortals=demoMode||myRole==="owner"||myRole==="admin";
   const [tab,setTab]=useState("contact"); // contact | company
   const [generating,setGenerating]=useState(null); // {scope, scopeId, email, name} when generating
   const [editing,setEditing]=useState(null); // token being edited
@@ -4459,8 +4690,8 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
         </div>
       </PageHeader>
 
-      {/* Generator card */}
-      <div style={{...S.card({padding:18}),marginBottom:16}}>
+      {/* Generator card (owner/admin only) */}
+      {canAdminPortals&&<div style={{...S.card({padding:18}),marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:700,color:"#0F172A",marginBottom:8}}>Generate a {tab} portal</div>
         <div style={{fontSize:12,color:"#64748B",marginBottom:12}}>Pick a {tab}, set up their login, choose what they can see, then send them their credentials.</div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -4474,7 +4705,7 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
         {(tab==="contact"?eContacts:eCompanies).length===0&&(
           <div style={{fontSize:12,color:"#94A3B8",marginTop:8}}>No {tab}s in this workspace yet. <button style={{background:"none",border:"none",color:"#1D4ED8",cursor:"pointer",fontSize:12,padding:0,textDecoration:"underline"}} onClick={()=>setView?.(tab==="contact"?"contacts":"companies")}>Add one →</button></div>
         )}
-      </div>
+      </div>}
 
       {/* Active portals list */}
       {tokensByScope.length===0?(
@@ -4507,8 +4738,8 @@ function ClientPortalView({portalTokens,contacts,companies=[],invoices=[],docs=[
                   <button style={S.btnSecondary} title="Preview portal in new tab" onClick={()=>window.open(url,"_blank")}><Ic d={I.share} size={12}/></button>
                   <button style={S.btnSecondary} title="Refresh snapshot" onClick={()=>refreshPortalSnapshot?.(t.id)}><Ic d={I.repeat} size={12}/></button>
                   <button style={S.btnSecondary} title="Edit portal settings" onClick={()=>setEditing({id:t.id,name:rec?.name||t.scopeName||"Client",email:t.email||"",welcome:t.settings?.welcome||"",color:t.settings?.color||entity?.color||"#1D4ED8",enabledTabs:t.settings?.enabledTabs||{overview:true,invoices:true,documents:true,proposals:true,projects:true,messages:true,tasks:false,expenses:false},showDealValues:t.settings?.showDealValues!==false,showExpenses:!!t.settings?.showExpenses,notifyEmail:t.settings?.notifyEmail||""})}><Ic d={I.gear} size={12}/></button>
-                  <button style={S.btnSecondary} title="Regenerate password" onClick={()=>handleRegenerate(t)}><Ic d={I.zap} size={12}/></button>
-                  <button style={{...S.btnGhost,color:"#EF4444"}} title="Revoke" onClick={()=>handleRevoke(t)}><Ic d={I.trash} size={13}/></button>
+                  {canAdminPortals&&<button style={S.btnSecondary} title="Regenerate password" onClick={()=>handleRegenerate(t)}><Ic d={I.zap} size={12}/></button>}
+                  {canAdminPortals&&<button style={{...S.btnGhost,color:"#EF4444"}} title="Revoke" onClick={()=>handleRevoke(t)}><Ic d={I.trash} size={13}/></button>}
                 </div>
               </div>
             );
@@ -6616,8 +6847,12 @@ This proposal is valid for 30 days.`;
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
-export default function App({session,onLogout,demoMode=false}={}){
+export default function App({session,onLogout,demoMode=false,account=null,accounts=[],onSwitchAccount}={}){
   const D = demoMode ? DEMO_FULL : DEMO;
+  // Role of the current user in the active account. Demo mode acts as owner
+  // so every surface is explorable; real sessions get it from account_members.
+  const myRole = demoMode ? "owner" : (account?.role || "member");
+  const canManageTeam = myRole === "owner" || myRole === "admin";
   const [entities,setEntities]=useState(D.entities);
   const [activeEntityId,setActiveEntityId]=useState(demoMode?"e1":"e3");
   const [contacts,setContacts]=useState(D.contacts);
@@ -6666,6 +6901,7 @@ export default function App({session,onLogout,demoMode=false}={}){
   const [modal,setModal]=useState(null);
   const [toast,setToast]=useState(null);
   const [entityMenuOpen,setEntityMenuOpen]=useState(false);
+  const [accountMenuOpen,setAccountMenuOpen]=useState(false);
   const [sigModal,setSigModal]=useState(null);
   // Auto-close sidebar when view changes or breakpoint crosses; lock body scroll while open on mobile.
   // NOTE: these effects must come AFTER the selContact/selCompany/selDeal state declarations they reference,
@@ -7351,9 +7587,52 @@ export default function App({session,onLogout,demoMode=false}={}){
             <button onClick={()=>setSidebarOpen(false)} aria-label="Close menu" style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:6,color:"#94A3B8",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic d={I.x} size={16}/></button>
           )}
         </div>
+        {/* Account Switcher — sits ABOVE the entity switcher so the
+            Account → Entity hierarchy reads top-down */}
+        {!demoMode&&account&&(
+          <div style={{padding:"10px 10px 0",position:"relative"}}>
+            <div style={{fontSize:9,color:"#475569",letterSpacing:1,textTransform:"uppercase",fontWeight:700,marginBottom:4,paddingLeft:2}}>Account</div>
+            {accounts.length>1?(
+              <>
+                <button style={{width:"100%",background:"rgba(255,255,255,0.1)",border:"1px solid #2A4A80",borderRadius:8,padding:"8px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,color:"#FFFFFF",fontSize:12}} onClick={()=>{setAccountMenuOpen(o=>!o);setEntityMenuOpen(false);}}>
+                  <span style={{width:20,height:20,borderRadius:6,background:"#1D4ED8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,flexShrink:0}}>{(account.name?.[0]||"?").toUpperCase()}</span>
+                  <span style={{flex:1,minWidth:0,textAlign:"left"}}>
+                    <span style={{display:"block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:700}}>{account.name}</span>
+                    <span style={{display:"block",fontSize:9.5,color:"#94A3B8",textTransform:"capitalize"}}>{myRole}</span>
+                  </span>
+                  <Ic d={I.down} size={12} c="#64748B"/>
+                </button>
+                {accountMenuOpen&&(
+                  <div style={{position:"absolute",top:"calc(100% + 2px)",left:10,right:10,background:"#162B55",border:"1px solid #1E3A6B",borderRadius:10,zIndex:60,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.4)"}}>
+                    {accounts.map(a=>(
+                      <div key={a.id} style={{padding:"9px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,background:a.id===account.id?"rgba(255,255,255,0.1)":"transparent",borderBottom:"1px solid #1E3A6B"}}
+                        onClick={()=>{setAccountMenuOpen(false);if(a.id!==account.id)onSwitchAccount?.(a.id);}}>
+                        <span style={{width:20,height:20,borderRadius:6,background:a.id===account.id?"#1D4ED8":"#1E3A6B",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{(a.name?.[0]||"?").toUpperCase()}</span>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</div>
+                          <div style={{fontSize:10,color:"#475569",textTransform:"capitalize"}}>{a.role}</div>
+                        </div>
+                        {a.id===account.id&&<Ic d={I.ok} size={12} c="#10B981"/>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ):(
+              /* Exactly one account — static label, no implied choice */
+              <div style={{width:"100%",background:"rgba(255,255,255,0.04)",border:"1px solid #1E3A6B",borderRadius:8,padding:"8px 10px",display:"flex",alignItems:"center",gap:8,color:"#E2E8F0",fontSize:12}}>
+                <span style={{width:20,height:20,borderRadius:6,background:"#1D4ED8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,flexShrink:0}}>{(account.name?.[0]||"?").toUpperCase()}</span>
+                <span style={{flex:1,minWidth:0}}>
+                  <span style={{display:"block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:700}}>{account.name}</span>
+                  <span style={{display:"block",fontSize:9.5,color:"#94A3B8",textTransform:"capitalize"}}>{myRole}</span>
+                </span>
+              </div>
+            )}
+          </div>
+        )}
         {/* Entity Switcher */}
         <div style={{padding:"8px 10px 4px",position:"relative"}}>
-          <button style={{width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid #1E3A6B",borderRadius:8,padding:"7px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:7,color:"#E2E8F0",fontSize:12}} onClick={()=>setEntityMenuOpen(o=>!o)}>
+          <button style={{width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid #1E3A6B",borderRadius:8,padding:"7px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:7,color:"#E2E8F0",fontSize:12}} onClick={()=>{setEntityMenuOpen(o=>!o);setAccountMenuOpen(false);}}>
             <span style={{display:"flex",alignItems:"center",gap:7,flex:1,minWidth:0}}>
               <div style={{width:8,height:8,borderRadius:"50%",background:entity?.color||"#3B82F6",flexShrink:0}}/>
               <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:600}}>{entity?.name}</span>
@@ -7484,13 +7763,13 @@ export default function App({session,onLogout,demoMode=false}={}){
           {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} approveTimeEntry={approveTimeEntry} rejectTimeEntry={rejectTimeEntry} resolveTimeCorrection={resolveTimeCorrection} requestTimeCorrection={requestTimeCorrection} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
           {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
-          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} updatePortalToken={updatePortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} buildSnapshotPayload={buildSnapshotPayload} showToast={showToast} entity={entity} setView={setView} demoMode={demoMode}/>}
+          {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} updatePortalToken={updatePortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} buildSnapshotPayload={buildSnapshotPayload} showToast={showToast} entity={entity} setView={setView} demoMode={demoMode} myRole={myRole}/>}
           {view==="import"&&<ImportView activeEntityId={activeEntityId} entity={entity} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
           {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} expenses={expenses} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
-          {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings}/>}
+          {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings} account={account} myRole={myRole} canManageTeam={canManageTeam} session={session} demoMode={demoMode}/>}
         </div>
         )}
       </div>
