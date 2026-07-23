@@ -5,7 +5,7 @@
 // Synced email/calendar history is intentionally left in place.
 
 import { adminClient, requireOwner, requireAccountRole, ok, bad, preflight } from './_shared.js'
-import { revokeToken } from './_google.js'
+import { revokeToken } from './lib/google.js'
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return preflight()

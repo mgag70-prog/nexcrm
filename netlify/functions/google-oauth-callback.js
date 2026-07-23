@@ -5,7 +5,7 @@
 // (service-role only table), then bounces back into the app.
 
 import { adminClient, bad } from './_shared.js'
-import { verifyState, exchangeCode, fetchUserinfo, GOOGLE_SCOPES } from './_google.js'
+import { verifyState, exchangeCode, fetchUserinfo, GOOGLE_SCOPES } from './lib/google.js'
 
 const back = (host, params) => ({
   statusCode: 302,

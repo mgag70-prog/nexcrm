@@ -4,7 +4,7 @@
 // Returns { url } — the Google consent URL the browser should navigate to.
 
 import { adminClient, requireOwner, requireAccountRole, ok, bad, preflight } from './_shared.js'
-import { signState, buildConsentUrl } from './_google.js'
+import { signState, buildConsentUrl } from './lib/google.js'
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return preflight()

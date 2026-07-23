@@ -4,7 +4,7 @@
 // Manual "Sync now" — same core as the scheduled run, one connection.
 
 import { adminClient, requireOwner, requireAccountRole, ok, bad, preflight } from './_shared.js'
-import { syncConnection } from './_google.js'
+import { syncConnection } from './lib/google.js'
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return preflight()
