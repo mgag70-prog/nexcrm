@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>HQOps — Calendar (mockup)</title>
+<style>
+  :root{
+    --navy:#0F2044; --navy-2:#1E3A6B; --green:#059669;
+    --bg:#F1F5F9; --border:#E2E8F0; --text:#0F172A; --muted:#475569;
+    --faint:#94A3B8; --danger:#DC2626; --amber:#D97706; --violet:#7C3AED;
+    --row-h:64px; --gutter:64px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:var(--text); background:var(--bg);
+    display:flex; overflow:hidden;
+    font-size:13px; -webkit-font-smoothing:antialiased;
+  }
+  .num{font-variant-numeric:tabular-nums;}
+
+  /* ---------- sidebar ---------- */
+  .side{
+    width:216px; flex-shrink:0; background:var(--navy); color:#fff;
+    display:flex; flex-direction:column; padding:16px 0;
+  }
+  .brand{padding:0 18px 18px; font-size:19px; font-weight:800; letter-spacing:-.02em;}
+  .brand span{color:var(--green);}
+  .nav-lbl{
+    padding:14px 18px 6px; font-size:10px; letter-spacing:.09em;
+    text-transform:uppercase; color:#64789F; font-weight:700;
+  }
+  .nav a{
+    display:flex; align-items:center; gap:9px; padding:7px 18px;
+    color:#C7D2E4; text-decoration:none; font-size:13px;
+  }
+  .nav a:hover{background:rgba(255,255,255,.06); color:#fff;}
+  .nav a.on{background:rgba(255,255,255,.11); color:#fff; font-weight:600;
+    box-shadow:inset 3px 0 0 var(--green);}
+  .nav .ic{width:15px; text-align:center; opacity:.85; font-size:12px;}
+  .side-foot{margin-top:auto; padding:12px 18px 0; border-top:1px solid rgba(255,255,255,.09);}
+  .acct{font-size:11px; color:#8FA3C0;}
+  .acct b{display:block; color:#fff; font-size:12px; font-weight:600;}
+
+  /* ---------- main ---------- */
+  .main{flex:1; display:flex; flex-direction:column; min-width:0;}
+
+  /* brief strip = the "scheduled update" */
+  .brief{
+    background:#fff; border-bottom:1px solid var(--border);
+    padding:13px 20px; display:flex; align-items:flex-start; gap:14px;
+  }
+  .brief-tag{
+    flex-shrink:0; font-size:9px; font-weight:800; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--green);
+    border:1px solid #A7F3D0; background:#F0FDF4;
+    padding:4px 7px; border-radius:4px; margin-top:1px;
+  }
+  .brief-body{font-size:13px; line-height:1.65; color:var(--text);}
+  .brief-body b{font-weight:650;}
+  .brief-body .sep{color:var(--faint); margin:0 7px;}
+  .brief-body .flag{color:var(--danger); font-weight:600;}
+  .brief-time{margin-left:auto; flex-shrink:0; font-size:11px; color:var(--faint); white-space:nowrap;}
+
+  /* controls */
+  .ctl{
+    background:#fff; border-bottom:1px solid var(--border);
+    padding:9px 20px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  }
+  .datenav{display:flex; align-items:center; gap:8px;}
+  .arrow{
+    width:26px; height:26px; border:1px solid var(--border); background:#fff;
+    border-radius:5px; cursor:pointer; color:var(--muted); font-size:13px; line-height:1;
+  }
+  .arrow:hover{background:var(--bg); color:var(--text);}
+  .range{font-size:14px; font-weight:650; letter-spacing:-.01em; min-width:172px;}
+  .today-btn{
+    border:1px solid var(--border); background:#fff; border-radius:5px;
+    padding:5px 10px; font-size:12px; cursor:pointer; color:var(--muted); font-weight:600;
+  }
+  .today-btn:hover{background:var(--bg); color:var(--text);}
+
+  .seg{display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden;}
+  .seg button{
+    border:0; background:#fff; padding:5px 13px; font-size:12px; font-weight:600;
+    color:var(--muted); cursor:pointer; border-right:1px solid var(--border);
+  }
+  .seg button:last-child{border-right:0;}
+  .seg button.on{background:var(--navy); color:#fff;}
+
+  .chips{display:flex; gap:6px; align-items:center; margin-left:auto; flex-wrap:wrap;}
+  .chip{
+    display:inline-flex; align-items:center; gap:6px;
+    border:1px solid var(--border); background:#fff; border-radius:20px;
+    padding:4px 11px 4px 8px; font-size:11.5px; font-weight:600;
+    color:var(--muted); cursor:pointer; user-select:none;
+  }
+  .chip .dot{width:8px; height:8px; border-radius:50%; background:currentColor;}
+  .chip.off{opacity:.4;}
+  .chip.all{padding-left:11px; color:var(--text);}
+  .chip:hover{border-color:#CBD5E1;}
+
+  /* ---------- grid ---------- */
+  .scroll{flex:1; overflow:auto; background:#fff;}
+  .head{
+    display:grid; grid-template-columns:var(--gutter) repeat(7,minmax(0,1fr));
+    position:sticky; top:0; z-index:5; background:#fff;
+    border-bottom:1px solid var(--border);
+  }
+  .head .corner{border-right:1px solid var(--border);}
+  .dayhead{
+    padding:8px 9px 0; border-right:1px solid var(--border); text-align:left;
+  }
+  .dayhead:last-child{border-right:0;}
+  .dh-top{display:flex; align-items:baseline; gap:6px;}
+  .dh-dow{font-size:10px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);}
+  .dh-num{font-size:17px; font-weight:700; letter-spacing:-.02em;}
+  .dayhead.today .dh-num{
+    background:var(--navy); color:#fff; border-radius:6px;
+    padding:1px 7px; margin-left:-3px;
+  }
+  .dayhead.today .dh-dow{color:var(--navy);}
+  .dh-meta{font-size:10.5px; color:var(--faint); margin-top:2px;}
+
+  /* SIGNATURE: per-day entity load bar */
+  .load{display:flex; height:4px; border-radius:2px; overflow:hidden; margin:6px 0 7px; background:#EDF1F6;}
+  .load i{display:block; height:100%;}
+
+  .body{display:grid; grid-template-columns:var(--gutter) repeat(7,minmax(0,1fr)); position:relative;}
+  .gutter{border-right:1px solid var(--border);}
+  .hr{
+    height:var(--row-h); position:relative;
+    border-bottom:1px solid #F1F5F9;
+  }
+  .gutter .hr span{
+    position:absolute; top:3px; right:8px; font-size:10px; color:var(--faint);
+  }
+  .col{
+    position:relative; border-right:1px solid var(--border);
+    background-image:repeating-linear-gradient(to bottom,#F1F5F9 0 1px,transparent 1px var(--row-h));
+  }
+  .col:last-child{border-right:0;}
+  .col.weekend{background-color:#FBFCFD;}
+
+  .ev{
+    position:absolute; left:4px; right:4px; border-radius:5px;
+    padding:5px 7px; cursor:pointer; overflow:hidden;
+    border-left:3px solid var(--c); background:var(--bgc);
+    transition:box-shadow .12s ease, transform .12s ease;
+  }
+  .ev:hover{box-shadow:0 3px 10px rgba(15,32,68,.16); transform:translateY(-1px); z-index:3;}
+  .ev.sel{box-shadow:0 0 0 2px var(--c); z-index:4;}
+  .ev-t{font-size:10px; color:var(--muted); font-weight:600; letter-spacing:.01em;}
+  .ev-n{font-size:11.5px; font-weight:650; line-height:1.28; margin-top:1px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
+  .ev-w{font-size:10px; color:var(--c); font-weight:700; margin-top:2px;
+    text-transform:uppercase; letter-spacing:.05em;}
+  .ev.short{
+    padding:0 7px; display:flex; align-items:center; gap:6px;
+  }
+  .ev.short .ev-t{flex-shrink:0;}
+  .ev.short .ev-n{
+    display:block; margin-top:0; font-size:11px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .ev.short .ev-w{display:none;}
+  .ev.mid .ev-n{-webkit-line-clamp:1;}
+  .ev.mid .ev-w{display:none;}
+
+  .now{position:absolute; left:0; right:0; height:0; z-index:4; pointer-events:none;}
+  .now::before{content:""; position:absolute; left:0; right:0; top:0; border-top:1.5px solid var(--danger);}
+  .now::after{content:""; position:absolute; left:-4px; top:-4px; width:8px; height:8px;
+    background:var(--danger); border-radius:50%;}
+
+  /* ---------- context panel ---------- */
+  .panel{
+    width:0; flex-shrink:0; background:#fff; border-left:1px solid var(--border);
+    overflow:hidden; transition:width .18s ease; display:flex; flex-direction:column;
+  }
+  .panel.open{width:326px;}
+  .p-in{width:326px; display:flex; flex-direction:column; height:100%; overflow-y:auto;}
+  .p-head{padding:15px 18px 13px; border-bottom:1px solid var(--border); position:relative;}
+  .p-x{position:absolute; top:12px; right:12px; border:0; background:transparent;
+    color:var(--faint); cursor:pointer; font-size:17px; line-height:1; padding:3px;}
+  .p-x:hover{color:var(--text);}
+  .p-ws{display:inline-flex; align-items:center; gap:6px; font-size:10px; font-weight:800;
+    letter-spacing:.07em; text-transform:uppercase; color:var(--c);}
+  .p-ws .dot{width:7px; height:7px; border-radius:50%; background:var(--c);}
+  .p-title{font-size:15.5px; font-weight:700; letter-spacing:-.01em; margin:7px 0 3px; line-height:1.3;}
+  .p-when{font-size:12px; color:var(--muted);}
+  .p-sec{padding:13px 18px; border-bottom:1px solid var(--border);}
+  .p-lbl{font-size:9.5px; font-weight:800; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--faint); margin-bottom:8px;}
+  .who{display:flex; align-items:center; gap:10px;}
+  .av{width:34px; height:34px; border-radius:50%; background:var(--c); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0;}
+  .who-n{font-size:13.5px; font-weight:650;}
+  .who-m{font-size:11.5px; color:var(--muted);}
+  .link{color:var(--navy-2); text-decoration:none; border-bottom:1px solid #CBD5E1;}
+  .link:hover{border-bottom-color:var(--navy-2);}
+
+  .deal{border:1px solid var(--border); border-radius:7px; padding:10px 11px; margin-bottom:8px;}
+  .deal:last-child{margin-bottom:0;}
+  .deal-top{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .deal-n{font-size:12.5px; font-weight:650; line-height:1.3;}
+  .deal-v{font-size:13px; font-weight:750; white-space:nowrap;}
+  .deal-b{display:flex; align-items:center; gap:7px; margin-top:7px; flex-wrap:wrap;}
+  .badge{font-size:10px; font-weight:700; padding:2px 7px; border-radius:4px;
+    background:var(--bg); color:var(--muted);}
+  .hp{font-size:10px; font-weight:700; padding:2px 7px; border-radius:4px;}
+  .hp.ok{background:#F0FDF4; color:#15803D;}
+  .hp.warn{background:#FFFBEB; color:#B45309;}
+  .hp.bad{background:#FEF2F2; color:#B91C1C;}
+
+  .stale{background:#FEF2F2; border:1px solid #FECACA; border-radius:6px;
+    padding:8px 10px; font-size:11.5px; color:#991B1B; line-height:1.5;}
+  .stale b{font-weight:700;}
+
+  .ln{display:flex; justify-content:space-between; font-size:12px; padding:4px 0;}
+  .ln span:first-child{color:var(--muted);}
+  .ln span:last-child{font-weight:600;}
+
+  .acts{padding:13px 18px; display:flex; flex-direction:column; gap:7px; margin-top:auto;}
+  .btn{border:1px solid var(--border); background:#fff; border-radius:6px; padding:8px 12px;
+    font-size:12.5px; font-weight:650; color:var(--text); cursor:pointer; text-align:left;
+    display:flex; align-items:center; gap:8px;}
+  .btn:hover{background:var(--bg);}
+  .btn.pri{background:var(--navy); color:#fff; border-color:var(--navy);}
+  .btn.pri:hover{background:var(--navy-2);}
+  .btn .k{margin-left:auto; font-size:10px; color:var(--faint); font-weight:600;}
+  .btn.pri .k{color:#8FA3C0;}
+
+  .empty{padding:34px 22px; text-align:center; color:var(--faint); font-size:12.5px; line-height:1.6;}
+
+  .note{padding:9px 20px; background:#FFFBEB; border-top:1px solid #FDE68A;
+    font-size:11px; color:#92400E;}
+  .note b{font-weight:700;}
+
+  @media (max-width:1180px){ .panel.open{width:290px;} .p-in{width:290px;} }
+  @media (max-width:900px){
+    .side{display:none;}
+    .chips{width:100%; margin-left:0;}
+  }
+  :focus-visible{outline:2px solid var(--green); outline-offset:1px;}
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important;} }
+</style>
+</head>
+<body>
+
+<aside class="side">
+  <div class="brand">HQ<span>Ops</span></div>
+  <div class="nav-lbl">Workspace</div>
+  <nav class="nav">
+    <a href="#"><span class="ic">▦</span>Dashboard</a>
+    <a href="#" class="on"><span class="ic">▤</span>Calendar</a>
+    <a href="#"><span class="ic">✉</span>Inbox</a>
+    <a href="#"><span class="ic">◉</span>Contacts</a>
+    <a href="#"><span class="ic">▣</span>Companies</a>
+    <a href="#"><span class="ic">▧</span>Pipeline</a>
+    <a href="#"><span class="ic">✓</span>Tasks</a>
+  </nav>
+  <div class="nav-lbl">Money</div>
+  <nav class="nav">
+    <a href="#"><span class="ic">▪</span>Invoices</a>
+    <a href="#"><span class="ic">◷</span>Time</a>
+    <a href="#"><span class="ic">▤</span>Reports</a>
+  </nav>
+  <div class="side-foot">
+    <div class="acct"><b>GrayHQ Consulting</b>Owner · 5 workspaces</div>
+  </div>
+</aside>
+
+<main class="main">
+
+  <!-- SCHEDULED BRIEF -->
+  <div class="brief">
+    <div class="brief-tag">Today</div>
+    <div class="brief-body">
+      <b>4 meetings</b>, 8:00 to 3:30<span class="sep">·</span>two open blocks over 90 minutes<span class="sep">·</span>3 workspaces<br>
+      2 meetings tied to <b>$7,793</b> in open pipeline<span class="sep">·</span>
+      <span class="flag">Dan Cook — no note logged in 34 days</span>
+    </div>
+    <div class="brief-time">Updated 6:02 AM · <a href="#" class="link">Refresh</a></div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="ctl">
+    <div class="datenav">
+      <button class="arrow" aria-label="Previous week">‹</button>
+      <button class="arrow" aria-label="Next week">›</button>
+      <button class="today-btn">Today</button>
+    </div>
+    <div class="range num">July 20 – 26, 2026</div>
+    <div class="seg">
+      <button>Day</button><button class="on">Week</button><button>Month</button>
+    </div>
+    <div class="chips" id="chips">
+      <span class="chip all" data-w="all">All workspaces</span>
+      <span class="chip" data-w="fc" style="color:#0F2044"><span class="dot"></span>Fairway Circuit</span>
+      <span class="chip" data-w="cf" style="color:#059669"><span class="dot"></span>Crestfolio</span>
+      <span class="chip" data-w="hq" style="color:#D97706"><span class="dot"></span>HQ Sports</span>
+      <span class="chip" data-w="gh" style="color:#7C3AED"><span class="dot"></span>GrayHQ</span>
+    </div>
+  </div>
+
+  <!-- GRID -->
+  <div class="scroll">
+    <div class="head" id="head"></div>
+    <div class="body" id="body"></div>
+  </div>
+
+  <div class="note">
+    <b>Mockup</b> — static sample data across five Google accounts. Click any event to open its CRM context.
+  </div>
+</main>
+
+<!-- CONTEXT PANEL -->
+<aside class="panel" id="panel"><div class="p-in" id="pin"></div></aside>
+
+<script>
+const WS = {
+  fc:{name:"Fairway Circuit", c:"#0F2044", bg:"#F4F6FA"},
+  cf:{name:"Crestfolio",      c:"#059669", bg:"#F1FBF6"},
+  hq:{name:"HQ Sports",       c:"#D97706", bg:"#FEFAF3"},
+  gh:{name:"GrayHQ",          c:"#7C3AED", bg:"#F8F5FF"}
+};
+const DAYS = [
+  {dow:"Mon", n:20}, {dow:"Tue", n:21}, {dow:"Wed", n:22, today:true},
+  {dow:"Thu", n:23}, {dow:"Fri", n:24}, {dow:"Sat", n:25, we:true}, {dow:"Sun", n:26, we:true}
+];
+const START = 7, END = 19, ROW = 64;
+
+// d = day index, s/e = decimal hours
+const EV = [
+  {d:0,s:9,e:9.5,w:"cf",t:"Dennis — quarterly check-in",
+   who:{n:"Dennis Whitaker",m:"Small Business Annual · Crestfolio",i:"DW"},
+   deals:[], inv:"$490 · paid Jun 12", last:"Note logged 6 days ago"},
+  {d:0,s:11,e:12,w:"gh",t:"Marces Landscaping — proposal walkthrough",
+   who:{n:"Juan Marces",m:"Owner, Marces Landscaping",i:"JM"},
+   deals:[{n:"Managed Core — setup + platform",v:"$2,250/mo",st:"Proposal Sent",h:78,hc:"ok"}],
+   inv:"None yet", last:"Note logged 2 days ago"},
+  {d:0,s:14,e:15,w:"fc",t:"Net Par Indoor Golf — franchise evaluation",
+   who:{n:"Ryan Delgado",m:"Net Par Indoor Golf",i:"RD"},
+   deals:[{n:"Net Par Indoor Golf — Franchise Evaluation",v:"$6,600",st:"Follow-up / Discovery",h:71,hc:"ok"}],
+   inv:"None", last:"Note logged 9 days ago"},
+
+  {d:1,s:8.5,e:9,w:"hq",t:"GridironHQ — subscriber feedback",
+   who:{n:"Three subscribers",m:"GridironHQ · group call",i:"G"},
+   deals:[], inv:"—", last:"Launched 3 days ago"},
+  {d:1,s:10,e:11.5,w:"cf",t:"RIA prospect — discovery",
+   who:{n:"Priya Raman",m:"Raman Wealth Partners · RIA",i:"PR"},
+   deals:[{n:"RIA Starter — annual",v:"$4,900",st:"Discovery Meeting",h:66,hc:"warn"}],
+   inv:"None", last:"Note logged 4 days ago"},
+  {d:1,s:13,e:14,w:"cf",t:"Family office intro",
+   who:{n:"Ellen Vasquez",m:"Vasquez Family Office",i:"EV"},
+   deals:[{n:"Family Hub + Wealth",v:"$9,800",st:"Initial Contact",h:54,hc:"warn"}],
+   inv:"None", last:"No notes yet"},
+  {d:1,s:15.5,e:16,w:"cf",t:"Dennis — billing question",
+   who:{n:"Dennis Whitaker",m:"Small Business Annual · Crestfolio",i:"DW"},
+   deals:[], inv:"$490 · paid Jun 12", last:"Note logged 6 days ago"},
+
+  {d:2,s:8,e:8.5,w:"fc",t:"ForeStar Golf Tour — mid-season pilot review",
+   who:{n:"Dan Cook",m:"League Operator, ForeStar Golf Tour",i:"DC"},
+   deals:[{n:"ForeStar Golf Tour — Mid-Season Pilot",v:"$194",st:"Outreach Sent",h:38,hc:"bad"}],
+   inv:"None", last:"Note logged 34 days ago", stale:true},
+  {d:2,s:10.5,e:11.5,w:"gh",t:"Electrician prospect — intro call",
+   who:{n:"Marcus Hale",m:"Hale Electric",i:"MH"},
+   deals:[{n:"Platform Only — setup",v:"$1,500",st:"Contacted",h:61,hc:"warn"}],
+   inv:"None", last:"No notes yet"},
+  {d:2,s:13,e:14,w:"fc",t:"IGLA — facility tier evaluation",
+   who:{n:"Sandra Ellis",m:"Indoor Golf League Association",i:"SE"},
+   deals:[{n:"IGLA — Facility Tier Evaluation",v:"$999",st:"Estimate Sent",h:74,hc:"ok"}],
+   inv:"None", last:"Note logged 11 days ago"},
+  {d:2,s:15,e:15.5,w:"hq",t:"DiamondHQ — spring 2027 planning",
+   who:{n:"Internal",m:"HQ Sports Technologies",i:"HQ"},
+   deals:[], inv:"—", last:"—"},
+
+  {d:3,s:9,e:10,w:"gh",t:"Marces Landscaping — kickoff",
+   who:{n:"Juan Marces",m:"Owner, Marces Landscaping",i:"JM"},
+   deals:[{n:"Managed Core — setup + platform",v:"$2,250/mo",st:"Proposal Sent",h:78,hc:"ok"}],
+   inv:"None yet", last:"Note logged 2 days ago"},
+  {d:3,s:11,e:11.5,w:"fc",t:"Ohio Golf Association",
+   who:{n:"Tom Bryant",m:"Ohio Golf Association",i:"TB"},
+   deals:[{n:"Ohio Golf Association — League Platform",v:"$0",st:"Responded / Interested",h:49,hc:"warn"}],
+   inv:"None", last:"Note logged 18 days ago"},
+  {d:3,s:14,e:15.5,w:"cf",t:"Advisory board — Q3 review",
+   who:{n:"Crestfolio board",m:"Quarterly",i:"CB"},
+   deals:[], inv:"—", last:"—"},
+
+  {d:4,s:8.5,e:9,w:"hq",t:"GridironHQ — weekly",
+   who:{n:"Internal",m:"HQ Sports Technologies",i:"HQ"},
+   deals:[], inv:"—", last:"—"},
+  {d:4,s:10,e:10.5,w:"fc",t:"Flight Club League",
+   who:{n:"Aaron Pike",m:"Flight Club League",i:"AP"},
+   deals:[{n:"Flight Club League",v:"$0",st:"Follow-up / Discovery",h:57,hc:"warn"}],
+   inv:"None", last:"Note logged 7 days ago"},
+  {d:4,s:13,e:14,w:"gh",t:"Payroll hours review — Marces",
+   who:{n:"Juan Marces",m:"Owner, Marces Landscaping",i:"JM"},
+   deals:[], inv:"None yet", last:"Note logged 2 days ago"}
+];
+
+const fmt = h => {
+  const hr = Math.floor(h), m = Math.round((h-hr)*60);
+  const ap = hr >= 12 ? "PM" : "AM", h12 = hr % 12 === 0 ? 12 : hr % 12;
+  return m ? `${h12}:${String(m).padStart(2,"0")} ${ap}` : `${h12} ${ap}`;
+};
+
+let active = new Set(Object.keys(WS));
+
+function loadBar(di){
+  const evs = EV.filter(e => e.d === di && active.has(e.w));
+  const total = evs.reduce((a,e) => a + (e.e - e.s), 0);
+  if (!total) return `<div class="load"></div>`;
+  const by = {};
+  evs.forEach(e => by[e.w] = (by[e.w]||0) + (e.e - e.s));
+  return `<div class="load" title="${total.toFixed(1)}h booked">` +
+    Object.entries(by).map(([w,h]) =>
+      `<i style="width:${(h/total*100).toFixed(1)}%;background:${WS[w].c}"></i>`).join("") +
+    `</div>`;
+}
+
+function render(){
+  document.getElementById("head").innerHTML =
+    `<div class="corner"></div>` + DAYS.map((d,i) => {
+      const evs = EV.filter(e => e.d === i && active.has(e.w));
+      const hrs = evs.reduce((a,e) => a + (e.e - e.s), 0);
+      return `<div class="dayhead${d.today?" today":""}">
+        <div class="dh-top"><span class="dh-dow">${d.dow}</span><span class="dh-num num">${d.n}</span></div>
+        ${loadBar(i)}
+        <div class="dh-meta num">${evs.length ? evs.length + (evs.length===1?" mtg · ":" mtgs · ") + hrs.toFixed(1) + "h" : "clear"}</div>
+      </div>`;
+    }).join("");
+
+  let html = `<div class="gutter">` +
+    Array.from({length:END-START}, (_,i) =>
+      `<div class="hr"><span class="num">${fmt(START+i)}</span></div>`).join("") + `</div>`;
+
+  DAYS.forEach((d,i) => {
+    const evs = EV.filter(e => e.d === i && active.has(e.w));
+    html += `<div class="col${d.we?" weekend":""}" style="height:${(END-START)*ROW}px">`;
+    if (d.today) html += `<div class="now" style="top:${(9.7-START)*ROW}px"></div>`;
+    evs.forEach(e => {
+      const top = (e.s-START)*ROW, h = (e.e-e.s)*ROW - 3;
+      const ws = WS[e.w], id = EV.indexOf(e);
+      const tier = h < 42 ? " short" : (h < 80 ? " mid" : "");
+      html += `<div class="ev${tier}" data-i="${id}"
+        style="top:${top}px;height:${h}px;--c:${ws.c};--bgc:${ws.bg}">
+        <div class="ev-t num">${fmt(e.s)}</div>
+        <div class="ev-n">${e.t}</div>
+        <div class="ev-w">${ws.name}</div></div>`;
+    });
+    html += `</div>`;
+  });
+  document.getElementById("body").innerHTML = html;
+
+  document.querySelectorAll(".ev").forEach(el =>
+    el.addEventListener("click", () => open(+el.dataset.i, el)));
+}
+
+function open(i, el){
+  document.querySelectorAll(".ev.sel").forEach(x => x.classList.remove("sel"));
+  if (el) el.classList.add("sel");
+  const e = EV[i], ws = WS[e.w];
+  const deals = e.deals.length
+    ? e.deals.map(d => `<div class="deal">
+        <div class="deal-top"><div class="deal-n">${d.n}</div><div class="deal-v num">${d.v}</div></div>
+        <div class="deal-b"><span class="badge">${d.st}</span><span class="hp ${d.hc}">Health ${d.h}</span></div>
+      </div>`).join("")
+    : `<div style="font-size:12px;color:var(--faint)">No open deals</div>`;
+
+  document.getElementById("pin").innerHTML = `
+    <div class="p-head" style="--c:${ws.c}">
+      <button class="p-x" onclick="closeP()" aria-label="Close">×</button>
+      <span class="p-ws"><span class="dot"></span>${ws.name}</span>
+      <div class="p-title">${e.t}</div>
+      <div class="p-when num">${DAYS[e.d].dow} ${DAYS[e.d].n} · ${fmt(e.s)} – ${fmt(e.e)}</div>
+    </div>
+    <div class="p-sec" style="--c:${ws.c}">
+      <div class="p-lbl">Who</div>
+      <div class="who"><div class="av">${e.who.i}</div>
+        <div><div class="who-n">${e.who.n}</div><div class="who-m">${e.who.m}</div></div></div>
+    </div>
+    ${e.stale ? `<div class="p-sec"><div class="stale">
+      <b>Gone quiet.</b> Last note was 34 days ago and the deal has sat in Outreach Sent since. Worth opening with that.
+    </div></div>` : ``}
+    <div class="p-sec"><div class="p-lbl">Open business</div>${deals}</div>
+    <div class="p-sec">
+      <div class="p-lbl">Account</div>
+      <div class="ln"><span>Invoices</span><span>${e.inv}</span></div>
+      <div class="ln"><span>Last activity</span><span>${e.last}</span></div>
+    </div>
+    <div class="acts">
+      <button class="btn pri">Log a note<span class="k">⌘N</span></button>
+      <button class="btn">Prep me<span class="k">⌘P</span></button>
+      <button class="btn">Open contact</button>
+    </div>`;
+  document.getElementById("panel").classList.add("open");
+}
+
+function closeP(){
+  document.getElementById("panel").classList.remove("open");
+  document.querySelectorAll(".ev.sel").forEach(x => x.classList.remove("sel"));
+}
+
+document.getElementById("chips").addEventListener("click", ev => {
+  const c = ev.target.closest(".chip"); if (!c) return;
+  const w = c.dataset.w;
+  if (w === "all"){ active = new Set(Object.keys(WS)); }
+  else if (active.has(w) && active.size === Object.keys(WS).length){ active = new Set([w]); }
+  else if (active.has(w)){ active.delete(w); if(!active.size) active = new Set(Object.keys(WS)); }
+  else { active.add(w); }
+  document.querySelectorAll(".chip").forEach(x => {
+    if (x.dataset.w === "all") x.classList.toggle("off", active.size !== Object.keys(WS).length);
+    else x.classList.toggle("off", !active.has(x.dataset.w));
+  });
+  closeP(); render();
+});
+
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeP(); });
+render();
+</script>
+</body>
+</html>
