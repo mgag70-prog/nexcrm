@@ -34,12 +34,15 @@ const GROUPS = [
 
 // Simplified, static echo of the calendar view — the differentiator made visible.
 const CAL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+// Fictional companies spanning four industries (colors: navy=Marchfield
+// Landscaping, green=Calder Advisory, amber=Ridgeline Property,
+// violet=Two Rivers Studio). No real contacts or deal values.
 const CAL_EVENTS = [
-  [{ c: ENTITY_COLORS[1], t: '9:00', n: 'Dennis — check-in' }],
-  [{ c: ENTITY_COLORS[3], t: '10:30', n: 'Hale Electric intro' }, { c: ENTITY_COLORS[1], t: '1:00', n: 'RIA discovery' }],
-  [{ c: ENTITY_COLORS[0], t: '8:00', n: 'ForeStar pilot review' }, { c: ENTITY_COLORS[2], t: '3:00', n: 'GridironHQ' }],
-  [{ c: ENTITY_COLORS[3], t: '9:00', n: 'Marces kickoff' }],
-  [{ c: ENTITY_COLORS[0], t: '10:00', n: 'Flight Club League' }],
+  [{ c: ENTITY_COLORS[1], t: '9:00', n: 'Calder — quarterly review' }],
+  [{ c: ENTITY_COLORS[3], t: '10:30', n: 'Juniper — launch prep' }, { c: ENTITY_COLORS[1], t: '1:00', n: 'Advisory discovery' }],
+  [{ c: ENTITY_COLORS[0], t: '8:00', n: 'Fielder Grounds — pilot review' }, { c: ENTITY_COLORS[2], t: '3:00', n: 'Oakline walkthrough' }],
+  [{ c: ENTITY_COLORS[3], t: '9:00', n: 'Juniper kickoff' }],
+  [{ c: ENTITY_COLORS[0], t: '10:00', n: 'Cedar Ridge — spring crew' }],
 ]
 const CAL_LOADS = [
   [{ c: ENTITY_COLORS[1], w: 100 }],
@@ -226,11 +229,11 @@ function CalendarEcho() {
       {/* context-panel echo */}
       <div className="mkt-cal-panel" style={{ marginTop: 14 }}>
         <div className="who">
-          <div className="av" style={{ background: ENTITY_COLORS[0] }}>DC</div>
-          <div><b>Dan Cook</b><small>ForeStar Golf Tour · Fairway Circuit</small></div>
+          <div className="av" style={{ background: ENTITY_COLORS[0] }}>DP</div>
+          <div><b>Dana Poole</b><small>Fielder Grounds · Marchfield Landscaping</small></div>
         </div>
         <div className="mkt-cal-deal">
-          <div className="top"><span>Mid-Season Pilot</span><span className="num">$194</span></div>
+          <div className="top"><span>Maintenance Pilot</span><span className="num">$2,400</span></div>
           <div className="meta">
             <span className="mkt-cal-chip" style={{ background: '#F1F5F9', color: '#475569' }}>Outreach Sent</span>
             <span className="mkt-cal-chip" style={{ background: '#FEF2F2', color: '#B91C1C' }}>Health 38 ↓</span>

@@ -7,7 +7,9 @@ import { useState } from 'react'
 // The five-business entity palette. The load bar built from these is the site's
 // signature — several businesses living inside one system, made literal.
 export const ENTITY_COLORS = ['#0F2044', '#059669', '#D97706', '#7C3AED', '#0891B2']
-export const ENTITY_NAMES = ['Fairway Circuit', 'Crestfolio', 'HQ Sports', 'GrayHQ', 'Add another']
+// Industry labels (not company names) — the point in the hero is the RANGE the
+// product covers. The fifth slot invites the next one.
+export const ENTITY_NAMES = ['Landscaping', 'Advisory', 'Property Management', 'Retail', 'Add another']
 
 export function Wordmark({ size = 20 }) {
   return (
