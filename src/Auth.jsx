@@ -6,8 +6,8 @@ const NAVY_LIGHT = '#162B55'
 const NAVY_BORDER = '#1E3A6B'
 const ACCENT = '#3B82F6'
 
-export default function Auth() {
-  const [mode, setMode] = useState('login')
+export default function Auth({ initialMode = 'login' }) {
+  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)

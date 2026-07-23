@@ -1,58 +1,90 @@
-import { StrictMode, useEffect, useState } from 'react'
+import { StrictMode, Suspense, lazy, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { getSession, onAuthChange, signOut, resolveAccounts, setActiveAccount } from './lib/supabase.js'
-import App from './App.jsx'
+import Marketing from './marketing/Marketing.jsx'
 import Auth, { ResetPassword } from './Auth.jsx'
-import Portal from './Portal.jsx'
-import InvitePage from './Invite.jsx'
 
-const path = typeof window !== 'undefined' ? window.location.pathname : ''
-const isDemoRoute = path.startsWith('/demo')
-// Portal routes: /portal, /portal/login, /portal/dashboard, /portal/:token
+// The CRM (~1.2MB) and other heavy routes load ONLY when their route is hit, so
+// the marketing pages ship without the app. Marketing + Auth stay eager — they
+// are the public entry and must render immediately.
+const App = lazy(() => import('./App.jsx'))
+const Portal = lazy(() => import('./Portal.jsx'))
+const InvitePage = lazy(() => import('./Invite.jsx'))
+const Pricing = lazy(() => import('./marketing/Pricing.jsx'))
+
+const path = typeof window !== 'undefined' ? window.location.pathname : '/'
+const search = typeof window !== 'undefined' ? window.location.search : ''
+const hash = typeof window !== 'undefined' ? window.location.hash : ''
+
 const isPortalRoute = path === '/portal' || path === '/portal/' || path.startsWith('/portal/')
-// Team invite accept route: /invite/:token
 const isInviteRoute = path.startsWith('/invite/')
 const inviteToken = isInviteRoute ? path.slice('/invite/'.length).replace(/\/+$/, '') : null
+const isDemoRoute = path === '/demo' || path.startsWith('/demo')
+const isAppRoute = path === '/app' || path.startsWith('/app/')
+const isLoginRoute = path === '/login'
+const isPricingRoute = path === '/pricing'
+const loginMode = new URLSearchParams(search).get('mode') === 'signup' ? 'signup' : 'login'
+// Password-recovery links carry #type=recovery and can land on any route.
+const isRecovery = hash.includes('type=recovery')
 
+const isPortalClient = (s) => s?.user?.user_metadata?.role === 'portal_client'
+
+// Minimal white splash for the brief public-route session check (resolves from
+// localStorage, ~1 frame) and lazy-chunk loads on public routes.
+function Splash() {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: '#fff', fontFamily: '"Sora",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+      fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', color: '#0F2044',
+    }}>HQ<span style={{ color: '#059669' }}>Ops</span></div>
+  )
+}
+
+// Navy loading screen for the authed app side (matches the CRM chrome).
 function CenteredScreen({ children }) {
   return (
     <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 14,
-      background: '#0B1E3F',
-      color: '#FFFFFF',
+      minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', gap: 14, background: '#0B1E3F', color: '#FFFFFF',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif',
-      fontSize: 13,
-      letterSpacing: 1,
-      padding: 20,
-      textAlign: 'center',
+      fontSize: 13, letterSpacing: 1, padding: 20, textAlign: 'center',
     }}>{children}</div>
   )
 }
 
-function AuthGate() {
-  const [status, setStatus] = useState('loading')
-  const [session, setSession] = useState(null)
-  const [recovery, setRecovery] = useState(false)
-  // Account resolution: which accounts this user belongs to + the active one.
-  // App must not render (and therefore must not load or save any data) until
-  // this completes — the storage adapter is account-scoped.
-  const [acct, setAcct] = useState(null) // { accounts, active } | { error }
+// Public routes (/ and /login): a logged-in CRM user is bounced to /app so
+// typing hqops.app still lands the owner in their CRM. Recovery links win.
+function PublicGate({ children }) {
+  const [state, setState] = useState('checking') // checking | show
 
   useEffect(() => {
+    let cancelled = false
     getSession().then((s) => {
-      setSession(s)
-      setStatus('ready')
+      if (cancelled) return
+      if (s && !isPortalClient(s)) window.location.replace('/app')
+      else setState('show')
     })
-    const unsubscribe = onAuthChange((s, event) => {
-      if (event === 'PASSWORD_RECOVERY') setRecovery(true)
-      setSession(s)
-      setStatus('ready')
+    const unsub = onAuthChange((s, event) => {
+      if (event === 'SIGNED_IN' && s && !isPortalClient(s)) window.location.replace('/app')
     })
+    return () => { cancelled = true; unsub() }
+  }, [])
+
+  if (state === 'checking') return <Splash />
+  return children
+}
+
+// /app: logged-out users go to /login; after login they land back on /app.
+// Everything below the auth check is the original account-resolution flow.
+function AppGate() {
+  const [status, setStatus] = useState('loading')
+  const [session, setSession] = useState(null)
+  const [acct, setAcct] = useState(null)
+
+  useEffect(() => {
+    getSession().then((s) => { setSession(s); setStatus('ready') })
+    const unsubscribe = onAuthChange((s) => { setSession(s); setStatus('ready') })
     return unsubscribe
   }, [])
 
@@ -63,38 +95,23 @@ function AuthGate() {
     setAcct(null)
     resolveAccounts()
       .then((r) => { if (!cancelled) setAcct(r) })
-      .catch((e) => {
-        console.error('[accounts] resolve failed', e)
-        if (!cancelled) setAcct({ error: e?.message || String(e) })
-      })
+      .catch((e) => { console.error('[accounts] resolve failed', e); if (!cancelled) setAcct({ error: e?.message || String(e) }) })
     return () => { cancelled = true }
   }, [userId])
 
   const switchAccount = async (id) => {
     try {
       await setActiveAccount(id)
-      // Remount App via its key: the fresh mount re-runs the initial load
-      // against the new account, with the loadedRef gate starting closed.
       setAcct((prev) => (prev?.accounts ? { ...prev, active: prev.accounts.find((a) => a.id === id) || prev.active } : prev))
-    } catch (e) {
-      console.error('[accounts] switch failed', e)
-      alert(e?.message || 'Could not switch accounts')
-    }
+    } catch (e) { console.error('[accounts] switch failed', e); alert(e?.message || 'Could not switch accounts') }
   }
 
   if (status === 'loading') return <CenteredScreen>Loading…</CenteredScreen>
 
-  if (!session) return <Auth />
+  if (!session) { window.location.replace('/login'); return <Splash /> }
 
-  // Portal clients share this Supabase auth project. If one lands on the CRM
-  // root, send them to their portal — rendering App would bootstrap a CRM
-  // account for them via resolveAccounts().
-  if (session.user?.user_metadata?.role === 'portal_client') {
-    window.location.replace('/portal/dashboard')
-    return <CenteredScreen>Redirecting to your portal…</CenteredScreen>
-  }
-
-  if (recovery) return <ResetPassword onDone={() => setRecovery(false)} />
+  // Portal clients share this auth project; keep them out of the CRM.
+  if (isPortalClient(session)) { window.location.replace('/portal/dashboard'); return <CenteredScreen>Redirecting to your portal…</CenteredScreen> }
 
   if (!acct) return <CenteredScreen>Loading your workspace…</CenteredScreen>
 
@@ -112,22 +129,32 @@ function AuthGate() {
   }
 
   return (
-    <App
-      key={`${session.user.id}:${acct.active.id}`}
-      session={session}
-      account={acct.active}
-      accounts={acct.accounts}
-      onSwitchAccount={switchAccount}
-      onLogout={() => signOut()}
-    />
+    <Suspense fallback={<CenteredScreen>Loading…</CenteredScreen>}>
+      <App
+        key={`${session.user.id}:${acct.active.id}`}
+        session={session}
+        account={acct.active}
+        accounts={acct.accounts}
+        onSwitchAccount={switchAccount}
+        onLogout={() => signOut()}
+      />
+    </Suspense>
   )
 }
 
+const withSuspense = (node, fallback) => <Suspense fallback={fallback}>{node}</Suspense>
+
 function Root() {
-  if (isPortalRoute) return <Portal />
-  if (isInviteRoute) return <InvitePage token={inviteToken} />
-  if (isDemoRoute) return <App demoMode={true} />
-  return <AuthGate />
+  // A recovery link (any route) goes straight to the password reset screen.
+  if (isRecovery) return <ResetPassword onDone={() => window.location.replace('/app')} />
+
+  if (isPortalRoute) return withSuspense(<Portal />, <Splash />)
+  if (isInviteRoute) return withSuspense(<InvitePage token={inviteToken} />, <Splash />)
+  if (isDemoRoute) return withSuspense(<App demoMode={true} />, <CenteredScreen>Loading demo…</CenteredScreen>)
+  if (isAppRoute) return <AppGate />
+  if (isLoginRoute) return <PublicGate><Auth initialMode={loginMode} /></PublicGate>
+  if (isPricingRoute) return withSuspense(<Pricing />, <Splash />)
+  return <PublicGate><Marketing /></PublicGate>
 }
 
 createRoot(document.getElementById('root')).render(
