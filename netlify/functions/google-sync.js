@@ -16,15 +16,17 @@ async function run(event) {
   if (!nextRun) return { statusCode: 403, body: JSON.stringify({ error: 'Forbidden' }) }
 
   const admin = adminClient()
-  // Skip connections synced in the last 5 minutes. The authed google-sync-now
-  // path bypasses this deliberately.
-  const cutoff = new Date(Date.now() - 5 * 60000).toISOString()
+  // Skip connections synced in the last 14 minutes — just under the 15-minute
+  // schedule interval, so an external trigger can never cause work the
+  // scheduler wasn't already about to do. The authed google-sync-now path
+  // bypasses this deliberately.
+  const cutoff = new Date(Date.now() - 14 * 60000).toISOString()
   const { data: conns, error } = await admin.from('google_connections')
     .select('*').eq('status', 'active')
     .or(`last_sync_at.is.null,last_sync_at.lt.${cutoff}`)
   if (error) {
     console.error('[google-sync] list failed:', error.message)
-    return { statusCode: 500, body: JSON.stringify({ error: 'list failed' }) }
+    return { statusCode: 500, body: '' }
   }
   const results = []
   for (const conn of conns || []) {
@@ -34,7 +36,9 @@ async function run(event) {
     connection: r.connection, error: r.error || null,
     mail: r.gmail?.stored ?? null, events: r.calendar?.stored ?? null,
   }))))
-  return { statusCode: 200, body: JSON.stringify({ synced: results.length }) }
+  // 204, no body: sync detail goes to logs only — a count would leak
+  // platform-wide connection numbers to unauthenticated callers.
+  return { statusCode: 204, body: '' }
 }
 
 export const handler = schedule('*/15 * * * *', run)
