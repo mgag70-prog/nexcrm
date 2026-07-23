@@ -3653,6 +3653,34 @@ const calDayKey=(d)=>`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 const calMondayOf=(d)=>{const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());const dow=(x.getDay()+6)%7;x.setDate(x.getDate()-dow);return x;};
 const calOpenDeal=(d)=>!/won|lost|inactive|closed/i.test(d.stage||"");
 const calDaysSince=(iso)=>iso?Math.floor((Date.now()-new Date(iso).getTime())/864e5):null;
+// Assign side-by-side tracks to overlapping events. Merging five calendars
+// that can't see each other makes double-booking the EXPECTED case — stacking
+// would hide exactly the conflicts this view exists to surface.
+// items: [{s,e}] decimal hours. Mutates each with col (track index) and
+// cols (track count of its overlap cluster).
+function calPlaceOverlaps(items){
+  const sorted=[...items].sort((a,b)=>a.s-b.s||b.e-a.e);
+  let cluster=[],clusterEnd=null;
+  const flush=()=>{
+    if(!cluster.length)return;
+    const trackEnds=[];
+    for(const it of cluster){
+      let t=trackEnds.findIndex(end=>end<=it.s+1e-9);
+      if(t===-1){t=trackEnds.length;trackEnds.push(0);}
+      trackEnds[t]=it.e;
+      it.col=t;
+    }
+    for(const it of cluster)it.cols=trackEnds.length;
+    cluster=[];clusterEnd=null;
+  };
+  for(const it of sorted){
+    if(cluster.length&&it.s>=clusterEnd-1e-9)flush();
+    cluster.push(it);
+    clusterEnd=clusterEnd===null?it.e:Math.max(clusterEnd,it.e);
+  }
+  flush();
+  return sorted;
+}
 
 function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],deals=[],notes=[],tasks=[],invoices=[],setSelContact,setView,showToast}){
   const today=new Date();
@@ -3854,19 +3882,27 @@ function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],dea
                     </div>
                   );
                 })}
-                {timedEvs.map(ev=>{
-                  const ent=entityById[ev.entity_id];
+                {calPlaceOverlaps(timedEvs.map(ev=>{
                   const s=Math.max(CAL_START,calDecHours(new Date(ev.start_at)));
-                  const eEnd=ev.end_at?Math.min(CAL_END,calDecHours(new Date(ev.end_at))||s+0.5):s+0.5;
-                  const h=Math.max(18,(Math.max(eEnd,s+0.25)-s)*CAL_ROW-3);
-                  const tier=h<42?"short":h<80?"mid":"full";
+                  const rawEnd=ev.end_at?calDecHours(new Date(ev.end_at)):s+0.5;
+                  const e=Math.min(CAL_END,Math.max(rawEnd,s+0.25));
+                  return {ev,s,e};
+                })).map(({ev,s,e,col,cols})=>{
+                  const ent=entityById[ev.entity_id];
+                  const h=Math.max(18,(e-s)*CAL_ROW-3);
+                  // Splitting narrows events, so tier by width too: anything
+                  // sharing 3+ tracks renders in the compact form.
+                  const tier=(h<42||cols>=3)?"short":(h<80||cols===2)?"mid":"full";
                   const cancelled=ev.status==="cancelled";
                   const sel=selEvent?.id===ev.id;
                   const c=ent?.color||"#3B82F6";
                   return(
                     <div key={ev.id} onClick={()=>setSelEvent(ev)} title={ev.title||"(untitled)"}
-                      style={{position:"absolute",left:4,right:4,top:(s-CAL_START)*CAL_ROW,height:h,borderRadius:5,cursor:"pointer",overflow:"hidden",zIndex:sel?4:2,
-                        borderLeft:`3px solid ${c}`,background:`${c}14`,opacity:cancelled?0.55:1,
+                      style={{position:"absolute",
+                        left:`calc(${(col/cols*100).toFixed(2)}% + 2px)`,
+                        width:`calc(${(100/cols).toFixed(2)}% - 5px)`,
+                        top:(s-CAL_START)*CAL_ROW,height:h,borderRadius:5,cursor:"pointer",overflow:"hidden",zIndex:sel?4:2,
+                        borderLeft:`3px solid ${c}`,background:`${c}${cols>1?"22":"14"}`,opacity:cancelled?0.55:1,
                         boxShadow:sel?`0 0 0 2px ${c}`:"none",
                         ...(tier==="short"?{display:"flex",alignItems:"center",gap:6,padding:"0 7px"}:{padding:"5px 7px"})}}>
                       <div style={{fontSize:10,color:"#475569",fontWeight:600,flexShrink:0}}>{fmtTime(ev.start_at)}</div>
