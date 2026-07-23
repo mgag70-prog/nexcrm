@@ -6,6 +6,11 @@
 [functions]
   node_bundler = "esbuild"
 
+# Google sync runs every 15 minutes. Scheduled functions are invoked only by
+# Netlify's scheduler — manual syncs go through google-sync-now.
+[functions."google-sync"]
+  schedule = "*/15 * * * *"
+
 [[redirects]]
   from = "/.netlify/functions/*"
   status = 200

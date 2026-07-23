@@ -335,6 +335,40 @@ export async function transferOwnership(accountId, newOwnerUserId) {
   if (error) throw error
 }
 
+// ─── GOOGLE INTEGRATION (connection manager; sync is server-side) ───────────
+// google_tokens is service-role only (RLS, zero policies) — nothing here can
+// or should read it. These helpers touch metadata and the admin functions.
+
+export async function googleListConnections(accountId) {
+  const { data, error } = await supabase
+    .from('google_connections')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('connected_at', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+
+export async function googleEntityCounts(entityId) {
+  const [msgs, events] = await Promise.all([
+    supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('entity_id', entityId),
+    supabase.from('calendar_events').select('id', { count: 'exact', head: true }).eq('entity_id', entityId),
+  ])
+  return { messages: msgs.count || 0, events: events.count || 0 }
+}
+
+export async function googleOauthStart(accountId, entityId) {
+  return postFn('google-oauth-start', { accountId, entityId })
+}
+
+export async function googleDisconnect(connectionId) {
+  return postFn('google-disconnect', { connectionId })
+}
+
+export async function googleSyncNow(connectionId) {
+  return postFn('google-sync-now', { connectionId })
+}
+
 // ─── INVITE ACCEPT FLOW (/invite/:token) ────────────────────────────────────
 
 export async function getInvite(token) {

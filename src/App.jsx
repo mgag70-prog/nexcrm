@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { writePortalSnapshot, deletePortalSnapshot, portalListMessagesForTokens, portalSendMessage, portalMarkMessagesRead, subscribePortalMessagesForTokens, listAccountMembers, listAccountInvites, createAccountInvite, revokeAccountInvite, setMemberRole, removeMember, transferOwnership } from "./lib/supabase.js";
+import { writePortalSnapshot, deletePortalSnapshot, portalListMessagesForTokens, portalSendMessage, portalMarkMessagesRead, subscribePortalMessagesForTokens, listAccountMembers, listAccountInvites, createAccountInvite, revokeAccountInvite, setMemberRole, removeMember, transferOwnership, googleListConnections, googleEntityCounts, googleOauthStart, googleDisconnect, googleSyncNow } from "./lib/supabase.js";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend, LineChart, Line, AreaChart, Area } from "recharts";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -3598,6 +3598,146 @@ function AutomationView({automations,activeEntityId,addAutomation,updateAutomati
 // ═══════════════════════════════════════════════════════════════════════════════
 // SETTINGS VIEW (Entities, Products, Custom Fields, Email, Profile)
 // ═══════════════════════════════════════════════════════════════════════════════
+// ─── CONNECTED ACCOUNTS (Settings, owner/admin only) ─────────────────────────
+// Per-entity Google connections. Connect/disconnect/sync all go through
+// service-role Netlify functions; this panel only reads metadata.
+function ConnectedAccountsPanel({account,entities,demoMode,showToast}){
+  const [connections,setConnections]=useState(null); // null = loading
+  const [counts,setCounts]=useState({});             // entityId -> {messages,events}
+  const [busy,setBusy]=useState(null);               // entityId or connectionId in flight
+  const [loadError,setLoadError]=useState(null);
+
+  const relTime=(iso)=>{
+    if(!iso)return "never";
+    const mins=Math.round((Date.now()-new Date(iso).getTime())/60000);
+    if(mins<1)return "just now";
+    if(mins<60)return `${mins}m ago`;
+    if(mins<1440)return `${Math.round(mins/60)}h ago`;
+    return `${Math.round(mins/1440)}d ago`;
+  };
+
+  const refresh=async()=>{
+    try{
+      const conns=await googleListConnections(account.id);
+      setConnections(conns);
+      setLoadError(null);
+      const byEntity={};
+      for(const ent of entities){
+        byEntity[ent.id]=await googleEntityCounts(ent.id);
+      }
+      setCounts(byEntity);
+    }catch(e){
+      console.error("[connected] load failed",e);
+      setLoadError(e?.message||String(e));
+      if(connections===null)setConnections([]);
+    }
+  };
+  useEffect(()=>{if(demoMode||!account?.id)return;refresh();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[account?.id,demoMode]);
+
+  if(demoMode){
+    return <EmptyState icon={I.zap} title="Google connections are unavailable in demo mode" message="Sign up to connect Gmail and Google Calendar per entity."/>;
+  }
+
+  const handleConnect=async(ent)=>{
+    setBusy(ent.id);
+    try{
+      const res=await googleOauthStart(account.id,ent.id);
+      window.location.href=res.url; // off to Google consent
+    }catch(e){
+      showToast?.(e?.message||"Could not start Google connect","error");
+      setBusy(null);
+    }
+  };
+
+  const handleDisconnect=async(conn)=>{
+    if(!confirm(`Disconnect ${conn.email_address}? Synced email and calendar history stays in HQOps — only the live connection is removed and its access revoked with Google.`))return;
+    setBusy(conn.id);
+    try{
+      await googleDisconnect(conn.id);
+      showToast?.("Disconnected — access revoked with Google");
+      await refresh();
+    }catch(e){showToast?.(e?.message||"Could not disconnect","error");}
+    finally{setBusy(null);}
+  };
+
+  const handleSyncNow=async(conn)=>{
+    setBusy(conn.id);
+    try{
+      const res=await googleSyncNow(conn.id);
+      if(res?.error)showToast?.(`Sync problem: ${res.error}`,"error");
+      else showToast?.(`Synced — ${res?.gmail?.stored??0} new messages, ${res?.calendar?.stored??0} events`);
+      await refresh();
+    }catch(e){showToast?.(e?.message||"Sync failed","error");}
+    finally{setBusy(null);}
+  };
+
+  const statusChip=(s)=>{
+    const c=s==="active"?{bg:"#ECFDF5",fg:"#059669",label:"Active"}
+      :s==="error"?{bg:"#FEF2F2",fg:"#B91C1C",label:"Error"}
+      :{bg:"#F1F5F9",fg:"#64748B",label:"Revoked"};
+    return <span style={{display:"inline-block",background:c.bg,color:c.fg,borderRadius:6,padding:"3px 10px",fontSize:11.5,fontWeight:700}}>{c.label}</span>;
+  };
+
+  return(
+    <div>
+      <div style={{marginBottom:18}}>
+        <h3 style={{margin:0,fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#0F172A"}}>Connected accounts</h3>
+        <p style={{margin:"4px 0 0",color:"#475569",fontSize:13}}>
+          Google connections are <strong>per entity</strong> — each business connects its own Gmail and Calendar. Read-only: HQOps never sends email or edits your calendar.
+        </p>
+        <p style={{margin:"6px 0 0",color:"#92400E",background:"#FEF3C7",border:"1px solid #FDE68A",borderRadius:8,padding:"7px 11px",fontSize:12}}>
+          Google will show an <strong>"unverified app"</strong> warning during connect — expected, the app is published but hasn't been through Google's verification review. Click "Advanced" → "Go to hqops.app" to continue.
+        </p>
+      </div>
+
+      {loadError&&(
+        <div style={{background:"#FEF2F2",border:"1px solid #FECACA",color:"#B91C1C",borderRadius:8,padding:"9px 12px",fontSize:12.5,marginBottom:14}}>
+          Could not load connections: {loadError} <button style={{background:"none",border:"none",color:"#B91C1C",cursor:"pointer",fontSize:12.5,padding:0,textDecoration:"underline"}} onClick={refresh}>Retry</button>
+        </div>
+      )}
+
+      {connections===null?(
+        <div style={{fontSize:13,color:"#94A3B8",padding:"20px 0"}}>Loading connections…</div>
+      ):(
+        entities.map(ent=>{
+          const conn=connections.find(c=>c.entity_id===ent.id&&c.status!=="revoked")
+            ||connections.find(c=>c.entity_id===ent.id);
+          const n=counts[ent.id]||{messages:0,events:0};
+          return(
+            <div key={ent.id} style={{...S.card({padding:16}),marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:ent.color||"#3B82F6",flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:14,fontWeight:700,color:"#0F172A"}}>{ent.name}</div>
+                  {conn?(
+                    <div style={{fontSize:12,color:"#475569",marginTop:2}}>
+                      {conn.email_address} · last synced {relTime(conn.last_sync_at)} · {n.messages} message{n.messages===1?"":"s"}, {n.events} event{n.events===1?"":"s"}
+                      {conn.status==="error"&&conn.last_error&&<span style={{color:"#B91C1C"}}> · {conn.last_error}</span>}
+                    </div>
+                  ):(
+                    <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>No Google account connected</div>
+                  )}
+                </div>
+                {conn&&statusChip(conn.status)}
+                {conn&&conn.status!=="revoked"?(
+                  <>
+                    <button style={{...S.btnSecondary,fontSize:11.5}} disabled={busy===conn.id} onClick={()=>handleSyncNow(conn)}>{busy===conn.id?"Working…":"Sync now"}</button>
+                    <button style={{...S.btnSecondary,color:"#EF4444",fontSize:11.5}} disabled={busy===conn.id} onClick={()=>handleDisconnect(conn)}>Disconnect</button>
+                  </>
+                ):(
+                  <button style={{...S.btnPrimary,fontSize:12}} disabled={busy===ent.id} onClick={()=>handleConnect(ent)}>{busy===ent.id?"Redirecting…":"Connect Google account"}</button>
+                )}
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
 // ─── TEAM MANAGEMENT (Settings → Team, owner/admin only) ─────────────────────
 function InviteLinkModal({info,onClose,copy}){
   return(
@@ -3819,9 +3959,9 @@ function TeamPanel({account,myRole,session,demoMode,showToast}){
   );
 }
 
-function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,openModal,setEntities,showToast,products,activeEntityId,addProduct,updateProduct,deleteProduct,customFields,addCustomField,deleteCustomField,webhooks,addWebhook,updateWebhook,deleteWebhook,employees=[],addEmployee,updateEmployee,deleteEmployee,fsSettings={},updateFsSettings,account=null,myRole="member",canManageTeam=false,session=null,demoMode=false}){
+function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,openModal,setEntities,showToast,products,activeEntityId,addProduct,updateProduct,deleteProduct,customFields,addCustomField,deleteCustomField,webhooks,addWebhook,updateWebhook,deleteWebhook,employees=[],addEmployee,updateEmployee,deleteEmployee,fsSettings={},updateFsSettings,account=null,myRole="member",canManageTeam=false,session=null,demoMode=false,initialTab=null}){
   const fs=isFieldService(entity);
-  const [tab,setTab]=useState("entities");
+  const [tab,setTab]=useState(initialTab||"entities");
   const [connecting,setConnecting]=useState(null);
   const [emailForm,setEmailForm]=useState({email:"",password:"",server:"",port:""});
   const [newProduct,setNewProduct]=useState({name:"",price:"",category:"Software",description:""});
@@ -3854,8 +3994,8 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
 
   const tabList=[
     ["entities","Entities"],
-    // Team management is owner/admin only — members don't even see the tab.
-    ...(canManageTeam?[["team","Team"]]:[]),
+    // Team management + Google connections are owner/admin only.
+    ...(canManageTeam?[["team","Team"],["connected","Connected accounts"]]:[]),
     ...(fs?[["employees","Employees"],["fsettings","Field Service"]]:[]),
     ["products","Product Catalog"],
     ["fields","Custom Fields"],
@@ -3878,6 +4018,11 @@ function SettingsView({entities,entity,emailInts,connectEmail,disconnectEmail,op
           {/* TEAM (owner/admin only) */}
           {tab==="team"&&canManageTeam&&(
             <TeamPanel account={account} myRole={myRole} session={session} demoMode={demoMode} showToast={showToast}/>
+          )}
+
+          {/* CONNECTED ACCOUNTS (owner/admin only) */}
+          {tab==="connected"&&canManageTeam&&(
+            <ConnectedAccountsPanel account={account} entities={entities} demoMode={demoMode} showToast={showToast}/>
           )}
 
           {/* ENTITIES */}
@@ -6915,6 +7060,21 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
   const [toast,setToast]=useState(null);
   const [entityMenuOpen,setEntityMenuOpen]=useState(false);
   const [accountMenuOpen,setAccountMenuOpen]=useState(false);
+  // Set when we return from the Google OAuth redirect — opens Settings on the
+  // Connected accounts tab and shows the outcome.
+  const [googleReturn,setGoogleReturn]=useState(false);
+  useEffect(()=>{
+    if(demoMode||typeof window==="undefined")return;
+    const params=new URLSearchParams(window.location.search);
+    const g=params.get("google");
+    if(!g)return;
+    setGoogleReturn(true);
+    setView("settings");
+    if(g==="connected")showToast(`Google account ${params.get("email")||""} connected`);
+    else showToast(`Google connect failed: ${params.get("reason")||"unknown error"}`,"error");
+    window.history.replaceState({},"",window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[demoMode]);
   const [sigModal,setSigModal]=useState(null);
   // Auto-close sidebar when view changes or breakpoint crosses; lock body scroll while open on mobile.
   // NOTE: these effects must come AFTER the selContact/selCompany/selDeal state declarations they reference,
@@ -7782,7 +7942,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
           {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} expenses={expenses} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
-          {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings} account={account} myRole={myRole} canManageTeam={canManageTeam} session={session} demoMode={demoMode}/>}
+          {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings} account={account} myRole={myRole} canManageTeam={canManageTeam} session={session} demoMode={demoMode} initialTab={googleReturn?"connected":null}/>}
         </div>
         )}
       </div>
