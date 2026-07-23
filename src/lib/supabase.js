@@ -369,6 +369,33 @@ export async function googleSyncNow(connectionId) {
   return postFn('google-sync-now', { connectionId })
 }
 
+// Synced Gmail for one contact, newest first (RLS: account members).
+export async function listContactEmails(contactId, limit = 50) {
+  const { data, error } = await supabase
+    .from('email_messages')
+    .select('id, gmail_thread_id, direction, from_email, from_name, to_emails, subject, snippet, body_text, sent_at, has_attachments')
+    .eq('contact_id', contactId)
+    .order('sent_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data || []
+}
+
+// Calendar events across the whole account for a date window (the calendar
+// view shows every entity side by side).
+export async function listAccountCalendarEvents(accountId, fromIso, toIso) {
+  const { data, error } = await supabase
+    .from('calendar_events')
+    .select('id, entity_id, google_event_id, title, location, start_at, end_at, all_day, attendees, organizer_email, status, contact_id')
+    .eq('account_id', accountId)
+    .gte('start_at', fromIso)
+    .lte('start_at', toIso)
+    .order('start_at', { ascending: true })
+    .limit(1000)
+  if (error) throw error
+  return data || []
+}
+
 // ─── INVITE ACCEPT FLOW (/invite/:token) ────────────────────────────────────
 
 export async function getInvite(token) {

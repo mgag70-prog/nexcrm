@@ -937,7 +937,48 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,updateCon
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONTACT DETAIL (Notes, Tasks, Docs, Sequences tabs + Lead Score)
 // ═══════════════════════════════════════════════════════════════════════════════
-function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[],contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView,onRequestSign}){
+// Synced Gmail on a contact's timeline (session 2 of the Google integration).
+// Read-only: rows come from email_messages via the sync engine.
+function ContactGmailTab({contactId,demoMode}){
+  const [msgs,setMsgs]=useState(null); // null = loading
+  const [loadError,setLoadError]=useState(null);
+  const [openId,setOpenId]=useState(null);
+  useEffect(()=>{
+    if(demoMode){setMsgs([]);return;}
+    let cancelled=false;
+    import("./lib/supabase.js").then(({listContactEmails})=>listContactEmails(contactId))
+      .then(r=>{if(!cancelled)setMsgs(r);})
+      .catch(e=>{if(!cancelled){setLoadError(e?.message||String(e));setMsgs([]);}});
+    return ()=>{cancelled=true;};
+  },[contactId,demoMode]);
+
+  if(msgs===null)return <div style={{fontSize:13,color:"#94A3B8"}}>Loading email…</div>;
+  if(loadError)return <div style={{background:"#FEF2F2",border:"1px solid #FECACA",color:"#B91C1C",borderRadius:8,padding:"9px 12px",fontSize:12.5}}>Could not load email: {loadError}</div>;
+  if(!msgs.length)return <EmptyState icon={I.inbox} title="No synced email yet" message={demoMode?"Email sync is unavailable in demo mode.":"Messages appear here once this entity's Google account is connected (Settings → Connected accounts) and a sync has run. Only mail involving CRM contacts is stored."}/>;
+  return(
+    <div>
+      {msgs.map(m=>(
+        <div key={m.id} style={{border:"1px solid #E9EEF6",borderRadius:8,marginBottom:8,overflow:"hidden"}}>
+          <div style={{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,background:openId===m.id?"#F8FAFC":"#FFFFFF"}} onClick={()=>setOpenId(openId===m.id?null:m.id)}>
+            <span style={{fontSize:10,fontWeight:800,color:m.direction==="out"?"#1D4ED8":"#059669",background:m.direction==="out"?"#EEF2FF":"#ECFDF5",borderRadius:4,padding:"2px 6px",flexShrink:0}}>{m.direction==="out"?"SENT":"RECEIVED"}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.subject||"(no subject)"}{m.has_attachments&&<span title="Has attachments" style={{marginLeft:6,color:"#94A3B8"}}>📎</span>}</div>
+              <div style={{fontSize:11.5,color:"#94A3B8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.direction==="out"?`To ${(m.to_emails||[]).join(", ")}`:`From ${m.from_name||m.from_email||"unknown"}`}</div>
+            </div>
+            <div style={{fontSize:11,color:"#475569",flexShrink:0}}>{fmtDate(m.sent_at)}</div>
+          </div>
+          {openId===m.id&&(
+            <div style={{padding:"12px 14px",borderTop:"1px solid #E9EEF6",fontSize:12.5,color:"#334155",whiteSpace:"pre-wrap",maxHeight:320,overflowY:"auto",background:"#FCFDFF"}}>
+              {m.body_text||m.snippet||"(no text body)"}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[],contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView,onRequestSign,demoMode=false}){
   const [noteText,setNoteText]=useState("");
   const [tab,setTab]=useState("notes");
   const fileRef=useRef();
@@ -1056,7 +1097,7 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[
         {/* Right: Tabs */}
         <div style={S.card({overflow:"hidden"})}>
           <div style={{display:"flex",borderBottom:"1px solid #E9EEF6",padding:"0 16px",gap:2}}>
-            {[["notes",`Notes (${cNotes.length})`],["tasks",`Tasks (${cTasks.length})`],["docs",`Docs (${cDocs.length})`],["sequences",`Sequences (${cEnrollments.length})`]].map(([id,lbl])=>(
+            {[["notes",`Notes (${cNotes.length})`],["tasks",`Tasks (${cTasks.length})`],["docs",`Docs (${cDocs.length})`],["sequences",`Sequences (${cEnrollments.length})`],["gmail","Email"]].map(([id,lbl])=>(
               <button key={id} style={{padding:"13px 12px",background:"transparent",border:"none",borderBottom:tab===id?"2px solid #1D4ED8":"2px solid transparent",color:tab===id?"#1D4ED8":"#64748B",cursor:"pointer",fontWeight:600,fontSize:12,transition:"color .15s",whiteSpace:"nowrap"}} onClick={()=>setTab(id)}>{lbl}</button>
             ))}
           </div>
@@ -1154,6 +1195,9 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[
                 })}
               </div>
             )}
+
+            {/* GMAIL TAB */}
+            {tab==="gmail"&&<ContactGmailTab contactId={contact.id} demoMode={demoMode}/>}
           </div>
         </div>
       </div>
@@ -3598,6 +3642,144 @@ function AutomationView({automations,activeEntityId,addAutomation,updateAutomati
 // ═══════════════════════════════════════════════════════════════════════════════
 // SETTINGS VIEW (Entities, Products, Custom Fields, Email, Profile)
 // ═══════════════════════════════════════════════════════════════════════════════
+// ─── GOOGLE CALENDAR VIEW (account-wide, all entities side by side) ──────────
+function GoogleCalendarView({account,entities,demoMode,contacts,setSelContact,setView}){
+  const today=new Date();
+  const [monthAnchor,setMonthAnchor]=useState(new Date(today.getFullYear(),today.getMonth(),1));
+  const [events,setEvents]=useState(null); // null = loading
+  const [loadError,setLoadError]=useState(null);
+  const [selEvent,setSelEvent]=useState(null);
+
+  const monthStart=new Date(monthAnchor.getFullYear(),monthAnchor.getMonth(),1);
+  const monthEnd=new Date(monthAnchor.getFullYear(),monthAnchor.getMonth()+1,0);
+  const entityById=Object.fromEntries((entities||[]).map(e=>[e.id,e]));
+
+  useEffect(()=>{
+    if(demoMode){setEvents([]);return;}
+    if(!account?.id)return;
+    let cancelled=false;
+    setEvents(null);
+    const from=new Date(monthStart);from.setDate(from.getDate()-7);
+    const to=new Date(monthEnd);to.setDate(to.getDate()+7);
+    import("./lib/supabase.js").then(({listAccountCalendarEvents})=>
+      listAccountCalendarEvents(account.id,from.toISOString(),to.toISOString()))
+      .then(r=>{if(!cancelled){setEvents(r);setLoadError(null);}})
+      .catch(e=>{if(!cancelled){setLoadError(e?.message||String(e));setEvents([]);}});
+    return ()=>{cancelled=true;};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[account?.id,demoMode,monthAnchor.getTime()]);
+
+  // Build a 6-week grid starting on the Sunday before the 1st.
+  const gridStart=new Date(monthStart);gridStart.setDate(gridStart.getDate()-gridStart.getDay());
+  const days=Array.from({length:42},(_,i)=>{const d=new Date(gridStart);d.setDate(d.getDate()+i);return d;});
+  const dayKey=(d)=>`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const byDay={};
+  for(const ev of events||[]){
+    if(!ev.start_at)continue;
+    const d=new Date(ev.start_at);
+    const k=dayKey(d);
+    (byDay[k]=byDay[k]||[]).push(ev);
+  }
+  const monthLabel=monthAnchor.toLocaleDateString(undefined,{month:"long",year:"numeric"});
+  const shiftMonth=(n)=>setMonthAnchor(new Date(monthAnchor.getFullYear(),monthAnchor.getMonth()+n,1));
+  const fmtTime=(iso)=>new Date(iso).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+  const selEventContact=selEvent?.contact_id?(contacts||[]).find(c=>c.id===selEvent.contact_id):null;
+
+  return(
+    <div>
+      <PageHeader title="Calendar" sub="Google Calendar across all entities — read-only, synced every 15 minutes">
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button style={S.btnSecondary} onClick={()=>shiftMonth(-1)}>←</button>
+          <div style={{fontSize:14,fontWeight:700,color:"#0F172A",minWidth:150,textAlign:"center"}}>{monthLabel}</div>
+          <button style={S.btnSecondary} onClick={()=>shiftMonth(1)}>→</button>
+          <button style={S.btnSecondary} onClick={()=>setMonthAnchor(new Date(today.getFullYear(),today.getMonth(),1))}>Today</button>
+        </div>
+      </PageHeader>
+
+      {/* Entity legend */}
+      <div style={{display:"flex",gap:14,marginBottom:12,flexWrap:"wrap"}}>
+        {(entities||[]).map(e=>(
+          <div key={e.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569"}}>
+            <span style={{width:9,height:9,borderRadius:3,background:e.color||"#3B82F6"}}/>{e.name}
+          </div>
+        ))}
+      </div>
+
+      {loadError&&(
+        <div style={{background:"#FEF2F2",border:"1px solid #FECACA",color:"#B91C1C",borderRadius:8,padding:"9px 12px",fontSize:12.5,marginBottom:12}}>
+          Could not load events: {loadError}
+        </div>
+      )}
+      {events===null?(
+        <div style={{fontSize:13,color:"#94A3B8",padding:"30px 0",textAlign:"center"}}>Loading calendar…</div>
+      ):(
+        <div style={S.card({overflow:"hidden",padding:0})}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"1px solid #E9EEF6"}}>
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>(
+              <div key={d} style={{padding:"8px 10px",fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>{d}</div>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+            {days.map((d,i)=>{
+              const inMonth=d.getMonth()===monthAnchor.getMonth();
+              const isToday=dayKey(d)===dayKey(today);
+              const dayEvents=(byDay[dayKey(d)]||[]).slice(0,4);
+              const overflow=(byDay[dayKey(d)]||[]).length-dayEvents.length;
+              return(
+                <div key={i} style={{minHeight:96,borderRight:(i%7)<6?"1px solid #F1F5F9":"none",borderBottom:i<35?"1px solid #F1F5F9":"none",padding:"6px 6px 4px",background:inMonth?"#FFFFFF":"#FAFBFD"}}>
+                  <div style={{fontSize:11.5,fontWeight:isToday?800:600,color:isToday?"#FFFFFF":inMonth?"#334155":"#B6C2D4",background:isToday?"#1D4ED8":"transparent",borderRadius:isToday?"50%":0,width:isToday?20:"auto",height:isToday?20:"auto",display:"flex",alignItems:"center",justifyContent:isToday?"center":"flex-start",marginBottom:4}}>{d.getDate()}</div>
+                  {dayEvents.map(ev=>{
+                    const ent=entityById[ev.entity_id];
+                    const cancelled=ev.status==="cancelled";
+                    return(
+                      <div key={ev.id} onClick={()=>setSelEvent(ev)} title={ev.title||"(untitled)"}
+                        style={{fontSize:10.5,fontWeight:600,color:cancelled?"#94A3B8":"#0F172A",background:`${ent?.color||"#3B82F6"}1A`,borderLeft:`3px solid ${ent?.color||"#3B82F6"}`,borderRadius:4,padding:"2px 5px",marginBottom:3,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:cancelled?"line-through":"none"}}>
+                        {!ev.all_day&&<span style={{color:"#64748B",fontWeight:500}}>{fmtTime(ev.start_at)} </span>}{ev.title||"(untitled)"}
+                      </div>
+                    );
+                  })}
+                  {overflow>0&&<div style={{fontSize:10,color:"#94A3B8"}}>+{overflow} more</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {events!==null&&events.length===0&&!loadError&&(
+        <div style={{fontSize:12.5,color:"#94A3B8",marginTop:12,textAlign:"center"}}>
+          {demoMode?"Calendar sync is unavailable in demo mode.":"No synced events in this window. Connect a Google account per entity in Settings → Connected accounts."}
+        </div>
+      )}
+
+      {selEvent&&(
+        <Modal title={selEvent.title||"(untitled event)"} onClose={()=>setSelEvent(null)}>
+          <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,fontSize:13,marginBottom:14}}>
+            <div style={{color:"#94A3B8"}}>Entity</div><div style={{color:"#0F172A"}}>{entityById[selEvent.entity_id]?.name||selEvent.entity_id}</div>
+            <div style={{color:"#94A3B8"}}>When</div>
+            <div style={{color:"#0F172A"}}>
+              {selEvent.all_day
+                ?`${new Date(selEvent.start_at).toLocaleDateString()} (all day)`
+                :`${new Date(selEvent.start_at).toLocaleString()} – ${selEvent.end_at?fmtTime(selEvent.end_at):""}`}
+            </div>
+            {selEvent.location&&<><div style={{color:"#94A3B8"}}>Location</div><div style={{color:"#0F172A"}}>{selEvent.location}</div></>}
+            <div style={{color:"#94A3B8"}}>Status</div><div style={{color:selEvent.status==="cancelled"?"#B91C1C":"#0F172A",textTransform:"capitalize"}}>{selEvent.status}</div>
+            {(selEvent.attendees||[]).length>0&&<>
+              <div style={{color:"#94A3B8"}}>Attendees</div>
+              <div style={{color:"#0F172A"}}>{selEvent.attendees.map(a=>a.name||a.email).join(", ")}</div>
+            </>}
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            {selEventContact&&(
+              <button style={S.btnSecondary} onClick={()=>{setSelEvent(null);setSelContact?.(selEventContact.id);setView?.("contacts");}}>Open {selEventContact.name}</button>
+            )}
+            <button style={S.btnPrimary} onClick={()=>setSelEvent(null)}>Close</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 // ─── CONNECTED ACCOUNTS (Settings, owner/admin only) ─────────────────────────
 // Per-entity Google connections. Connect/disconnect/sync all go through
 // service-role Netlify functions; this panel only reads metadata.
@@ -7710,6 +7892,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
     {id:"tasks",label:"Tasks",icon:I.check,badge:overdueTasks,badgeColor:"#EF4444"},
     {id:"inbox",label:"Inbox",icon:I.inbox,badge:unreadEmails,badgeColor:"#1D4ED8"},
     {id:"scheduler",label:"Scheduler",icon:I.meet},
+    {id:"calendar",label:"Calendar",icon:I.meet},
     ...(fs?[{id:"timeclock",label:"Time Clock",icon:I.clock}]:[]),
     {id:"time",label:"Time Tracking",icon:I.clock},
     {id:"invoices",label:"Invoices",icon:I.invoice,badge:unpaidInvoices,badgeColor:"#F59E0B"},
@@ -7924,7 +8107,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
         <div style={{flex:1,overflowY:"auto",padding:isMobile?12:20,paddingBottom:isMobile?80:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} companies={companies} entity={entity} setView={setView} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
-          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})}/>}
+          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})} demoMode={demoMode}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} allExpenses={expenses} allInvoices={invoices} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
           {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
@@ -7942,6 +8125,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
           {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} expenses={expenses} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
+          {view==="calendar"&&<GoogleCalendarView account={account} entities={entities} demoMode={demoMode} contacts={contacts} setSelContact={setSelContact} setView={setView}/>}
           {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings} account={account} myRole={myRole} canManageTeam={canManageTeam} session={session} demoMode={demoMode} initialTab={googleReturn?"connected":null}/>}
         </div>
         )}
