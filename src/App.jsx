@@ -188,6 +188,85 @@ const fmtInvNum = n => `INV-${String(n).padStart(4,"0")}`;
 const genToken = () => Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,10);
 
 // ─── LEAD SCORING ─────────────────────────────────────────────────────────────
+// ─── DEAL HEALTH (0-100) ─────────────────────────────────────────────────────
+// Freshness 30 + Confidence 25 + Urgency 20 + Momentum 25. Shared by the
+// calendar context panel, Kanban cards, and DealDetail.
+const DEAL_MOMENTUM_STANDARD={"Won":25,"Proposal Sent":20,"Demo Scheduled":17,"Follow-up / Discovery":13,"Responded / Interested":10,"Contacted":7,"New Lead":3,"Lost":0};
+const DEAL_MOMENTUM_FS={"Completed":25,"Won":24,"Scheduled":24,"In Progress":22,"Estimate Sent":20,"Contacted":7,"New Lead":3,"Lost":0};
+
+function dealMomentumPts(stage,entity){
+  if(!stage)return 3;
+  const table=isFieldService(entity)?DEAL_MOMENTUM_FS:DEAL_MOMENTUM_STANDARD;
+  if(table[stage]!=null)return table[stage];
+  if(/lost|inactive/i.test(stage))return 0;
+  // Custom entity stages: scale by position among non-terminal stages.
+  const live=(entity?.stages||[]).filter(s=>!/lost|inactive/i.test(s));
+  const idx=live.indexOf(stage);
+  if(idx===-1)return 12; // unknown stage — midpoint
+  return live.length<2?25:Math.round(3+22*(idx/(live.length-1)));
+}
+function dealFreshnessPts(days){
+  if(days==null)return 0; // no note ever logged
+  if(days<=0)return 30;
+  if(days<=7)return 30-(10*days)/7;
+  if(days<=14)return 20-(10*(days-7))/7;
+  if(days<=21)return 10-(10*(days-14))/7;
+  return 0;
+}
+function dealUrgencyPts(days){
+  if(days==null)return 5; // no close date — treat as far out
+  if(days<=7)return 20;   // includes overdue
+  if(days<=30)return 20-(5*(days-7))/23;
+  if(days<=60)return 15-(5*(days-30))/30;
+  if(days<=90)return 10-(5*(days-60))/30;
+  return 5;
+}
+// asOf (ms) reconstructs the score at a past moment — stage via stageHistory
+// (each entry records the stage a transition LEFT and when), notes by
+// timestamp. null = now.
+function calcDealHealthAt(deal,notes,entity,asOf){
+  const t=asOf??Date.now();
+  let stage=deal.stage;
+  if(asOf!=null){
+    const hist=(deal.stageHistory||[]).map(h=>({from:h.from,at:new Date(h.at).getTime()})).sort((a,b)=>a.at-b.at);
+    const later=hist.find(h=>h.at>t);
+    if(later)stage=later.from;
+    // else: no transition after t — current stage already held at t
+  }
+  const rel=(notes||[]).filter(n=>(n.dealId===deal.id||(deal.contactId&&n.contactId===deal.contactId))&&new Date(n.createdAt).getTime()<=t);
+  const lastNote=rel.reduce((m,n)=>Math.max(m,new Date(n.createdAt).getTime()),0);
+  const f=dealFreshnessPts(lastNote?(t-lastNote)/864e5:null);
+  const c=Math.max(0,Math.min(25,(+deal.probability||0)/4));
+  const u=dealUrgencyPts(deal.closeDate?(new Date(deal.closeDate).getTime()-t)/864e5:null);
+  const m=dealMomentumPts(stage,entity);
+  return Math.round(Math.max(0,Math.min(100,f+c+u+m)));
+}
+function calcDealHealth(deal,notes,entity){return calcDealHealthAt(deal,notes,entity,null);}
+// Trend vs 7 days ago. Omitted (null) when the deal is younger than 7 days —
+// stageHistory records every transition, so an existing deal's past stage is
+// always derivable, but a younger deal has nothing to compare against.
+function dealHealthTrend(deal,notes,entity){
+  const t7=Date.now()-7*864e5;
+  if(!deal.createdAt||new Date(deal.createdAt).getTime()>t7)return null;
+  const diff=calcDealHealthAt(deal,notes,entity,null)-calcDealHealthAt(deal,notes,entity,t7);
+  return diff>=3?"up":diff<=-3?"down":"flat";
+}
+// Colour bands per spec: <25 bad, <50 warn, <75 ok, 75+ good.
+const dealHealthBand=(s)=>s<25?{bg:"#FEF2F2",fg:"#B91C1C"}:s<50?{bg:"#FFFBEB",fg:"#B45309"}:s<75?{bg:"#F0FDF4",fg:"#15803D"}:{bg:"#D1FAE5",fg:"#065F46"};
+
+function DealHealthChip({deal,notes,entity,label="",size=10}){
+  const s=calcDealHealth(deal,notes,entity);
+  const b=dealHealthBand(s);
+  const tr=dealHealthTrend(deal,notes,entity);
+  const trChar=tr==="up"?"↑":tr==="down"?"↓":tr==="flat"?"→":null;
+  return(
+    <span title={`Deal health ${s}/100 — freshness + confidence + urgency + momentum${tr?` · ${tr==="up"?"improving":tr==="down"?"declining":"steady"} vs 7 days ago`:""}`}
+      style={{fontSize:size,fontWeight:700,padding:"2px 7px",borderRadius:4,background:b.bg,color:b.fg,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:3}}>
+      {label?`${label} ${s}`:s}{trChar&&<span>{trChar}</span>}
+    </span>
+  );
+}
+
 function calcLeadScore(contact, deals, notes, tasks) {
   let score = 0;
   const cDeals = deals.filter(d=>d.contactId===contact.id);
@@ -1490,7 +1569,7 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,allExpens
 // ═══════════════════════════════════════════════════════════════════════════════
 // KANBAN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
-function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,setSelContact,setSelCompany,setSelDeal,setView,products,entity}){
+function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,setSelContact,setSelCompany,setSelDeal,setView,products,entity,notes=[]}){
   const fs=isFieldService(entity);
   const isMobile=useIsMobile();
   const stages=stagesFor(entity);
@@ -1575,6 +1654,7 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
                       }}
                       style={{background:"#FFFFFF",border:`1px solid ${selected.has(deal.id)?"#1D4ED8":dragging===deal.id?"#1D4ED8":"#E2E8F0"}`,boxShadow:selected.has(deal.id)?"0 0 0 2px #1D4ED830":undefined,borderRadius:10,padding:14,marginBottom:10,cursor:"grab",opacity:dragging===deal.id?.5:1,position:"relative"}}>
                       <div style={{position:"absolute",top:8,right:8,display:"flex",alignItems:"center",gap:6}}>
+                        <DealHealthChip deal={deal} notes={notes} entity={entity} size={9}/>
                         {fs&&deal.recurring&&<span title={`Recurring ${deal.frequency||""}`} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:"50%",background:"#10B98120",border:"1px solid #10B98140",color:"#10B981"}}><Ic d={I.repeat} size={10} c="#10B981"/></span>}
                         <input type="checkbox" checked={selected.has(deal.id)} onChange={()=>toggleOne(deal.id)} onClick={e=>e.stopPropagation()} style={{accentColor:"#1D4ED8",cursor:"pointer",width:14,height:14}}/>
                       </div>
@@ -4066,22 +4146,23 @@ function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],dea
                   {selContact&&(
                     <div style={{padding:"13px 18px",borderBottom:"1px solid #E2E8F0"}}>
                       <div style={{fontSize:9.5,fontWeight:800,letterSpacing:".09em",textTransform:"uppercase",color:"#94A3B8",marginBottom:8}}>Open business</div>
-                      {selDeals.length?selDeals.map(d=>{
-                        const sc=scoreClass(selScore??0);
-                        return(
-                          <div key={d.id} style={{border:"1px solid #E2E8F0",borderRadius:7,padding:"10px 11px",marginBottom:8}}>
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                              <div style={{fontSize:12.5,fontWeight:650,lineHeight:1.3}}>{d.title||d.name}</div>
-                              <div style={{fontSize:13,fontWeight:750,whiteSpace:"nowrap"}}>${(+d.value||0).toLocaleString()}</div>
-                            </div>
-                            <div style={{display:"flex",alignItems:"center",gap:7,marginTop:7,flexWrap:"wrap"}}>
-                              <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:"#F1F5F9",color:"#475569"}}>{d.stage}</span>
-                              {selScore!==null&&<span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:sc.bg,color:sc.fg}}>Score {selScore}</span>}
-                            </div>
+                      {selDeals.length?selDeals.map(d=>(
+                        <div key={d.id} style={{border:"1px solid #E2E8F0",borderRadius:7,padding:"10px 11px",marginBottom:8}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                            <div style={{fontSize:12.5,fontWeight:650,lineHeight:1.3}}>{d.title||d.name}</div>
+                            <div style={{fontSize:13,fontWeight:750,whiteSpace:"nowrap"}}>${(+d.value||0).toLocaleString()}</div>
                           </div>
-                        );
-                      }):(
-                        <div style={{fontSize:12,color:"#94A3B8"}}>No open deals</div>
+                          <div style={{display:"flex",alignItems:"center",gap:7,marginTop:7,flexWrap:"wrap"}}>
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:"#F1F5F9",color:"#475569"}}>{d.stage}</span>
+                            <DealHealthChip deal={d} notes={notes} entity={selEnt} label="Health"/>
+                          </div>
+                        </div>
+                      )):(
+                        <div style={{fontSize:12,color:"#94A3B8",display:"flex",alignItems:"center",gap:8}}>
+                          No open deals
+                          {/* Lead score only where no deal exists — they measure different things */}
+                          {selScore!==null&&(()=>{const sc=scoreClass(selScore);return <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:sc.bg,color:sc.fg}}>Score {selScore}</span>;})()}
+                        </div>
                       )}
                     </div>
                   )}
@@ -6682,6 +6763,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
               <select value={deal.stage} onChange={e=>updateDeal(deal.id,{stage:e.target.value})} style={{...S.select,width:"auto",padding:"3px 10px",fontSize:11,...S.badge(sCol)}}>
                 {stages.map(s=><option key={s} value={s}>{s}</option>)}
               </select>
+              <DealHealthChip deal={deal} notes={allNotes} entity={entity} label="Health" size={11}/>
               {entity&&<span style={S.badge("#64748B")}>{entity.name}</span>}
             </div>
             <div style={{fontSize:13,color:"#475569"}}>
@@ -8449,7 +8531,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
           {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})} demoMode={demoMode}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} allExpenses={expenses} allInvoices={invoices} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
-          {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity}/>}
+          {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity} notes={notes}/>}
           {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} expenses={expenses} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} addInvoice={addInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} companies={eco} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast} portalTokens={portalTokens} portalMessages={portalMessages} sendOwnerPortalMessage={sendOwnerPortalMessage} markPortalMessagesRead={markPortalMessagesRead}/>}
