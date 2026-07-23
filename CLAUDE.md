@@ -131,6 +131,9 @@ Never commit secrets or keys to the repo.
   bearer token validator, shared error helpers.
 - `netlify.toml` — build config (`npm run build` / `dist`) and SPA
   redirect rule (`/* → /index.html 200`).
+- `docs/HQOps_Calendar_Mockup.html` — APPROVED design spec for the
+  Calendar view (week-first time grid, entity load bars, prose brief,
+  right-side CRM context panel). Match this, do not redesign it.
 - `vite.config.js` — Vite + React plugin config.
 
 ## Data Architecture

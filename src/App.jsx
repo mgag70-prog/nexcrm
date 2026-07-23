@@ -3642,139 +3642,442 @@ function AutomationView({automations,activeEntityId,addAutomation,updateAutomati
 // ═══════════════════════════════════════════════════════════════════════════════
 // SETTINGS VIEW (Entities, Products, Custom Fields, Email, Profile)
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── GOOGLE CALENDAR VIEW (account-wide, all entities side by side) ──────────
-function GoogleCalendarView({account,entities,demoMode,contacts,setSelContact,setView}){
+// ─── GOOGLE CALENDAR VIEW ────────────────────────────────────────────────────
+// Spec: docs/HQOps_Calendar_Mockup.html (approved interactive mockup).
+// Week-first time grid with per-day entity load bars, a prose "scheduled
+// update" brief, chip filters, and a right-side CRM context panel.
+const CAL_START=7, CAL_END=19, CAL_ROW=64, CAL_STALE_DAYS=21;
+const calDecHours=(d)=>d.getHours()+d.getMinutes()/60;
+const calFmtH=(h)=>{const hr=Math.floor(h),m=Math.round((h-hr)*60);const ap=hr>=12?"PM":"AM";const h12=hr%12===0?12:hr%12;return m?`${h12}:${String(m).padStart(2,"0")} ${ap}`:`${h12} ${ap}`;};
+const calDayKey=(d)=>`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+const calMondayOf=(d)=>{const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());const dow=(x.getDay()+6)%7;x.setDate(x.getDate()-dow);return x;};
+const calOpenDeal=(d)=>!/won|lost|inactive|closed/i.test(d.stage||"");
+const calDaysSince=(iso)=>iso?Math.floor((Date.now()-new Date(iso).getTime())/864e5):null;
+
+function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],deals=[],notes=[],tasks=[],invoices=[],setSelContact,setView,showToast}){
   const today=new Date();
-  const [monthAnchor,setMonthAnchor]=useState(new Date(today.getFullYear(),today.getMonth(),1));
+  const [mode,setMode]=useState("week"); // day | week | month — week is primary
+  const [anchor,setAnchor]=useState(new Date());
   const [events,setEvents]=useState(null); // null = loading
   const [loadError,setLoadError]=useState(null);
   const [selEvent,setSelEvent]=useState(null);
+  const [activeEnts,setActiveEnts]=useState(null); // null = all entities
+  const [fetchedAt,setFetchedAt]=useState(null);
+  const [refreshKey,setRefreshKey]=useState(0);
+  const [,setNowTick]=useState(0); // re-render for the now-line
+  useEffect(()=>{const t=setInterval(()=>setNowTick(n=>n+1),60000);return()=>clearInterval(t);},[]);
+  useEffect(()=>{
+    const onKey=(e)=>{if(e.key==="Escape")setSelEvent(null);};
+    window.addEventListener("keydown",onKey);
+    return()=>window.removeEventListener("keydown",onKey);
+  },[]);
 
-  const monthStart=new Date(monthAnchor.getFullYear(),monthAnchor.getMonth(),1);
-  const monthEnd=new Date(monthAnchor.getFullYear(),monthAnchor.getMonth()+1,0);
   const entityById=Object.fromEntries((entities||[]).map(e=>[e.id,e]));
+  const allEntIds=(entities||[]).map(e=>e.id);
+  const entOn=(id)=>!activeEnts||activeEnts.has(id);
+
+  // Visible period per mode
+  const weekStart=calMondayOf(anchor);
+  const periodDays=mode==="day"
+    ?[new Date(anchor.getFullYear(),anchor.getMonth(),anchor.getDate())]
+    :mode==="week"
+    ?Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d;})
+    :(()=>{const ms=new Date(anchor.getFullYear(),anchor.getMonth(),1);const gs=new Date(ms);gs.setDate(gs.getDate()-((gs.getDay()+6)%7));return Array.from({length:42},(_,i)=>{const d=new Date(gs);d.setDate(d.getDate()+i);return d;});})();
 
   useEffect(()=>{
     if(demoMode){setEvents([]);return;}
     if(!account?.id)return;
     let cancelled=false;
     setEvents(null);
-    const from=new Date(monthStart);from.setDate(from.getDate()-7);
-    const to=new Date(monthEnd);to.setDate(to.getDate()+7);
+    // Window covers the visible period AND always today (the brief describes
+    // today no matter where you've navigated).
+    const from=new Date(Math.min(periodDays[0].getTime(),today.getTime()-864e5));
+    const to=new Date(Math.max(periodDays[periodDays.length-1].getTime()+864e5,today.getTime()+864e5));
     import("./lib/supabase.js").then(({listAccountCalendarEvents})=>
       listAccountCalendarEvents(account.id,from.toISOString(),to.toISOString()))
-      .then(r=>{if(!cancelled){setEvents(r);setLoadError(null);}})
+      .then(r=>{if(!cancelled){setEvents(r);setLoadError(null);setFetchedAt(new Date());}})
       .catch(e=>{if(!cancelled){setLoadError(e?.message||String(e));setEvents([]);}});
     return ()=>{cancelled=true;};
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[account?.id,demoMode,monthAnchor.getTime()]);
+  },[account?.id,demoMode,mode,anchor.getTime(),refreshKey]);
 
-  // Build a 6-week grid starting on the Sunday before the 1st.
-  const gridStart=new Date(monthStart);gridStart.setDate(gridStart.getDate()-gridStart.getDay());
-  const days=Array.from({length:42},(_,i)=>{const d=new Date(gridStart);d.setDate(d.getDate()+i);return d;});
-  const dayKey=(d)=>`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  // ── Derived data ──
+  const visible=(events||[]).filter(ev=>ev.start_at&&entOn(ev.entity_id));
   const byDay={};
-  for(const ev of events||[]){
-    if(!ev.start_at)continue;
-    const d=new Date(ev.start_at);
-    const k=dayKey(d);
-    (byDay[k]=byDay[k]||[]).push(ev);
-  }
-  const monthLabel=monthAnchor.toLocaleDateString(undefined,{month:"long",year:"numeric"});
-  const shiftMonth=(n)=>setMonthAnchor(new Date(monthAnchor.getFullYear(),monthAnchor.getMonth()+n,1));
+  for(const ev of visible){const k=calDayKey(new Date(ev.start_at));(byDay[k]=byDay[k]||[]).push(ev);}
   const fmtTime=(iso)=>new Date(iso).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
-  const selEventContact=selEvent?.contact_id?(contacts||[]).find(c=>c.id===selEvent.contact_id):null;
+  const evHours=(ev)=>{
+    if(ev.all_day||!ev.end_at)return 0.5;
+    return Math.max(0.25,(new Date(ev.end_at)-new Date(ev.start_at))/36e5);
+  };
+  const dayLoad=(d)=>{
+    const evs=(byDay[calDayKey(d)]||[]).filter(e=>e.status!=="cancelled");
+    const by={};let total=0;
+    for(const e of evs){const h=evHours(e);by[e.entity_id]=(by[e.entity_id]||0)+h;total+=h;}
+    return {by,total,count:evs.length};
+  };
+
+  // ── The scheduled update (brief) — always about TODAY, all entities ──
+  const todayEvents=(events||[]).filter(ev=>ev.start_at&&ev.status!=="cancelled"&&calDayKey(new Date(ev.start_at))===calDayKey(today)&&!ev.all_day)
+    .sort((a,b)=>new Date(a.start_at)-new Date(b.start_at));
+  const brief=(()=>{
+    if(!todayEvents.length)return null;
+    const first=fmtTime(todayEvents[0].start_at);
+    const last=fmtTime(todayEvents[todayEvents.length-1].end_at||todayEvents[todayEvents.length-1].start_at);
+    let blocks=0;
+    for(let i=1;i<todayEvents.length;i++){
+      const gap=(new Date(todayEvents[i].start_at)-new Date(todayEvents[i-1].end_at||todayEvents[i-1].start_at))/36e5;
+      if(gap>=1.5)blocks++;
+    }
+    const wsCount=new Set(todayEvents.map(e=>e.entity_id)).size;
+    const contactIds=[...new Set(todayEvents.map(e=>e.contact_id).filter(Boolean))];
+    let pipeline=0;const tiedContacts=new Set();
+    for(const cid of contactIds){
+      const open=(deals||[]).filter(d=>d.contactId===cid&&calOpenDeal(d));
+      if(open.length){tiedContacts.add(cid);pipeline+=open.reduce((s,d)=>s+(+d.value||0),0);}
+    }
+    const tiedMeetings=todayEvents.filter(e=>tiedContacts.has(e.contact_id)).length;
+    const stale=[];
+    for(const cid of contactIds){
+      const c=(contacts||[]).find(x=>x.id===cid);
+      if(!c)continue;
+      const cNotes=(notes||[]).filter(n=>n.contactId===cid).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+      const days=cNotes.length?calDaysSince(cNotes[0].createdAt):null;
+      if(days===null||days>CAL_STALE_DAYS)stale.push({name:c.name,days});
+    }
+    return {count:todayEvents.length,first,last,blocks,wsCount,pipeline,tiedMeetings,stale:stale.slice(0,2)};
+  })();
+
+  // ── Navigation / labels ──
+  const shift=(n)=>{
+    const d=new Date(anchor);
+    if(mode==="day")d.setDate(d.getDate()+n);
+    else if(mode==="week")d.setDate(d.getDate()+7*n);
+    else d.setMonth(d.getMonth()+n);
+    setAnchor(d);
+  };
+  const rangeLabel=(()=>{
+    if(mode==="day")return anchor.toLocaleDateString(undefined,{weekday:"short",month:"long",day:"numeric",year:"numeric"});
+    if(mode==="month")return anchor.toLocaleDateString(undefined,{month:"long",year:"numeric"});
+    const we=new Date(weekStart);we.setDate(we.getDate()+6);
+    const sameMonth=weekStart.getMonth()===we.getMonth();
+    const a=weekStart.toLocaleDateString(undefined,{month:"long",day:"numeric"});
+    const b=sameMonth?we.getDate():we.toLocaleDateString(undefined,{month:"long",day:"numeric"});
+    return `${a} – ${b}, ${we.getFullYear()}`;
+  })();
+  const toggleChip=(id)=>{
+    setSelEvent(null);
+    if(id==="all"){setActiveEnts(null);return;}
+    if(!activeEnts){setActiveEnts(new Set([id]));return;} // solo from "all"
+    const next=new Set(activeEnts);
+    if(next.has(id)){next.delete(id);if(!next.size){setActiveEnts(null);return;}}
+    else next.add(id);
+    setActiveEnts(next.size===allEntIds.length?null:next);
+  };
+
+  // ── Context panel data ──
+  const selEnt=selEvent?entityById[selEvent.entity_id]:null;
+  const selContact=selEvent?.contact_id?(contacts||[]).find(c=>c.id===selEvent.contact_id):null;
+  const selCompanyName=selContact?.companyId?(companies||[]).find(co=>co.id===selContact.companyId)?.name:null;
+  const selDeals=selContact?(deals||[]).filter(d=>d.contactId===selContact.id&&calOpenDeal(d)):[];
+  const selNotes=selContact?(notes||[]).filter(n=>n.contactId===selContact.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)):[];
+  const selNoteDays=selNotes.length?calDaysSince(selNotes[0].createdAt):null;
+  const selStale=selContact&&(selNoteDays===null||selNoteDays>CAL_STALE_DAYS);
+  const selInvoice=selContact?(invoices||[]).filter(i=>i.contactId===selContact.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0]:null;
+  const invTotal=(inv)=>(inv?.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0);
+  const selScore=selContact?calcLeadScore(selContact,deals||[],notes||[],tasks||[]):null;
+  const scoreClass=(s)=>s>=70?{bg:"#F0FDF4",fg:"#15803D"}:s>=50?{bg:"#FFFBEB",fg:"#B45309"}:{bg:"#FEF2F2",fg:"#B91C1C"};
+  const openContact=()=>{if(!selContact)return;setSelEvent(null);setSelContact?.(selContact.id);setView?.("contacts");};
+
+  // ── Render helpers ──
+  const chipStyle=(on,color)=>({display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #E2E8F0",background:"#fff",borderRadius:20,padding:"4px 11px",fontSize:11.5,fontWeight:600,color:color||"#0F172A",cursor:"pointer",opacity:on?1:0.4,userSelect:"none"});
+  const renderLoadBar=(d)=>{
+    const {by,total}=dayLoad(d);
+    return(
+      <div title={total?`${total.toFixed(1)}h booked`:""} style={{display:"flex",height:4,borderRadius:2,overflow:"hidden",margin:"6px 0 7px",background:"#EDF1F6"}}>
+        {total>0&&Object.entries(by).map(([eid,h])=>(
+          <i key={eid} style={{display:"block",height:"100%",width:`${(h/total*100).toFixed(1)}%`,background:entityById[eid]?.color||"#3B82F6"}}/>
+        ))}
+      </div>
+    );
+  };
+  const renderTimeGrid=(gridDays)=>{
+    const nowDec=calDecHours(new Date());
+    return(
+      <div style={{flex:1,overflow:"auto",background:"#fff",border:"1px solid #E2E8F0",borderRadius:12,minWidth:0}}>
+        {/* Sticky day headers with load bars */}
+        <div style={{display:"grid",gridTemplateColumns:`64px repeat(${gridDays.length},minmax(0,1fr))`,position:"sticky",top:0,zIndex:5,background:"#fff",borderBottom:"1px solid #E2E8F0"}}>
+          <div style={{borderRight:"1px solid #E2E8F0"}}/>
+          {gridDays.map((d,i)=>{
+            const isToday=calDayKey(d)===calDayKey(today);
+            const {count,total}=dayLoad(d);
+            return(
+              <div key={i} style={{padding:"8px 9px 0",borderRight:i<gridDays.length-1?"1px solid #E2E8F0":"none"}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                  <span style={{fontSize:10,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",color:isToday?"#0F2044":"#94A3B8"}}>{d.toLocaleDateString(undefined,{weekday:"short"})}</span>
+                  <span style={{fontSize:17,fontWeight:700,letterSpacing:"-0.02em",...(isToday?{background:"#0F2044",color:"#fff",borderRadius:6,padding:"1px 7px",marginLeft:-3}:{})}}>{d.getDate()}</span>
+                </div>
+                {renderLoadBar(d)}
+                <div style={{fontSize:10.5,color:"#94A3B8",marginBottom:5}}>{count?`${count} mtg${count===1?"":"s"} · ${total.toFixed(1)}h`:"clear"}</div>
+              </div>
+            );
+          })}
+        </div>
+        {/* Body: hour gutter + day columns */}
+        <div style={{display:"grid",gridTemplateColumns:`64px repeat(${gridDays.length},minmax(0,1fr))`,position:"relative"}}>
+          <div style={{borderRight:"1px solid #E2E8F0"}}>
+            {Array.from({length:CAL_END-CAL_START},(_,i)=>(
+              <div key={i} style={{height:CAL_ROW,position:"relative",borderBottom:"1px solid #F1F5F9"}}>
+                <span style={{position:"absolute",top:3,right:8,fontSize:10,color:"#94A3B8"}}>{calFmtH(CAL_START+i)}</span>
+              </div>
+            ))}
+          </div>
+          {gridDays.map((d,di)=>{
+            const isToday=calDayKey(d)===calDayKey(today);
+            const weekend=d.getDay()===0||d.getDay()===6;
+            const dayEvs=(byDay[calDayKey(d)]||[]);
+            const allDayEvs=dayEvs.filter(e=>e.all_day);
+            const timedEvs=dayEvs.filter(e=>!e.all_day);
+            return(
+              <div key={di} style={{position:"relative",height:(CAL_END-CAL_START)*CAL_ROW,borderRight:di<gridDays.length-1?"1px solid #E2E8F0":"none",backgroundColor:weekend?"#FBFCFD":"transparent",backgroundImage:`repeating-linear-gradient(to bottom,#F1F5F9 0 1px,transparent 1px ${CAL_ROW}px)`}}>
+                {isToday&&nowDec>=CAL_START&&nowDec<=CAL_END&&(
+                  <div style={{position:"absolute",left:0,right:0,top:(nowDec-CAL_START)*CAL_ROW,zIndex:4,pointerEvents:"none",borderTop:"1.5px solid #DC2626"}}>
+                    <span style={{position:"absolute",left:-4,top:-4.5,width:8,height:8,background:"#DC2626",borderRadius:"50%"}}/>
+                  </div>
+                )}
+                {allDayEvs.map((ev,ai)=>{
+                  const ent=entityById[ev.entity_id];
+                  return(
+                    <div key={ev.id} onClick={()=>setSelEvent(ev)} style={{position:"absolute",left:4,right:4,top:2+ai*22,height:20,zIndex:2,display:"flex",alignItems:"center",gap:6,padding:"0 7px",borderRadius:5,cursor:"pointer",borderLeft:`3px solid ${ent?.color||"#3B82F6"}`,background:`${ent?.color||"#3B82F6"}14`}}>
+                      <span style={{fontSize:10,color:"#475569",fontWeight:600,flexShrink:0}}>All day</span>
+                      <span style={{fontSize:11,fontWeight:650,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title||"(untitled)"}</span>
+                    </div>
+                  );
+                })}
+                {timedEvs.map(ev=>{
+                  const ent=entityById[ev.entity_id];
+                  const s=Math.max(CAL_START,calDecHours(new Date(ev.start_at)));
+                  const eEnd=ev.end_at?Math.min(CAL_END,calDecHours(new Date(ev.end_at))||s+0.5):s+0.5;
+                  const h=Math.max(18,(Math.max(eEnd,s+0.25)-s)*CAL_ROW-3);
+                  const tier=h<42?"short":h<80?"mid":"full";
+                  const cancelled=ev.status==="cancelled";
+                  const sel=selEvent?.id===ev.id;
+                  const c=ent?.color||"#3B82F6";
+                  return(
+                    <div key={ev.id} onClick={()=>setSelEvent(ev)} title={ev.title||"(untitled)"}
+                      style={{position:"absolute",left:4,right:4,top:(s-CAL_START)*CAL_ROW,height:h,borderRadius:5,cursor:"pointer",overflow:"hidden",zIndex:sel?4:2,
+                        borderLeft:`3px solid ${c}`,background:`${c}14`,opacity:cancelled?0.55:1,
+                        boxShadow:sel?`0 0 0 2px ${c}`:"none",
+                        ...(tier==="short"?{display:"flex",alignItems:"center",gap:6,padding:"0 7px"}:{padding:"5px 7px"})}}>
+                      <div style={{fontSize:10,color:"#475569",fontWeight:600,flexShrink:0}}>{fmtTime(ev.start_at)}</div>
+                      <div style={{fontSize:tier==="short"?11:11.5,fontWeight:650,lineHeight:1.28,marginTop:tier==="short"?0:1,textDecoration:cancelled?"line-through":"none",
+                        ...(tier==="short"?{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}:{display:"-webkit-box",WebkitLineClamp:tier==="mid"?1:2,WebkitBoxOrient:"vertical",overflow:"hidden"})}}>{ev.title||"(untitled)"}</div>
+                      {tier==="full"&&<div style={{fontSize:10,color:c,fontWeight:700,marginTop:2,textTransform:"uppercase",letterSpacing:".05em"}}>{ent?.name}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  const renderMonthGrid=()=>(
+    <div style={{flex:1,minWidth:0,background:"#fff",border:"1px solid #E2E8F0",borderRadius:12,overflow:"hidden"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"1px solid #E9EEF6"}}>
+        {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>(
+          <div key={d} style={{padding:"8px 10px",fontSize:10,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",letterSpacing:".07em"}}>{d}</div>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+        {periodDays.map((d,i)=>{
+          const inMonth=d.getMonth()===anchor.getMonth();
+          const isToday=calDayKey(d)===calDayKey(today);
+          const list=(byDay[calDayKey(d)]||[]).slice(0,4);
+          const overflow=(byDay[calDayKey(d)]||[]).length-list.length;
+          return(
+            <div key={i} style={{minHeight:96,borderRight:(i%7)<6?"1px solid #F1F5F9":"none",borderBottom:i<35?"1px solid #F1F5F9":"none",padding:"6px 6px 4px",background:inMonth?"#FFFFFF":"#FAFBFD",cursor:"pointer"}}
+              onDoubleClick={()=>{setAnchor(new Date(d));setMode("day");}}>
+              <div style={{fontSize:11.5,fontWeight:isToday?800:600,color:isToday?"#FFFFFF":inMonth?"#334155":"#B6C2D4",background:isToday?"#0F2044":"transparent",borderRadius:6,display:"inline-block",padding:isToday?"0 6px":0,marginBottom:2}}>{d.getDate()}</div>
+              {renderLoadBar(d)}
+              {list.map(ev=>{
+                const ent=entityById[ev.entity_id];
+                const cancelled=ev.status==="cancelled";
+                return(
+                  <div key={ev.id} onClick={()=>setSelEvent(ev)} title={ev.title||"(untitled)"}
+                    style={{fontSize:10.5,fontWeight:600,color:cancelled?"#94A3B8":"#0F172A",background:`${ent?.color||"#3B82F6"}14`,borderLeft:`3px solid ${ent?.color||"#3B82F6"}`,borderRadius:4,padding:"2px 5px",marginBottom:3,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:cancelled?"line-through":"none"}}>
+                    {!ev.all_day&&<span style={{color:"#64748B",fontWeight:500}}>{fmtTime(ev.start_at)} </span>}{ev.title||"(untitled)"}
+                  </div>
+                );
+              })}
+              {overflow>0&&<div style={{fontSize:10,color:"#94A3B8"}}>+{overflow} more</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   return(
     <div>
-      <PageHeader title="Calendar" sub="Google Calendar across all entities — read-only, synced every 15 minutes">
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <button style={S.btnSecondary} onClick={()=>shiftMonth(-1)}>←</button>
-          <div style={{fontSize:14,fontWeight:700,color:"#0F172A",minWidth:150,textAlign:"center"}}>{monthLabel}</div>
-          <button style={S.btnSecondary} onClick={()=>shiftMonth(1)}>→</button>
-          <button style={S.btnSecondary} onClick={()=>setMonthAnchor(new Date(today.getFullYear(),today.getMonth(),1))}>Today</button>
-        </div>
-      </PageHeader>
-
-      {/* Entity legend */}
-      <div style={{display:"flex",gap:14,marginBottom:12,flexWrap:"wrap"}}>
-        {(entities||[]).map(e=>(
-          <div key={e.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569"}}>
-            <span style={{width:9,height:9,borderRadius:3,background:e.color||"#3B82F6"}}/>{e.name}
+      {/* THE SCHEDULED UPDATE — prose brief, always about today */}
+      {!demoMode&&(
+        <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:12,padding:"13px 20px",display:"flex",alignItems:"flex-start",gap:14,marginBottom:12}}>
+          <span style={{flexShrink:0,fontSize:9,fontWeight:800,letterSpacing:".09em",textTransform:"uppercase",color:"#059669",border:"1px solid #A7F3D0",background:"#F0FDF4",padding:"4px 7px",borderRadius:4,marginTop:1}}>Today</span>
+          <div style={{fontSize:13,lineHeight:1.65,color:"#0F172A",flex:1,minWidth:0}}>
+            {brief?(
+              <>
+                <b style={{fontWeight:650}}>{brief.count} meeting{brief.count===1?"":"s"}</b>, {brief.first} to {brief.last}
+                <span style={{color:"#94A3B8",margin:"0 7px"}}>·</span>{brief.blocks} open block{brief.blocks===1?"":"s"} over 90 minutes
+                <span style={{color:"#94A3B8",margin:"0 7px"}}>·</span>{brief.wsCount} workspace{brief.wsCount===1?"":"s"}<br/>
+                {brief.tiedMeetings>0?(
+                  <>{brief.tiedMeetings} meeting{brief.tiedMeetings===1?"":"s"} tied to <b style={{fontWeight:650}}>${brief.pipeline.toLocaleString()}</b> in open pipeline</>
+                ):"No meetings tied to open pipeline"}
+                {brief.stale.map(s=>(
+                  <span key={s.name}><span style={{color:"#94A3B8",margin:"0 7px"}}>·</span>
+                    <span style={{color:"#DC2626",fontWeight:600}}>{s.name} — {s.days===null?"no notes logged yet":`no note logged in ${s.days} days`}</span>
+                  </span>
+                ))}
+              </>
+            ):(
+              <span style={{color:"#475569"}}>No meetings today.</span>
+            )}
           </div>
-        ))}
+          <div style={{marginLeft:"auto",flexShrink:0,fontSize:11,color:"#94A3B8",whiteSpace:"nowrap"}}>
+            {fetchedAt?`Updated ${fetchedAt.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})}`:""} ·{" "}
+            <button style={{background:"none",border:"none",padding:0,color:"#1E3A6B",cursor:"pointer",fontSize:11,textDecoration:"underline"}} onClick={()=>setRefreshKey(k=>k+1)}>Refresh</button>
+          </div>
+        </div>
+      )}
+
+      {/* CONTROLS */}
+      <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:12,padding:"9px 16px",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <button style={{width:26,height:26,border:"1px solid #E2E8F0",background:"#fff",borderRadius:5,cursor:"pointer",color:"#475569",fontSize:13,lineHeight:1}} aria-label="Previous" onClick={()=>shift(-1)}>‹</button>
+          <button style={{width:26,height:26,border:"1px solid #E2E8F0",background:"#fff",borderRadius:5,cursor:"pointer",color:"#475569",fontSize:13,lineHeight:1}} aria-label="Next" onClick={()=>shift(1)}>›</button>
+          <button style={{border:"1px solid #E2E8F0",background:"#fff",borderRadius:5,padding:"5px 10px",fontSize:12,cursor:"pointer",color:"#475569",fontWeight:600}} onClick={()=>setAnchor(new Date())}>Today</button>
+        </div>
+        <div style={{fontSize:14,fontWeight:650,letterSpacing:"-0.01em",minWidth:172}}>{rangeLabel}</div>
+        <div style={{display:"flex",border:"1px solid #E2E8F0",borderRadius:6,overflow:"hidden"}}>
+          {[["day","Day"],["week","Week"],["month","Month"]].map(([m,lbl],i)=>(
+            <button key={m} onClick={()=>setMode(m)} style={{border:0,background:mode===m?"#0F2044":"#fff",padding:"5px 13px",fontSize:12,fontWeight:600,color:mode===m?"#fff":"#475569",cursor:"pointer",borderRight:i<2?"1px solid #E2E8F0":"none"}}>{lbl}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto",flexWrap:"wrap"}}>
+          <span style={chipStyle(!activeEnts,"#0F172A")} onClick={()=>toggleChip("all")}>All workspaces</span>
+          {(entities||[]).map(e=>(
+            <span key={e.id} style={chipStyle(entOn(e.id),e.color)} onClick={()=>toggleChip(e.id)}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:e.color||"#3B82F6"}}/>{e.name}
+            </span>
+          ))}
+        </div>
       </div>
 
       {loadError&&(
         <div style={{background:"#FEF2F2",border:"1px solid #FECACA",color:"#B91C1C",borderRadius:8,padding:"9px 12px",fontSize:12.5,marginBottom:12}}>
-          Could not load events: {loadError}
-        </div>
-      )}
-      {events===null?(
-        <div style={{fontSize:13,color:"#94A3B8",padding:"30px 0",textAlign:"center"}}>Loading calendar…</div>
-      ):(
-        <div style={S.card({overflow:"hidden",padding:0})}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"1px solid #E9EEF6"}}>
-            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>(
-              <div key={d} style={{padding:"8px 10px",fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>{d}</div>
-            ))}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
-            {days.map((d,i)=>{
-              const inMonth=d.getMonth()===monthAnchor.getMonth();
-              const isToday=dayKey(d)===dayKey(today);
-              const dayEvents=(byDay[dayKey(d)]||[]).slice(0,4);
-              const overflow=(byDay[dayKey(d)]||[]).length-dayEvents.length;
-              return(
-                <div key={i} style={{minHeight:96,borderRight:(i%7)<6?"1px solid #F1F5F9":"none",borderBottom:i<35?"1px solid #F1F5F9":"none",padding:"6px 6px 4px",background:inMonth?"#FFFFFF":"#FAFBFD"}}>
-                  <div style={{fontSize:11.5,fontWeight:isToday?800:600,color:isToday?"#FFFFFF":inMonth?"#334155":"#B6C2D4",background:isToday?"#1D4ED8":"transparent",borderRadius:isToday?"50%":0,width:isToday?20:"auto",height:isToday?20:"auto",display:"flex",alignItems:"center",justifyContent:isToday?"center":"flex-start",marginBottom:4}}>{d.getDate()}</div>
-                  {dayEvents.map(ev=>{
-                    const ent=entityById[ev.entity_id];
-                    const cancelled=ev.status==="cancelled";
-                    return(
-                      <div key={ev.id} onClick={()=>setSelEvent(ev)} title={ev.title||"(untitled)"}
-                        style={{fontSize:10.5,fontWeight:600,color:cancelled?"#94A3B8":"#0F172A",background:`${ent?.color||"#3B82F6"}1A`,borderLeft:`3px solid ${ent?.color||"#3B82F6"}`,borderRadius:4,padding:"2px 5px",marginBottom:3,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:cancelled?"line-through":"none"}}>
-                        {!ev.all_day&&<span style={{color:"#64748B",fontWeight:500}}>{fmtTime(ev.start_at)} </span>}{ev.title||"(untitled)"}
-                      </div>
-                    );
-                  })}
-                  {overflow>0&&<div style={{fontSize:10,color:"#94A3B8"}}>+{overflow} more</div>}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {events!==null&&events.length===0&&!loadError&&(
-        <div style={{fontSize:12.5,color:"#94A3B8",marginTop:12,textAlign:"center"}}>
-          {demoMode?"Calendar sync is unavailable in demo mode.":"No synced events in this window. Connect a Google account per entity in Settings → Connected accounts."}
+          Could not load events: {loadError} <button style={{background:"none",border:"none",color:"#B91C1C",cursor:"pointer",fontSize:12.5,padding:0,textDecoration:"underline"}} onClick={()=>setRefreshKey(k=>k+1)}>Retry</button>
         </div>
       )}
 
-      {selEvent&&(
-        <Modal title={selEvent.title||"(untitled event)"} onClose={()=>setSelEvent(null)}>
-          <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,fontSize:13,marginBottom:14}}>
-            <div style={{color:"#94A3B8"}}>Entity</div><div style={{color:"#0F172A"}}>{entityById[selEvent.entity_id]?.name||selEvent.entity_id}</div>
-            <div style={{color:"#94A3B8"}}>When</div>
-            <div style={{color:"#0F172A"}}>
-              {selEvent.all_day
-                ?`${new Date(selEvent.start_at).toLocaleDateString()} (all day)`
-                :`${new Date(selEvent.start_at).toLocaleString()} – ${selEvent.end_at?fmtTime(selEvent.end_at):""}`}
-            </div>
-            {selEvent.location&&<><div style={{color:"#94A3B8"}}>Location</div><div style={{color:"#0F172A"}}>{selEvent.location}</div></>}
-            <div style={{color:"#94A3B8"}}>Status</div><div style={{color:selEvent.status==="cancelled"?"#B91C1C":"#0F172A",textTransform:"capitalize"}}>{selEvent.status}</div>
-            {(selEvent.attendees||[]).length>0&&<>
-              <div style={{color:"#94A3B8"}}>Attendees</div>
-              <div style={{color:"#0F172A"}}>{selEvent.attendees.map(a=>a.name||a.email).join(", ")}</div>
-            </>}
+      {/* GRID + CONTEXT PANEL */}
+      {events===null?(
+        <div style={{fontSize:13,color:"#94A3B8",padding:"30px 0",textAlign:"center"}}>Loading calendar…</div>
+      ):(
+        <div style={{display:"flex",alignItems:"stretch",gap:0}}>
+          {mode==="month"?renderMonthGrid():renderTimeGrid(periodDays)}
+
+          {/* Right-side context panel (not a modal) */}
+          <div style={{width:selEvent?326:0,flexShrink:0,overflow:"hidden",transition:"width .18s ease",marginLeft:selEvent?12:0}}>
+            {selEvent&&(()=>{
+              const c=selEnt?.color||"#3B82F6";
+              return(
+                <div style={{width:326,background:"#fff",border:"1px solid #E2E8F0",borderRadius:12,display:"flex",flexDirection:"column",maxHeight:(CAL_END-CAL_START)*CAL_ROW+60,overflowY:"auto"}}>
+                  <div style={{padding:"15px 18px 13px",borderBottom:"1px solid #E2E8F0",position:"relative"}}>
+                    <button style={{position:"absolute",top:12,right:12,border:0,background:"transparent",color:"#94A3B8",cursor:"pointer",fontSize:17,lineHeight:1,padding:3}} aria-label="Close" onClick={()=>setSelEvent(null)}>×</button>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:10,fontWeight:800,letterSpacing:".07em",textTransform:"uppercase",color:c}}>
+                      <span style={{width:7,height:7,borderRadius:"50%",background:c}}/>{selEnt?.name||selEvent.entity_id}
+                    </span>
+                    <div style={{fontSize:15.5,fontWeight:700,letterSpacing:"-0.01em",margin:"7px 0 3px",lineHeight:1.3,textDecoration:selEvent.status==="cancelled"?"line-through":"none"}}>{selEvent.title||"(untitled)"}</div>
+                    <div style={{fontSize:12,color:"#475569"}}>
+                      {new Date(selEvent.start_at).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})} ·{" "}
+                      {selEvent.all_day?"All day":`${fmtTime(selEvent.start_at)}${selEvent.end_at?` – ${fmtTime(selEvent.end_at)}`:""}`}
+                      {selEvent.status==="cancelled"&&<span style={{color:"#B91C1C",fontWeight:700}}> · Cancelled</span>}
+                    </div>
+                    {selEvent.location&&<div style={{fontSize:11.5,color:"#94A3B8",marginTop:2}}>{selEvent.location}</div>}
+                  </div>
+                  <div style={{padding:"13px 18px",borderBottom:"1px solid #E2E8F0"}}>
+                    <div style={{fontSize:9.5,fontWeight:800,letterSpacing:".09em",textTransform:"uppercase",color:"#94A3B8",marginBottom:8}}>Who</div>
+                    {selContact?(
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:34,height:34,borderRadius:"50%",background:c,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,flexShrink:0}}>{(selContact.name||"?").split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase()}</div>
+                        <div><div style={{fontSize:13.5,fontWeight:650}}>{selContact.name}</div><div style={{fontSize:11.5,color:"#475569"}}>{[selContact.title,selCompanyName].filter(Boolean).join(", ")||selContact.email||""}</div></div>
+                      </div>
+                    ):(
+                      <div style={{fontSize:12,color:"#475569"}}>
+                        {(selEvent.attendees||[]).length?selEvent.attendees.map(a=>a.name||a.email).join(", "):selEvent.organizer_email||"No attendee details"}
+                        <div style={{fontSize:10.5,color:"#94A3B8",marginTop:3}}>No CRM contact matched</div>
+                      </div>
+                    )}
+                  </div>
+                  {selStale&&(
+                    <div style={{padding:"13px 18px",borderBottom:"1px solid #E2E8F0"}}>
+                      <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"8px 10px",fontSize:11.5,color:"#991B1B",lineHeight:1.5}}>
+                        <b style={{fontWeight:700}}>Gone quiet.</b> {selNoteDays===null?"No note has ever been logged for this contact.":`Last note was ${selNoteDays} days ago.`} Worth opening with that.
+                      </div>
+                    </div>
+                  )}
+                  {selContact&&(
+                    <div style={{padding:"13px 18px",borderBottom:"1px solid #E2E8F0"}}>
+                      <div style={{fontSize:9.5,fontWeight:800,letterSpacing:".09em",textTransform:"uppercase",color:"#94A3B8",marginBottom:8}}>Open business</div>
+                      {selDeals.length?selDeals.map(d=>{
+                        const sc=scoreClass(selScore??0);
+                        return(
+                          <div key={d.id} style={{border:"1px solid #E2E8F0",borderRadius:7,padding:"10px 11px",marginBottom:8}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                              <div style={{fontSize:12.5,fontWeight:650,lineHeight:1.3}}>{d.title||d.name}</div>
+                              <div style={{fontSize:13,fontWeight:750,whiteSpace:"nowrap"}}>${(+d.value||0).toLocaleString()}</div>
+                            </div>
+                            <div style={{display:"flex",alignItems:"center",gap:7,marginTop:7,flexWrap:"wrap"}}>
+                              <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:"#F1F5F9",color:"#475569"}}>{d.stage}</span>
+                              {selScore!==null&&<span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:sc.bg,color:sc.fg}}>Score {selScore}</span>}
+                            </div>
+                          </div>
+                        );
+                      }):(
+                        <div style={{fontSize:12,color:"#94A3B8"}}>No open deals</div>
+                      )}
+                    </div>
+                  )}
+                  {selContact&&(
+                    <div style={{padding:"13px 18px",borderBottom:"1px solid #E2E8F0"}}>
+                      <div style={{fontSize:9.5,fontWeight:800,letterSpacing:".09em",textTransform:"uppercase",color:"#94A3B8",marginBottom:8}}>Account</div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"4px 0"}}>
+                        <span style={{color:"#475569"}}>Invoices</span>
+                        <span style={{fontWeight:600}}>{selInvoice?`${selInvoice.number||"—"} · ${selInvoice.status||"?"} · $${invTotal(selInvoice).toLocaleString()}`:"None"}</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"4px 0"}}>
+                        <span style={{color:"#475569"}}>Last activity</span>
+                        <span style={{fontWeight:600}}>{selNoteDays===null?"No notes yet":selNoteDays===0?"Note logged today":`Note logged ${selNoteDays}d ago`}</span>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{padding:"13px 18px",display:"flex",flexDirection:"column",gap:7,marginTop:"auto"}}>
+                    {selContact&&<button style={{border:"1px solid #0F2044",background:"#0F2044",color:"#fff",borderRadius:6,padding:"8px 12px",fontSize:12.5,fontWeight:650,cursor:"pointer",textAlign:"left"}} onClick={openContact}>Log a note</button>}
+                    {selContact&&<button style={{border:"1px solid #E2E8F0",background:"#fff",borderRadius:6,padding:"8px 12px",fontSize:12.5,fontWeight:650,color:"#0F172A",cursor:"pointer",textAlign:"left"}} onClick={()=>showToast?.("Prep briefings arrive with the AI pass — for now this panel is the prep")}>Prep me</button>}
+                    {selContact&&<button style={{border:"1px solid #E2E8F0",background:"#fff",borderRadius:6,padding:"8px 12px",fontSize:12.5,fontWeight:650,color:"#0F172A",cursor:"pointer",textAlign:"left"}} onClick={openContact}>Open contact</button>}
+                    {!selContact&&<div style={{fontSize:11.5,color:"#94A3B8"}}>Link this attendee to a CRM contact to see deals, invoices, and activity here.</div>}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-            {selEventContact&&(
-              <button style={S.btnSecondary} onClick={()=>{setSelEvent(null);setSelContact?.(selEventContact.id);setView?.("contacts");}}>Open {selEventContact.name}</button>
-            )}
-            <button style={S.btnPrimary} onClick={()=>setSelEvent(null)}>Close</button>
-          </div>
-        </Modal>
+        </div>
+      )}
+      {events!==null&&!visible.length&&!loadError&&(
+        <div style={{fontSize:12.5,color:"#94A3B8",marginTop:12,textAlign:"center"}}>
+          {demoMode?"Calendar sync is unavailable in demo mode.":"No synced events in this window. Connect a Google account per entity in Settings → Connected accounts."}
+        </div>
       )}
     </div>
   );
@@ -8125,7 +8428,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
           {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} expenses={expenses} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
-          {view==="calendar"&&<GoogleCalendarView account={account} entities={entities} demoMode={demoMode} contacts={contacts} setSelContact={setSelContact} setView={setView}/>}
+          {view==="calendar"&&<GoogleCalendarView account={account} entities={entities} demoMode={demoMode} contacts={contacts} companies={companies} deals={deals} notes={notes} tasks={tasks} invoices={invoices} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
           {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings} account={account} myRole={myRole} canManageTeam={canManageTeam} session={session} demoMode={demoMode} initialTab={googleReturn?"connected":null}/>}
         </div>
         )}
