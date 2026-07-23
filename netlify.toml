@@ -9,10 +9,9 @@
 # google-sync's 15-minute schedule is declared in-code (config.schedule in
 # netlify/functions/google-sync.js) — the toml-only form failed to register.
 
-[[redirects]]
-  from = "/.netlify/functions/*"
-  status = 200
-
+# Functions resolve natively at /.netlify/functions/* — Netlify routes those
+# before redirects, so no rule is needed (and a redirect whose path starts
+# with /.netlify is rejected as invalid). Only the SPA catch-all remains.
 [[redirects]]
   from = "/*"
   to = "/index.html"
