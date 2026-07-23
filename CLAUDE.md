@@ -168,6 +168,36 @@ Demo entities (visible only at /demo, never saved to Supabase):
 - Secrets: Never log, commit, or expose SUPABASE_SERVICE_ROLE_KEY or any other secret. It lives only in Netlify env vars and .env.local (not committed).
 - macOS access: If file system access errors occur, check System Settings → Privacy & Security → Files and Folders.
 
+## Verification Boundaries
+
+There are things you structurally cannot verify. Attempting elaborate
+workarounds for them has repeatedly consumed hours and hundreds of dollars
+across sessions. Specifically, you cannot:
+
+- Read Matt's real CRM data — it's behind RLS and you have no service-role key
+- Drive his authenticated browser session
+- See rendered UI in his browser
+- Complete OAuth consent flows on his behalf
+
+When verification hits one of these boundaries: **STOP.** Do not build test
+harnesses, spin up throwaway accounts, run timed log-watching scripts, or
+construct elaborate SQL extractions to work around it.
+
+Instead:
+
+1. Verify everything that IS mechanically testable — unit tests, builds, API
+   responses, headless checks against public surfaces.
+2. Report exactly what you verified and how.
+3. Hand Matt a short numbered checklist of what only he can confirm, with the
+   specific thing to look at and what "correct" looks like.
+
+A three-line checklist he can run in sixty seconds beats an hour of scripted
+approximation. Most of what he needs to confirm is visually obvious on screen.
+
+Throwaway test accounts have twice required manual cleanup. Avoid creating
+them unless there is no alternative; if you must, report the cleanup SQL in
+the same message.
+
 ## Current State (as of May 2026)
 
 Working:
