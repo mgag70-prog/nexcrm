@@ -85,8 +85,8 @@ export function Footer() {
           </div>
           <div>
             <h4>Company</h4>
-            <a href="mailto:hello@hqops.app">Managed services</a>
-            <a href="mailto:hello@hqops.app">Contact</a>
+            <a href="mailto:hello@hqops.app?subject=HQOps%20enquiry">Managed services</a>
+            <a href="mailto:hello@hqops.app?subject=HQOps%20enquiry">Contact</a>
           </div>
         </div>
       </div>
@@ -112,7 +112,10 @@ const CSS = `
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;}
 .mkt *{box-sizing:border-box;}
-.mkt a{color:inherit;text-decoration:none;}
+.mkt a{text-decoration:none;}
+/* Buttons keep their OWN colors — excluding .mkt-btn here stops a secondary
+   (white) button on a dark band from inheriting white text and vanishing. */
+.mkt a:not(.mkt-btn){color:inherit;}
 .mkt .num{font-variant-numeric:tabular-nums;}
 .mkt h1,.mkt h2,.mkt h3,.mkt .mkt-wordmark{font-family:"Sora",-apple-system,sans-serif;letter-spacing:-0.02em;}
 .mkt-wordmark{font-weight:800;color:var(--navy);}

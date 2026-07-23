@@ -173,7 +173,7 @@ export default function Marketing() {
               </ul>
             </div>
             <div className="mkt-managed-cta">
-              <a href="mailto:hello@hqops.app?subject=HQOps%20managed%20services" className="mkt-btn mkt-btn-primary mkt-btn-lg">Talk to us</a>
+              <a href="mailto:hello@hqops.app?subject=Managed%20services%20enquiry" className="mkt-btn mkt-btn-primary mkt-btn-lg">Talk to us</a>
               <a href="/pricing" className="mkt-btn mkt-btn-secondary">See plans first</a>
             </div>
           </div>

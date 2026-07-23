@@ -91,7 +91,7 @@ export default function Pricing() {
               <h3>{FIELD_SERVICE.name} <span className="mkt-fs-price">{FIELD_SERVICE.priceNote}</span></h3>
               <p>{FIELD_SERVICE.tagline} — {FIELD_SERVICE.features.join(', ')}. Set up with us so crew access is scoped correctly.</p>
             </div>
-            <a href="mailto:hello@hqops.app?subject=HQOps%20Field%20Service" className="mkt-btn mkt-btn-ghost">Contact us</a>
+            <a href="mailto:hello@hqops.app?subject=HQOps%20Field%20Service%20enquiry" className="mkt-btn mkt-btn-ghost">Contact us</a>
           </div>
         </div>
       </section>
@@ -151,7 +151,7 @@ export default function Pricing() {
               <p>We configure and operate HQOps for you — quoting, invoicing, chasing unpaid balances, payroll prep, and client communication.</p>
             </div>
             <div className="mkt-managed-cta">
-              <a href="mailto:hello@hqops.app?subject=HQOps%20managed%20services" className="mkt-btn mkt-btn-primary mkt-btn-lg">Talk to us</a>
+              <a href="mailto:hello@hqops.app?subject=Managed%20services%20enquiry" className="mkt-btn mkt-btn-primary mkt-btn-lg">Talk to us</a>
             </div>
           </div>
         </div>
