@@ -226,6 +226,11 @@ const scoreColor = s => s>=75?"#10B981":s>=50?"#F59E0B":s>=25?"#F97316":"#EF4444
 
 const INVOICE_STATUSES = ["Draft","Sent","Viewed","Paid","Overdue","Cancelled"];
 const INV_COLORS = {"Draft":"#64748B","Sent":"#3B82F6","Viewed":"#8B5CF6","Paid":"#10B981","Overdue":"#EF4444","Cancelled":"#94A3B8"};
+const QUOTE_STATUSES = ["Draft","Sent","Accepted","Declined"];
+const QUOTE_COLORS = {"Draft":"#64748B","Sent":"#3B82F6","Accepted":"#10B981","Declined":"#EF4444"};
+// Portal approvals historically wrote "Approved" — surface it as "Accepted".
+const quoteStatusLabel = s => (s==="Approved" ? "Accepted" : (s||"Draft"));
+const quoteStatusColor = s => QUOTE_COLORS[quoteStatusLabel(s)] || "#64748B";
 const WEBHOOK_EVENTS = ["contact.created","contact.updated","deal.created","deal.won","deal.lost","invoice.sent","invoice.paid","meeting.booked","form.submitted","time.logged"];
 const DURATIONS = [15,30,45,60,90,120];
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -1308,7 +1313,7 @@ function ContactGmailTab({contactId,demoMode}){
   );
 }
 
-function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[],contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView,onRequestSign,demoMode=false}){
+function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[],contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView,onRequestSign,demoMode=false,signatures=[],quotes=[],updateQuote,deleteQuote}){
   const [noteText,setNoteText]=useState("");
   const [tab,setTab]=useState("notes");
   const fileRef=useRef();
@@ -1321,6 +1326,7 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[
   const cDealIds=new Set(cDeals.map(d=>d.id));
   const cExpenses=allExpenses.filter(e=>cDealIds.has(e.dealId)||e.contactId===contact.id);
   const cExpenseTotal=cExpenses.reduce((s,e)=>s+(+e.amount||0),0);
+  const cQuotes=(quotes||[]).filter(q=>q.contactId===contact.id);
   const cEnrollments=enrollments.filter(e=>e.contactId===contact.id);
   const hasEmail=emailIntegrations.some(e=>e.entityId===activeEntityId);
   const score=calcLeadScore(contact,allDeals,allNotes,allTasks);
@@ -1427,7 +1433,7 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[
         {/* Right: Tabs */}
         <div style={S.card({overflow:"hidden"})}>
           <div style={{display:"flex",borderBottom:"1px solid #E9EEF6",padding:"0 16px",gap:2}}>
-            {[["notes",`Notes (${cNotes.length})`],["tasks",`Tasks (${cTasks.length})`],["docs",`Docs (${cDocs.length})`],["sequences",`Sequences (${cEnrollments.length})`],["gmail","Email"]].map(([id,lbl])=>(
+            {[["notes",`Notes (${cNotes.length})`],["tasks",`Tasks (${cTasks.length})`],["docs",`Docs (${cDocs.length})`],["quotes",`Quotes (${cQuotes.length})`],["sequences",`Sequences (${cEnrollments.length})`],["gmail","Email"]].map(([id,lbl])=>(
               <button key={id} style={{padding:"13px 12px",background:"transparent",border:"none",borderBottom:tab===id?"2px solid #1D4ED8":"2px solid transparent",color:tab===id?"#1D4ED8":"#64748B",cursor:"pointer",fontWeight:600,fontSize:12,transition:"color .15s",whiteSpace:"nowrap"}} onClick={()=>setTab(id)}>{lbl}</button>
             ))}
           </div>
@@ -1480,23 +1486,54 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[
                 {cDocs.length===0&&<div style={{border:"2px dashed #CBD5E1",borderRadius:10,padding:32,textAlign:"center",color:"#94A3B8"}}>
                   <Ic d={I.file} size={28} c="#CBD5E1"/><div style={{marginTop:8,fontSize:13}}>No documents yet. Upload proposals, contracts, or any file.</div>
                 </div>}
-                {cDocs.map(doc=>(
-                  <div key={doc.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"#F8FAFC",borderRadius:8,marginBottom:8,border:"1px solid #E9EEF6"}}>
-                    <div style={{width:36,height:36,background:"#EEF2FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <Ic d={doc.type==="application/pdf"?I.pdf:I.file} size={16} c="#1D4ED8"/>
+                {cDocs.map(doc=>{
+                  const sig=(signatures||[]).find(s=>s.doc?.id===doc.id||(s.doc?.name&&s.doc.name===doc.name));
+                  const isSigned=doc.status==="Signed";
+                  const hasSig=!!(sig||doc.signedVia||doc.signedAt);
+                  const signerName=sig?.text||contact?.name||"Client";
+                  const signedWhen=doc.signedAt||sig?.signedAt;
+                  return(
+                  <div key={doc.id} style={{marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"#F8FAFC",border:"1px solid #E9EEF6",borderRadius:isSigned&&hasSig?"8px 8px 0 0":8}}>
+                      <div style={{width:36,height:36,background:"#EEF2FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        <Ic d={doc.type==="application/pdf"?I.pdf:I.file} size={16} c="#1D4ED8"/>
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.name}</div>
+                        <div style={{fontSize:11,color:"#64748B"}}>{fmtDate(doc.uploadedAt)} · {doc.size?(doc.size/1024).toFixed(1)+"KB":""}</div>
+                      </div>
+                      <select value={doc.status||"Draft"} onChange={e=>{const updated={...doc,status:e.target.value};addDoc(updated,true);}} style={{...S.select,width:"auto",fontSize:11,padding:"4px 8px",color:docStatusColors[doc.status||"Draft"],fontWeight:600}}>
+                        {DOCSTATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+                      </select>
+                      {!isSigned&&<button style={{...S.btnGhost,color:"#8B5CF6"}} title="Request Signature" onClick={()=>onRequestSign&&onRequestSign(doc,contact)}><Ic d={I.sign} size={14}/></button>}
+                      <a href={doc.data} download={doc.name} style={{...S.btnGhost,color:"#1D4ED8"}} title="Download"><Ic d={I.dl} size={14}/></a>
+                      <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteDoc(doc.id)}><Ic d={I.trash} size={14}/></button>
                     </div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.name}</div>
-                      <div style={{fontSize:11,color:"#64748B"}}>{fmtDate(doc.uploadedAt)} · {doc.size?(doc.size/1024).toFixed(1)+"KB":""}</div>
-                    </div>
-                    <select value={doc.status||"Draft"} onChange={e=>{const updated={...doc,status:e.target.value};addDoc(updated,true);}} style={{...S.select,width:"auto",fontSize:11,padding:"4px 8px",color:docStatusColors[doc.status||"Draft"],fontWeight:600}}>
-                      {DOCSTATUSES.map(s=><option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <button style={{...S.btnGhost,color:"#8B5CF6"}} title="Request Signature" onClick={()=>onRequestSign&&onRequestSign(doc,contact)}><Ic d={I.sign} size={14}/></button>
-                    <a href={doc.data} download={doc.name} style={{...S.btnGhost,color:"#1D4ED8"}} title="Download"><Ic d={I.dl} size={14}/></a>
-                    <button style={{...S.btnGhost,color:"#EF4444"}} onClick={()=>deleteDoc(doc.id)}><Ic d={I.trash} size={14}/></button>
+                    {isSigned&&hasSig&&(
+                      <div style={{background:"#F0FDF4",border:"1px solid #A7F3D0",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"10px 14px",display:"flex",alignItems:"center",gap:14}}>
+                        <div style={{flexShrink:0}}>
+                          {sig?.type==="draw"&&sig.dataUrl
+                            ? <img src={sig.dataUrl} alt="signature" style={{height:40,maxWidth:200,objectFit:"contain",background:"#fff",border:"1px solid #E2E8F0",borderRadius:4}}/>
+                            : <span style={{fontFamily:"Georgia,'Times New Roman',serif",fontStyle:"italic",fontSize:22,color:"#0F172A"}}>{signerName}</span>}
+                        </div>
+                        <div style={{fontSize:12,lineHeight:1.5}}>
+                          <div style={{fontWeight:700,color:"#065F46"}}>Signed by {signerName}</div>
+                          <div style={{color:"#64748B"}}>{signedWhen?fmtDate(signedWhen):"—"}{doc.signedVia==="portal"?" · via client portal":sig?" · via in-app signature":""}</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
+              </div>
+            )}
+            {tab==="quotes"&&(
+              <div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,gap:10}}>
+                  <div style={{fontSize:13,color:"#475569"}}>Proposals sent to this contact — including any not tied to a specific deal.</div>
+                  <button style={S.btnPrimary} onClick={()=>openModal("buildQuote",{contactId:contact.id})}><Ic d={I.quote} size={13}/>New Quote</button>
+                </div>
+                <QuotesPanel quotes={cQuotes} contacts={contacts} deals={allDeals} updateQuote={updateQuote} deleteQuote={deleteQuote} openModal={openModal} showToast={showToast} showDeal emptyLabel="No quotes for this contact yet."/>
               </div>
             )}
             {/* SEQUENCES TAB */}
@@ -1939,7 +1976,7 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
                       {deal.contractType&&<span style={{...S.badge("#06B6D4"),fontSize:10,marginBottom:6}}>{deal.contractType}</span>}
                       <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
                         <button style={S.btnGhost} title="View Contact" onClick={()=>{setSelContact(deal.contactId);setView("contacts");}}><Ic d={I.link} size={12}/></button>
-                        <button style={S.btnGhost} title="Quote" onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id})}><Ic d={I.quote} size={12}/></button>
+                        <button style={S.btnGhost} title="Quote" onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id,deal})}><Ic d={I.quote} size={12}/></button>
                         <button style={S.btnGhost} title="Edit" onClick={()=>openModal("editDeal",deal)}><Ic d={I.edit} size={12}/></button>
                         <button style={{...S.btnGhost,color:"#EF4444"}} title="Delete" onClick={()=>{if(confirm("Delete deal?"))deleteDeal(deal.id);}}><Ic d={I.trash} size={12}/></button>
                       </div>
@@ -5483,6 +5520,88 @@ function TimeView({timeEntries,contacts,deals,activeEntityId,addTimeEntry,update
 // ═══════════════════════════════════════════════════════════════════════════════
 // INVOICES
 // ═══════════════════════════════════════════════════════════════════════════════
+// Invoices + Quotes share the "billing" nav slot — same kind of object (a document you send a client that carries a status).
+function BillingView({invoices,contacts,products,timeEntries,activeEntityId,addInvoice,updateInvoice,deleteInvoice,invoiceCounter,setInvoiceCounter,showToast,setView,quotes=[],updateQuote,deleteQuote,deals=[],openModal,entity}){
+  const [tab,setTab]=useState("invoices");
+  const eQuotes=(quotes||[]).filter(q=>q.entityId===activeEntityId);
+  const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
+  return(
+    <div>
+      <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8,width:"fit-content",marginBottom:16}}>
+        {[["invoices","Invoices"],["quotes",`Quotes (${eQuotes.length})`]].map(([id,lbl])=>(
+          <button key={id} style={{...S.btnGhost,padding:"6px 16px",background:tab===id?"#1D4ED8":"transparent",color:tab===id?"#FFFFFF":"#64748B",borderRadius:6,fontSize:13,fontWeight:600}} onClick={()=>setTab(id)}>{lbl}</button>
+        ))}
+      </div>
+      {tab==="invoices"
+        ? <InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>
+        : (
+          <div>
+            <PageHeader title="Quotes" sub={`${entity?.name} · ${eQuotes.length} proposal${eQuotes.length===1?"":"s"}`}>
+              <button style={S.btnPrimary} onClick={()=>{if(eContacts.length===0){showToast?.("Add a contact before building a quote","error");return;}openModal("buildQuote",{});}}><Ic d={I.quote} size={14}/>New quote</button>
+            </PageHeader>
+            <QuotesPanel quotes={eQuotes} contacts={contacts} deals={deals} updateQuote={updateQuote} deleteQuote={deleteQuote} openModal={openModal} showToast={showToast} showContact showDeal emptyLabel="No quotes yet. Build one from a deal, a contact, or here."/>
+          </div>
+        )}
+    </div>
+  );
+}
+
+// All-expenses view for the active entity — every expense across every job, filterable.
+function ExpensesView({expenses=[],deals=[],activeEntityId,entity,setView,setSelDeal,showToast}){
+  const eExpenses=(expenses||[]).filter(e=>e.entityId===activeEntityId);
+  const dealMap=Object.fromEntries((deals||[]).map(d=>[d.id,d]));
+  const [range,setRange]=useState("all");
+  const [cat,setCat]=useState("all");
+  const [flag,setFlag]=useState("all");
+  const fromMs=(()=>{if(range==="all")return null;const d=new Date();if(range==="30")d.setDate(d.getDate()-30);else if(range==="90")d.setDate(d.getDate()-90);else if(range==="year")d.setFullYear(d.getFullYear()-1);return d.getTime();})();
+  const rows=eExpenses.filter(e=>{
+    if(fromMs!=null){const dt=parseLocalDate(e.date||e.createdAt);if(!dt||dt.getTime()<fromMs)return false;}
+    if(cat!=="all"&&(e.category||"Other")!==cat)return false;
+    if(flag==="billable"&&!e.billable)return false;
+    if(flag==="nonbillable"&&e.billable)return false;
+    if(flag==="invoiced"&&!e.invoiced)return false;
+    if(flag==="uninvoiced"&&e.invoiced)return false;
+    return true;
+  }).sort((a,b)=>new Date(b.date||b.createdAt)-new Date(a.date||a.createdAt));
+  const total=rows.reduce((s,e)=>s+(+e.amount||0),0);
+  const billableTotal=rows.filter(e=>e.billable).reduce((s,e)=>s+(+e.amount||0),0);
+  const uninvoicedBillable=rows.filter(e=>e.billable&&!e.invoiced).reduce((s,e)=>s+(+e.amount||0),0);
+  const cats=[...new Set(eExpenses.map(e=>e.category||"Other"))];
+  return(
+    <div>
+      <PageHeader title="Expenses" sub={`${entity?.name} · ${eExpenses.length} across all jobs`}/>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
+        <StatCard label="Total expenses" value={fmt$(total)} sub={`${rows.length} shown`} color="#8B5CF6" icon={I.dollar}/>
+        <StatCard label="Billable" value={fmt$(billableTotal)} sub="Can pass through" color="#1D4ED8" icon={I.dollar2}/>
+        <StatCard label="Unbilled billable" value={fmt$(uninvoicedBillable)} sub="Not yet invoiced" color="#F59E0B" icon={I.invoice}/>
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+        <select style={{...S.select,width:"auto"}} value={range} onChange={e=>setRange(e.target.value)}>{[["all","All time"],["30","Last 30 days"],["90","Last 90 days"],["year","Last 12 months"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+        <select style={{...S.select,width:"auto"}} value={cat} onChange={e=>setCat(e.target.value)}><option value="all">All categories</option>{cats.map(c=><option key={c} value={c}>{c}</option>)}</select>
+        <select style={{...S.select,width:"auto"}} value={flag} onChange={e=>setFlag(e.target.value)}>{[["all","All"],["billable","Billable"],["nonbillable","Non-billable"],["invoiced","Invoiced"],["uninvoiced","Uninvoiced"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+      </div>
+      <div style={S.card({overflow:"hidden"})}>
+        {rows.length===0?<div style={{padding:40,textAlign:"center",color:"#94A3B8",fontSize:13}}>{eExpenses.length===0?"No expenses logged yet. Add expenses from a job's Expenses tab.":"No expenses match these filters."}</div>
+        :<table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr>{["Date","Job","Category","Vendor","Amount","Billable","Invoiced"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>{rows.map((e,i)=>{
+            const job=dealMap[e.dealId];
+            return(<tr key={e.id} style={{borderTop:i?"1px solid #E9EEF6":"none"}}>
+              <td style={S.td}>{fmtDate(e.date||e.createdAt)}</td>
+              <td style={S.td}>{job?<a onClick={()=>{setSelDeal&&setSelDeal(job.id);setView&&setView("deals");}} style={{color:"#1D4ED8",cursor:"pointer",textDecoration:"underline"}}>{job.title}</a>:"—"}</td>
+              <td style={S.td}><span style={S.badge(EXPENSE_CATEGORY_COLORS[e.category]||"#64748B")}>{e.category||"Other"}</span></td>
+              <td style={S.td}>{e.vendor||"—"}</td>
+              <td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{fmt$(e.amount)}</td>
+              <td style={S.td}>{e.billable?<span style={S.badge("#10B981")}>Billable</span>:<span style={{color:"#94A3B8"}}>Internal</span>}</td>
+              <td style={S.td}>{e.invoiced?<span style={S.badge("#1D4ED8")}>Invoiced</span>:e.billable?<span style={{color:"#F59E0B",fontWeight:600}}>Unbilled</span>:"—"}</td>
+            </tr>);
+          })}</tbody>
+        </table>}
+      </div>
+    </div>
+  );
+}
+
 function InvoicesView({invoices,contacts,products,timeEntries=[],activeEntityId,addInvoice,updateInvoice,deleteInvoice,invoiceCounter,setInvoiceCounter,showToast,setView}){
   const eInvoices=(invoices||[]).filter(i=>i.entityId===activeEntityId);
   const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
@@ -7015,7 +7134,7 @@ function SignatureModal({doc,contact,onClose,onSign,showToast}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEAL DETAIL (H1)
 // ═══════════════════════════════════════════════════════════════════════════════
-function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId,employees=[],timeClockEntries=[],expenses=[],addExpense,updateExpense,deleteExpense,addInvoice,invoiceCounter,setInvoiceCounter,addDeal,showToast,onRecentJob}){
+function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId,employees=[],timeClockEntries=[],expenses=[],addExpense,updateExpense,deleteExpense,addInvoice,invoiceCounter,setInvoiceCounter,addDeal,showToast,onRecentJob,quotes=[],updateQuote,deleteQuote}){
   const fs=isFieldService(entity);
   const [tab,setTab]=useState("overview");
   const [noteText,setNoteText]=useState("");
@@ -7045,6 +7164,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
   const notes=allNotes.filter(n=>n.dealId===deal.id||(n.contactId&&n.contactId===deal.contactId)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const tasks=allTasks.filter(t=>t.dealId===deal.id||(t.contactId&&t.contactId===deal.contactId));
   const dealExpenses=(expenses||[]).filter(e=>e.dealId===deal.id).sort((a,b)=>new Date(b.date||b.createdAt)-new Date(a.date||a.createdAt));
+  const dealQuotes=(quotes||[]).filter(q=>q.dealId===deal.id);
   const stages=stagesFor(entity);
   const sCol=stageColor(entity,deal.stage);
 
@@ -7087,7 +7207,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
         </div>
         <div style={{display:"flex",gap:8,marginTop:16,paddingTop:16,borderTop:"1px solid #E9EEF6",flexWrap:"wrap"}}>
           <button style={S.btnSecondary} onClick={()=>openModal("editDeal",deal)}><Ic d={I.edit} size={13}/>{fs?"Edit job":"Edit deal"}</button>
-          {!fs&&<button style={S.btnSecondary} onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id})}><Ic d={I.quote} size={13}/>Build quote</button>}
+          {!fs&&<button style={S.btnSecondary} onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id,deal})}><Ic d={I.quote} size={13}/>Build quote</button>}
           {fs&&deal.recurring&&deal.frequency&&addDeal&&(
             <button style={{...S.btnSecondary,background:"#DCFCE7",borderColor:"#10B981",color:"#065F46"}} onClick={()=>{
               const nextDate=deal.nextOccurrence||advanceDate(deal.closeDate,deal.frequency)||advanceDate(new Date().toISOString().slice(0,10),deal.frequency);
@@ -7104,6 +7224,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
         <TAB id="overview" label="Overview"/>
         {fs&&<TAB id="costing" label="Job Costing"/>}
         <TAB id="expenses" label="Expenses" count={dealExpenses.length}/>
+        {(!fs||dealQuotes.length>0)&&<TAB id="quotes" label="Quotes" count={dealQuotes.length}/>}
         <TAB id="notes" label="Notes" count={notes.length}/>
         <TAB id="tasks" label="Tasks" count={tasks.length}/>
         <TAB id="activity" label="Activity"/>
@@ -7174,9 +7295,25 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
         </div>
       )}
 
+      {tab==="quotes"&&(
+        <div>
+          {!fs&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{fontSize:13,color:"#475569"}}>Proposals sent to this deal's contact. Clients can view and approve these in the portal.</div>
+            <button style={S.btnPrimary} onClick={()=>openModal("buildQuote",{contactId:deal.contactId,dealId:deal.id,deal})}><Ic d={I.quote} size={13}/>Build quote</button>
+          </div>}
+          <QuotesPanel quotes={dealQuotes} contacts={allContacts} deals={[deal]} updateQuote={updateQuote} deleteQuote={deleteQuote} openModal={openModal} showToast={showToast} emptyLabel={`No quotes for this ${fs?"job":"deal"} yet.`}/>
+        </div>
+      )}
+
       {fs&&tab==="costing"&&(()=>{
         const jobEntries=timeClockEntries.filter(e=>e.jobId===deal.id&&e.clockOut&&e.hours!=null);
+        const openEntries=timeClockEntries.filter(e=>e.jobId===deal.id&&!e.clockOut);
         const empMap=Object.fromEntries(employees.map(e=>[e.id,e]));
+        const nowMs=Date.now();
+        const fmtElapsed=(iso)=>{const ms=nowMs-new Date(iso).getTime();if(isNaN(ms)||ms<0)return"—";const h=Math.floor(ms/3600000);const m=Math.round((ms%3600000)/60000);return`${h}h ${m}m`;};
+        const inProgress=openEntries.map(e=>{const emp=empMap[e.employeeId];const hrs=Math.max(0,(nowMs-new Date(e.clockIn).getTime())/3600000);return{id:e.id,name:emp?.name||"—",rate:emp?.hourlyRate||0,clockIn:e.clockIn,hrs};});
+        const inProgressHours=inProgress.reduce((s,x)=>s+x.hrs,0);
+        const inProgressCost=inProgress.reduce((s,x)=>s+x.hrs*x.rate,0);
         const laborByEmployee={};
         jobEntries.forEach(e=>{const emp=empMap[e.employeeId];if(!emp)return;laborByEmployee[e.employeeId]=(laborByEmployee[e.employeeId]||{name:emp.name,hours:0,rate:emp.hourlyRate||0,cost:0});laborByEmployee[e.employeeId].hours+=e.hours||0;laborByEmployee[e.employeeId].cost+=(e.hours||0)*(emp.hourlyRate||0);});
         const laborTotal=Object.values(laborByEmployee).reduce((s,x)=>s+x.cost,0);
@@ -7195,14 +7332,28 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
           <div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:16}}>
               <StatCard label="Estimated value" value={fmt$(value)} sub="Job value" color="#1D4ED8" icon={I.dollar}/>
-              <StatCard label="Labor cost" value={fmt$(laborTotal)} sub={`${totalHours.toFixed(2)} hrs × rates`} color="#F59E0B" icon={I.clock}/>
+              <StatCard label="Labor cost" value={fmt$(laborTotal)} sub={`${totalHours.toFixed(2)} confirmed hrs${openEntries.length>0?` · ${openEntries.length} on site now`:""}`} color="#F59E0B" icon={I.clock}/>
               <StatCard label="Expenses" value={fmt$(materialsLine)} sub={dealExpenses.length>0?`${dealExpenses.length} logged · ${Object.keys(expensesByCategory).length} categories`:legacyMaterials>0?"Legacy materialsCost":"None logged yet"} color="#8B5CF6" icon={I.dollar2}/>
               <StatCard label="Gross profit" value={fmt$(profit)} sub={`${margin.toFixed(1)}% margin · Total cost ${fmt$(totalCost)}`} color={profit>=0?"#10B981":"#EF4444"} icon={I.trending}/>
             </div>
+            {openEntries.length>0&&(
+              <div style={{...S.card({padding:18}),marginBottom:16,borderLeft:"4px solid #10B981"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:10,flexWrap:"wrap"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#10B981",textTransform:"uppercase",letterSpacing:.5}}>● In progress — clocked in now</div>
+                  <div style={{fontSize:12,color:"#64748B"}}>{inProgressHours.toFixed(2)} hrs so far · ~{fmt$(inProgressCost)} est. — <strong>not</strong> in confirmed labor above</div>
+                </div>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Employee","On site since","Elapsed","Hourly rate","Est. so far"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{inProgress.map(x=>(
+                    <tr key={x.id}><td style={{...S.td,fontWeight:600,color:"#0F172A"}}>{x.name}</td><td style={S.td}>{new Date(x.clockIn).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</td><td style={{...S.td,fontWeight:700,color:"#10B981"}}>{fmtElapsed(x.clockIn)}</td><td style={S.td}>{fmt$(x.rate)}/hr</td><td style={S.td}>~{fmt$(x.hrs*x.rate)}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
             <div style={S.card({padding:18,marginBottom:16})}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5}}>Expense breakdown by category</div>
-                <button style={{...S.btnSecondary,padding:"4px 12px",fontSize:12}} onClick={()=>setTab("expenses")}><Ic d={I.list} size={12}/>View all expenses</button>
+                <button style={{...S.btnSecondary,padding:"4px 12px",fontSize:12}} onClick={()=>setView("expenses")}><Ic d={I.list} size={12}/>View all expenses</button>
               </div>
               {Object.keys(expensesByCategory).length===0?(
                 <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>No expenses logged for this job yet. {legacyMaterials>0&&<>Using legacy materialsCost: <strong>{fmt$(legacyMaterials)}</strong>.</>}</div>
@@ -7220,7 +7371,7 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
             <div style={S.card({padding:18,marginBottom:16})}>
               <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Labor breakdown</div>
               {Object.values(laborByEmployee).length===0?(
-                <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>No clock-in entries against this job yet.</div>
+                <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>{openEntries.length>0?"No clocked-out entries yet — crew is still on site (see In progress above).":"No clock-in entries against this job yet."}</div>
               ):(
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr>{["Employee","Hours","Hourly rate","Labor cost"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
@@ -7231,9 +7382,9 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
               )}
             </div>
             <div style={S.card({padding:18})}>
-              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Time clock entries</div>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Time clock entries <span style={{color:"#94A3B8",fontWeight:500,textTransform:"none"}}>(completed)</span></div>
               {jobEntries.length===0?(
-                <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>No entries yet.</div>
+                <div style={{fontSize:13,color:"#94A3B8",textAlign:"center",padding:20}}>{openEntries.length>0?"No completed entries yet — crew still clocked in.":"No entries yet."}</div>
               ):(
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr>{["Employee","Date","Clock in","Clock out","Hours"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
@@ -7789,7 +7940,7 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
     </Modal>
   );
 
-  if(type==="buildQuote") return <QuoteBuilder data={data} contacts={contacts} products={products} activeEntityId={activeEntityId} onClose={closeModal} addNote={addNote} addQuote={addQuote} showToast={showToast}/>;
+  if(type==="buildQuote") return <QuoteBuilder data={data} contacts={contacts} products={products} activeEntityId={activeEntityId} onClose={closeModal} addNote={addNote} addQuote={addQuote} updateQuote={updateQuote} showToast={showToast}/>;
 
   return null;
 }
@@ -7797,12 +7948,79 @@ function Modals({modal,closeModal,contacts,companies,entities,activeEntityId,add
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUOTE BUILDER
 // ═══════════════════════════════════════════════════════════════════════════════
-function QuoteBuilder({data,contacts,products,activeEntityId,onClose,addNote,addQuote,showToast}){
-  const [items,setItems]=useState([{productId:"",qty:1,price:0,name:"",description:""}]);
-  const [notes,setNotes]=useState("");
-  const [title,setTitle]=useState("Proposal");
+// Shared read surface for quotes — used by DealDetail, ContactDetail, and the billing view.
+function QuotesPanel({quotes=[],contacts=[],deals=[],updateQuote,deleteQuote,openModal,showToast,showContact=false,showDeal=false,emptyLabel="No quotes yet."}){
+  const [expanded,setExpanded]=useState(()=>new Set());
+  const toggle=(id)=>setExpanded(p=>{const s=new Set(p);s.has(id)?s.delete(id):s.add(id);return s;});
+  const sorted=[...quotes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  if(sorted.length===0) return <div style={{border:"2px dashed #CBD5E1",borderRadius:10,padding:32,textAlign:"center",color:"#94A3B8",fontSize:13}}>{emptyLabel}</div>;
+  return(
+    <div>
+      {sorted.map(q=>{
+        const isOpen=expanded.has(q.id);
+        const contact=contacts.find(c=>c.id===q.contactId);
+        const deal=deals.find(d=>d.id===q.dealId);
+        const status=quoteStatusLabel(q.status);
+        const isDraft=status==="Draft";
+        const total=(+q.total)||(q.items||[]).reduce((s,it)=>s+((+it.qty||0)*(+it.price||0)),0);
+        return(
+          <div key={q.id} style={{background:"#F8FAFC",borderRadius:8,marginBottom:8,border:"1px solid #E9EEF6",overflow:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px"}}>
+              <button onClick={()=>toggle(q.id)} style={{...S.btnGhost,padding:"4px 7px",fontSize:12,fontWeight:700,color:"#64748B"}} title={isOpen?"Collapse":"Expand line items"}>{isOpen?"▾":"▸"}</button>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{q.number} · {q.title||"Untitled proposal"}</div>
+                <div style={{fontSize:11,color:"#64748B",display:"flex",gap:8,flexWrap:"wrap",marginTop:2}}>
+                  <span>{fmtDate(q.createdAt)}</span>
+                  {showContact&&contact&&<span>· {contact.name}</span>}
+                  {showDeal&&deal&&<span>· {deal.title}</span>}
+                  <span>· {(q.items||[]).length} line item{(q.items||[]).length===1?"":"s"}</span>
+                </div>
+              </div>
+              <div style={{fontSize:14,fontWeight:800,color:"#0F172A",whiteSpace:"nowrap"}}>{fmt$(total)}</div>
+              {updateQuote?(
+                <select value={status} onChange={e=>updateQuote(q.id,{status:e.target.value})} style={{...S.select,width:"auto",fontSize:11,padding:"4px 8px",color:quoteStatusColor(status),fontWeight:700}}>
+                  {QUOTE_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+                </select>
+              ):<span style={S.badge(quoteStatusColor(status))}>{status}</span>}
+              {isDraft&&openModal&&<button style={{...S.btnGhost,color:"#1D4ED8"}} title="Edit draft" onClick={()=>openModal("buildQuote",{quote:q})}><Ic d={I.edit} size={14}/></button>}
+              {deleteQuote&&<button style={{...S.btnGhost,color:"#EF4444"}} title="Delete quote" onClick={()=>{if(confirm(`Delete quote ${q.number}?`)){deleteQuote(q.id);showToast?.("Quote deleted");}}}><Ic d={I.trash} size={14}/></button>}
+            </div>
+            {isOpen&&(
+              <div style={{padding:"0 14px 14px 44px"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Item","Qty","Unit price","Amount"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{(q.items||[]).map((it,i)=>(
+                    <tr key={i}><td style={{...S.td,color:"#0F172A"}}>{it.name||it.description||"Item"}</td><td style={S.td}>{it.qty||1}</td><td style={S.td}>{fmt$(it.price||0)}</td><td style={{...S.td,fontWeight:600}}>{fmt$((+it.qty||0)*(+it.price||0))}</td></tr>
+                  ))}</tbody>
+                </table>
+                {q.notes&&<div style={{marginTop:10,fontSize:12,color:"#475569"}}><strong>Notes:</strong> {q.notes}</div>}
+                {q.approvedVia==="portal"&&<div style={{marginTop:8,fontSize:11,color:"#10B981",fontWeight:600}}>✓ Accepted by client via portal{q.approvedAt?` · ${fmtDate(q.approvedAt)}`:""}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function QuoteBuilder({data,contacts,products,activeEntityId,onClose,addNote,addQuote,updateQuote,showToast}){
+  const existing=data?.quote||null;              // editing an existing (Draft) quote
+  const seedDeal=data?.deal||null;               // "Build Quote" from a deal → prefill
+  const [items,setItems]=useState(
+    existing?.items?.length ? existing.items.map(it=>({productId:it.productId||"",qty:it.qty||1,price:+it.price||0,name:it.name||"",description:it.description||""}))
+    : seedDeal ? [{productId:"",qty:1,price:+seedDeal.value||0,name:seedDeal.title||"",description:""}]
+    : [{productId:"",qty:1,price:0,name:"",description:""}]
+  );
+  const [notes,setNotes]=useState(existing?.notes||"");
+  const [title,setTitle]=useState(existing?.title||seedDeal?.title||"Proposal");
   const eProducts=products.filter(p=>p.entityId===activeEntityId);
-  const contact=contacts.find(c=>c.id===data?.contactId);
+  const eContacts=contacts.filter(c=>c.entityId===activeEntityId);
+  const preContactId=existing?.contactId||data?.contactId;   // provided by a deal/contact context
+  const [pickedContactId,setPickedContactId]=useState(preContactId||"");
+  const quoteContactId=preContactId||pickedContactId;         // fall back to the standalone picker
+  const quoteDealId=(existing?existing.dealId:data?.dealId)||null;
+  const contact=contacts.find(c=>c.id===quoteContactId);
   const total=items.reduce((s,i)=>s+(i.qty*(i.price||0)),0);
   const addItem=()=>setItems(p=>[...p,{productId:"",qty:1,price:0,name:"",description:""}]);
   const updateItem=(idx,field,val)=>setItems(p=>p.map((it,i)=>{if(i!==idx)return it;const updated={...it,[field]:val};if(field==="productId"){const prod=eProducts.find(p=>p.id===val);if(prod){updated.name=prod.name;updated.price=prod.price;updated.description=prod.description;}}return updated;}));
@@ -7824,12 +8042,16 @@ ${notes?`\nNotes:\n${notes}`:""}
 This proposal is valid for 30 days.`;
 
   const saveQuote=()=>{
-    if(!data?.contactId){showToast("Pick a contact first","error");return;}
-    if(addQuote){
-      addQuote({contactId:data.contactId,dealId:data.dealId||null,title,items:items.filter(it=>it.name||it.productId),notes,total});
+    if(!quoteContactId){showToast("Pick a contact first","error");return;}
+    const payload={contactId:quoteContactId,dealId:quoteDealId,title,items:items.filter(it=>it.name||it.productId),notes,total};
+    if(existing&&updateQuote){
+      updateQuote(existing.id,payload);
+      showToast("Quote updated");
+    }else if(addQuote){
+      addQuote(payload);
+      addNote({contactId:quoteContactId,dealId:quoteDealId,content:generateQuoteText(),type:"note"});
+      showToast("Quote saved");
     }
-    addNote({contactId:data.contactId,dealId:data.dealId||null,content:generateQuoteText(),type:"note"});
-    showToast("Quote saved");
     onClose();
   };
 
@@ -7842,12 +8064,14 @@ This proposal is valid for 30 days.`;
     <div className="nx-modal-overlay" style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div className="nx-modal" style={{...S.modal,maxWidth:680}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",margin:0}}>Build Quote / Proposal</h2>
+          <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,fontWeight:700,color:"#0F172A",margin:0}}>{existing?`Edit ${existing.number||"Quote"}`:"Build Quote / Proposal"}</h2>
           <button style={S.btnGhost} onClick={onClose}><Ic d={I.x} size={18}/></button>
         </div>
         <div style={{display:"flex",gap:12,marginBottom:16,alignItems:"center"}}>
           <div style={{flex:1}}><label style={S.label}>Proposal Title</label><input style={S.input} value={title} onChange={e=>setTitle(e.target.value)}/></div>
-          {contact&&<div style={{flexShrink:0,background:"#F1F5F9",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#475569"}}>For: <strong style={{color:"#0F172A"}}>{contact.name}</strong></div>}
+          {preContactId
+            ? (contact&&<div style={{flexShrink:0,background:"#F1F5F9",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#475569"}}>For: <strong style={{color:"#0F172A"}}>{contact.name}</strong></div>)
+            : <div style={{flexShrink:0,minWidth:200}}><label style={S.label}>For contact</label><select style={S.select} value={pickedContactId} onChange={e=>setPickedContactId(e.target.value)}><option value="">Select a contact…</option>{eContacts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
         </div>
         <div style={{marginBottom:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -7888,7 +8112,7 @@ This proposal is valid for 30 days.`;
         <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12}}>
           <button style={S.btnSecondary} onClick={onClose}>Cancel</button>
           <button style={S.btnSecondary} onClick={copyQuote}><Ic d={I.copy} size={13}/>Copy as Text</button>
-          {data?.contactId&&<button style={S.btnPrimary} onClick={saveQuote}><Ic d={I.note} size={13}/>Save to Contact</button>}
+          {quoteContactId&&<button style={S.btnPrimary} onClick={saveQuote}><Ic d={I.note} size={13}/>{existing?"Save changes":"Save quote"}</button>}
         </div>
       </div>
     </div>
@@ -8428,7 +8652,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
       setNotes(p=>[...p,{id:uid(),entityId:tok?.entityId||activeEntityId,contactId,dealId:null,content:`📝 Client signed "${docName}" via portal`,type:"system",createdAt:new Date().toISOString()}]);
       showToast(`${msg.sender_name||"Client"} signed ${docName}`);
     }else if(act.type==="approve_quote"&&act.refId){
-      setQuotes(p=>p.map(q=>(q.id===act.refId||String(q.number)===String(act.refId))?{...q,status:"Approved",approvedAt:new Date().toISOString(),approvedVia:"portal"}:q));
+      setQuotes(p=>p.map(q=>(q.id===act.refId||String(q.number)===String(act.refId))?{...q,status:"Accepted",approvedAt:new Date().toISOString(),approvedVia:"portal"}:q));
       const dealId=act.extra?.dealId;
       if(dealId){
         setDeals(p=>p.map(d=>{
@@ -8621,9 +8845,9 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
     {id:"inbox",label:"Inbox",icon:I.inbox,badge:unreadEmails,badgeColor:"#1D4ED8"},
     {id:"scheduler",label:"Scheduler",icon:I.meet},
     {id:"calendar",label:"Calendar",icon:I.meet},
-    ...(fs?[{id:"timeclock",label:"Time Clock",icon:I.clock}]:[]),
+    ...(fs?[{id:"timeclock",label:"Time Clock",icon:I.clock},{id:"expenses",label:"Expenses",icon:I.dollar2}]:[]),
     {id:"time",label:"Time Tracking",icon:I.clock},
-    {id:"invoices",label:"Invoices",icon:I.invoice,badge:unpaidInvoices,badgeColor:"#F59E0B"},
+    {id:"invoices",label:"Invoices & Quotes",icon:I.invoice,badge:unpaidInvoices,badgeColor:"#F59E0B"},
     {id:"portal",label:"Client Portal",icon:I.portal},
     {id:"import",label:"Import",icon:I.import},
     {id:"sequences",label:"Sequences",icon:I.seq},
@@ -8835,18 +9059,19 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
         <div style={{flex:1,overflowY:"auto",padding:isMobile?12:20,paddingBottom:isMobile?80:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} companies={companies} entity={entity} setView={setView} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
-          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})} demoMode={demoMode}/>}
+          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})} demoMode={demoMode} signatures={signatures} quotes={quotes} updateQuote={updateQuote} deleteQuote={deleteQuote}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} allExpenses={expenses} allInvoices={invoices} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
           {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity} notes={notes}/>}
-          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} expenses={expenses} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} addInvoice={addInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId}/>}
+          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} expenses={expenses} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} addInvoice={addInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId} quotes={quotes} updateQuote={updateQuote} deleteQuote={deleteQuote}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} companies={eco} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast} portalTokens={portalTokens} portalMessages={portalMessages} sendOwnerPortalMessage={sendOwnerPortalMessage} markPortalMessagesRead={markPortalMessagesRead}/>}
           {view==="scheduler"&&!fs&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
           {view==="scheduler"&&fs&&<JobScheduler entity={entity} activeEntityId={activeEntityId} deals={deals} contacts={contacts} companies={companies} employees={employees} updateDeal={updateDeal} setSelDeal={setSelDeal} setView={setView} showToast={showToast}/>}
           {view==="timeclock"&&fs&&<TimeClockView entity={entity} activeEntityId={activeEntityId} employees={employees} deals={deals} timeClockEntries={timeClockEntries} clockInEmployee={clockInEmployee} clockOutEmployee={clockOutEmployee} addTimeClockEntry={addTimeClockEntry} updateTimeClockEntry={updateTimeClockEntry} deleteTimeClockEntry={deleteTimeClockEntry} approveTimeEntry={approveTimeEntry} rejectTimeEntry={rejectTimeEntry} resolveTimeCorrection={resolveTimeCorrection} requestTimeCorrection={requestTimeCorrection} showToast={showToast}/>}
           {view==="time"&&<TimeView timeEntries={timeEntries} contacts={contacts} deals={deals} activeEntityId={activeEntityId} addTimeEntry={addTimeEntry} updateTimeEntry={updateTimeEntry} deleteTimeEntry={deleteTimeEntry} openModal={openModal} showToast={showToast}/>}
-          {view==="invoices"&&<InvoicesView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView}/>}
+          {view==="invoices"&&<BillingView invoices={invoices} contacts={contacts} products={products} timeEntries={timeEntries} activeEntityId={activeEntityId} addInvoice={addInvoice} updateInvoice={updateInvoice} deleteInvoice={deleteInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} showToast={showToast} setView={setView} quotes={quotes} updateQuote={updateQuote} deleteQuote={deleteQuote} deals={deals} openModal={openModal} entity={entity}/>}
+          {view==="expenses"&&<ExpensesView expenses={expenses} deals={deals} activeEntityId={activeEntityId} entity={entity} setView={setView} setSelDeal={setSelDeal} showToast={showToast}/>}
           {view==="portal"&&<ClientPortalView portalTokens={portalTokens} contacts={contacts} companies={companies} invoices={invoices} docs={docs} quotes={quotes} deals={deals} tasks={tasks} expenses={expenses} activeEntityId={activeEntityId} addPortalToken={addPortalToken} updatePortalToken={updatePortalToken} deletePortalToken={deletePortalToken} refreshPortalSnapshot={refreshPortalSnapshot} buildSnapshotPayload={buildSnapshotPayload} showToast={showToast} entity={entity} setView={setView} demoMode={demoMode} myRole={myRole}/>}
           {view==="import"&&<ImportView activeEntityId={activeEntityId} entity={entity} contacts={contacts} companies={companies} addContact={addContact} addCompany={addCompany} addDeal={addDeal} showToast={showToast}/>}
           {view==="sequences"&&<SequencesView sequences={sequences} templates={templates} enrollments={enrollments} contacts={contacts} activeEntityId={activeEntityId} addSequence={addSequence} updateSequence={updateSequence} deleteSequence={deleteSequence} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} showToast={showToast}/>}
