@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { writePortalSnapshot, deletePortalSnapshot, portalListMessagesForTokens, portalSendMessage, portalMarkMessagesRead, subscribePortalMessagesForTokens, listAccountMembers, listAccountInvites, createAccountInvite, revokeAccountInvite, setMemberRole, removeMember, transferOwnership, googleListConnections, googleEntityCounts, googleOauthStart, googleDisconnect, googleSyncNow } from "./lib/supabase.js";
+import { writePortalSnapshot, deletePortalSnapshot, portalListMessagesForTokens, portalSendMessage, portalMarkMessagesRead, subscribePortalMessagesForTokens, listAccountMembers, listAccountInvites, createAccountInvite, revokeAccountInvite, setMemberRole, removeMember, transferOwnership, googleListConnections, googleEntityCounts, googleOauthStart, googleDisconnect, googleSyncNow, callClaude } from "./lib/supabase.js";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend, LineChart, Line, AreaChart, Area } from "recharts";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -1313,7 +1313,7 @@ function ContactGmailTab({contactId,demoMode}){
   );
 }
 
-function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[],contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView,onRequestSign,demoMode=false,signatures=[],quotes=[],updateQuote,deleteQuote}){
+function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[],contacts,companies=[],sequences,enrollments,openModal,onBack,addNote,updateNote,deleteNote,updateTask,deleteTask,activeEntityId,emailIntegrations,updateContact,addDoc,deleteDoc,addEnrollment,updateEnrollment,deleteEnrollment,customFields,entity,setSelCompany,setSelDeal,setView,onRequestSign,demoMode=false,signatures=[],quotes=[],updateQuote,deleteQuote,briefingCtx,showToast}){
   const [noteText,setNoteText]=useState("");
   const [tab,setTab]=useState("notes");
   const fileRef=useRef();
@@ -1426,7 +1426,8 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[
               </div>
             )}
           </div>
-          {/* Quick Quote Button */}
+          {/* Prep-me AI briefing + Quick Quote */}
+          <PrepMeButton contact={contact} ctx={briefingCtx} demoMode={demoMode} showToast={showToast} label="Prep me for a meeting" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",background:"#7C3AED",color:"#fff",border:"none",borderRadius:8,padding:"9px",fontSize:13,fontWeight:650,cursor:"pointer",marginBottom:8}}/>
           <button style={{...S.btnSecondary,width:"100%",justifyContent:"center"}} onClick={()=>openModal("buildQuote",{contactId:contact.id})}><Ic d={I.quote} size={13}/>Build Quote / Proposal</button>
         </div>
 
@@ -3345,9 +3346,7 @@ function ImportView({activeEntityId,entity,contacts,companies,addContact,addComp
     try{
       const isImage=file?.type?.startsWith("image/")||file?.type==="application/pdf";
       const messages=isImage?[{role:"user",content:[{type:"image",source:{type:"base64",media_type:file.type,data:fileContent.split(",")[1]}},{type:"text",text:`Extract all contact and company information from this document. Return ONLY valid JSON with this structure: {"contacts":[{"name":"","email":"","phone":"","title":"","companyName":"","notes":""}],"companies":[{"name":"","industry":"","website":"","phone":"","email":""}]}. Extract every person and company you can find.`}]}]:[{role:"user",content:`Extract all contact and company information from this text/data. Return ONLY valid JSON with this structure: {"contacts":[{"name":"","email":"","phone":"","title":"","companyName":"","notes":""}],"companies":[{"name":"","industry":"","website":"","phone":"","email":""}]}. Text to analyze:\n\n${fileContent.slice(0,8000)}`}];
-      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,messages})});
-      const data=await resp.json();
-      const text=data.content?.find(c=>c.type==="text")?.text||"";
+      const text=await callClaude({messages,max_tokens:2000});
       const jsonMatch=text.match(/\{[\s\S]*\}/);
       if(jsonMatch){
         const parsed=JSON.parse(jsonMatch[0]);
@@ -4100,7 +4099,209 @@ function calPlaceOverlaps(items){
   return sorted;
 }
 
-function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],deals=[],notes=[],tasks=[],invoices=[],setSelContact,setView,showToast}){
+// ═══════════════════════════════════════════════════════════════════════════════
+// PREP ME — AI pre-meeting contact briefing (reuses the ai-claude proxy)
+// ═══════════════════════════════════════════════════════════════════════════════
+const BRIEF_TIMEOUT_MS = 12000;
+const invTotalOf = i => (i.items||[]).reduce((s,it)=>s+(+it.quantity||0)*(+it.unitPrice||0),0);
+const stageAfter = (deal,entity) => { const st=stagesFor(entity); const i=st.indexOf(deal.stage); return (i>=0&&i<st.length-1)?st[i+1]:"close"; };
+const healthWord = h => h<25?"at risk":h<50?"needs attention":h<75?"healthy":"strong";
+
+// Gather everything already in state for a contact. Pure — no fetches, no writes.
+function gatherBriefingData(contact,ctx={}){
+  const eid=ctx.activeEntityId, entity=ctx.entity;
+  const inEnt=x=>!eid||x.entityId===eid;
+  const notesAll=(ctx.notes||[]).filter(inEnt);
+  const deals=(ctx.deals||[]).filter(d=>inEnt(d)&&d.contactId===contact.id);
+  const openDeals=deals.filter(d=>isOpenStage(d,entity));
+  const wonDeals=deals.filter(d=>isWonStage(d,entity));
+  const lostDeals=deals.filter(d=>isLostStage(d,entity));
+  const notes=notesAll.filter(n=>n.contactId===contact.id&&n.content!=null&&n.content!=="").sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const stageNotes=[];
+  deals.forEach(d=>{ if(d.stageNote)stageNotes.push({content:d.stageNote,createdAt:d.lastContacted||d.createdAt,dealTitle:d.title}); (d.stageHistory||[]).forEach(h=>{if(h.note)stageNotes.push({content:h.note,createdAt:h.at,dealTitle:d.title});}); });
+  const company=(ctx.companies||[]).find(co=>co.id===contact.companyId)||null;
+  const companyContacts=company?(ctx.contacts||[]).filter(c=>c.companyId===company.id&&c.id!==contact.id):[];
+  const emails=[];
+  (ctx.emailThreads||[]).filter(t=>inEnt(t)&&t.contactId===contact.id).forEach(t=>(t.messages||[]).forEach(m=>emails.push({subject:t.subject,body:m.body,date:m.date,direction:m.direction})));
+  emails.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const invoices=(ctx.invoices||[]).filter(i=>inEnt(i)&&i.contactId===contact.id);
+  const invoicesOutstanding=invoices.filter(i=>["Sent","Viewed","Overdue"].includes(i.status));
+  const invoicesPaid=invoices.filter(i=>i.status==="Paid");
+  const meetings=(ctx.meetings||[]).filter(m=>inEnt(m)&&m.contactId===contact.id);
+  const now=Date.now(); const mt=m=>new Date(m.start||m.date||m.start_at||0).getTime();
+  const meetingsUpcoming=meetings.filter(m=>mt(m)>=now), meetingsPast=meetings.filter(m=>mt(m)<now);
+  const customValues=(ctx.customFields||[]).filter(inEnt).map(f=>({label:f.name||f.label||f.key,value:contact[f.name]??contact[f.key]})).filter(x=>x.value!=null&&x.value!=="");
+  return {contact,entity,notesAll,deals,openDeals,wonDeals,lostDeals,notes,stageNotes,company,companyContacts,emails,invoices,invoicesOutstanding,invoicesPaid,meetings,meetingsUpcoming,meetingsPast,customValues};
+}
+
+// The empty-state rule: only worth synthesizing when there's real history.
+function briefingHasSubstance(d){
+  return d.deals.length>0||d.notes.length>0||d.stageNotes.length>0||d.emails.length>0||d.invoices.length>0;
+}
+
+// Raw record shown instead of a padded summary when there's nothing to synthesize.
+function briefingRawFacts(contact,data){
+  const f=[];
+  const role=[contact.title,data.company?.name].filter(Boolean).join(" · "); if(role)f.push({label:"Role",value:role});
+  if(contact.email)f.push({label:"Email",value:contact.email});
+  if(contact.phone)f.push({label:"Phone",value:contact.phone});
+  if(contact.status)f.push({label:"Status",value:contact.status});
+  if(contact.icp)f.push({label:"Segment / ICP",value:contact.icp});
+  if(contact.source)f.push({label:"Source",value:contact.source});
+  data.customValues.forEach(cv=>f.push({label:cv.label,value:String(cv.value)}));
+  f.push({label:"Added",value:fmtDate(contact.createdAt)});
+  return f;
+}
+
+// Compact fact dump handed to the model — grounds it, prevents invention.
+function briefingFactsText(data){
+  const c=data.contact, L=[];
+  L.push(`CONTACT: ${c.name}${c.title?`, ${c.title}`:""}${data.company?` at ${data.company.name}`:""}.`);
+  L.push(`Status: ${c.status||"—"}. Segment/ICP: ${c.icp||"—"}. Source: ${c.source||"—"}. Added: ${fmtDate(c.createdAt)}.`);
+  data.customValues.forEach(cv=>L.push(`${cv.label}: ${cv.value}`));
+  if(data.company)L.push(`COMPANY: ${data.company.name}${data.company.industry?` (${data.company.industry})`:""}. Other contacts here: ${data.companyContacts.map(x=>x.name).join(", ")||"none"}.`);
+  if(data.openDeals.length){L.push("OPEN DEALS:");data.openDeals.forEach(d=>L.push(`- ${d.title}: stage ${d.stage}, value ${fmt$(d.value)}, health ${calcDealHealth(d,data.notesAll,data.entity)}/100${d.closeDate?`, close ${fmtDate(d.closeDate)}`:""}${d.nextStep?`, next step: ${d.nextStep}`:""}`));}
+  if(data.wonDeals.length)L.push(`WON: ${data.wonDeals.map(d=>`${d.title} (${fmt$(d.value)})`).join("; ")}`);
+  if(data.lostDeals.length)L.push(`LOST: ${data.lostDeals.map(d=>`${d.title}${d.lostReason?` — ${d.lostReason}`:""}`).join("; ")}`);
+  if(data.invoicesOutstanding.length)L.push(`OUTSTANDING INVOICES: ${data.invoicesOutstanding.map(i=>`#${i.number} ${fmt$(invTotalOf(i))} ${i.status}${i.dueDate?` due ${fmtDate(i.dueDate)}`:""}`).join("; ")}`);
+  if(data.invoicesPaid.length)L.push(`PAID INVOICES: ${data.invoicesPaid.length} totalling ${fmt$(data.invoicesPaid.reduce((s,i)=>s+invTotalOf(i),0))}`);
+  const recent=[...data.notes.map(n=>({when:n.createdAt,t:`${n.type==="email"?"Email":"Note"}: ${n.content}`})),...data.stageNotes.map(s=>({when:s.createdAt,t:`Stage note (${s.dealTitle}): ${s.content}`})),...data.emails.map(e=>({when:e.date,t:`Email "${e.subject||""}": ${(e.body||"").slice(0,200)}`}))].sort((a,b)=>new Date(b.when)-new Date(a.when)).slice(0,8);
+  if(recent.length){L.push("RECENT ACTIVITY (newest first):");recent.forEach(r=>L.push(`- ${fmtDate(r.when)}: ${(r.t||"").slice(0,220)}`));}
+  if(data.meetingsUpcoming.length)L.push(`UPCOMING MEETINGS: ${data.meetingsUpcoming.length}`);
+  return L.join("\n");
+}
+
+const BRIEF_SYSTEM = `You are preparing a concise pre-meeting briefing for a salesperson about to speak with a contact. Use ONLY the facts provided — never invent details, numbers, names, or history. Be specific and grounded; keep it tight.
+Return ONLY valid JSON: {"sections":[{"heading":"...","body":"..."}]}. Use these headings in this order, but INCLUDE A SECTION ONLY IF the facts support it — omit any you cannot fill:
+- "Who they are" (1-2 lines)
+- "Where things stand" (open deals with stage/health/value; money outstanding)
+- "Recent activity" (what's happened lately, newest first)
+- "Suggested talking points" (2-3 bullets, each grounded in a specific fact — a stalled deal, an overdue invoice, a prior commitment in a note)
+Body is plain text: short lines separated by \\n, bullets as "• ". No markdown headers, no invented content.`;
+
+// Live path — calls the ai-claude proxy and parses the JSON sections.
+async function requestBriefing(data){
+  const text=await callClaude({messages:[{role:"user",content:`Prepare the briefing. Facts:\n\n${briefingFactsText(data)}`}],system:BRIEF_SYSTEM,max_tokens:900,timeoutMs:BRIEF_TIMEOUT_MS});
+  const m=text.match(/\{[\s\S]*\}/); if(!m)throw new Error("No JSON in response");
+  const parsed=JSON.parse(m[0]);
+  return (parsed.sections||[]).filter(s=>s&&s.heading&&s.body&&String(s.body).trim());
+}
+
+// Demo/offline path — deterministic synthesis from the same facts (no API call, no key).
+function localBriefing(data){
+  const c=data.contact, sections=[];
+  const who=[`${c.name}${c.title?`, ${c.title}`:""}${data.company?` at ${data.company.name}`:""}.`];
+  const seg=[c.status&&`Status: ${c.status}`,c.icp&&`Segment: ${c.icp}`].filter(Boolean).join(" · "); if(seg)who.push(seg+".");
+  if(data.company&&data.companyContacts.length)who.push(`${data.companyContacts.length} other contact${data.companyContacts.length===1?"":"s"} at ${data.company.name}.`);
+  sections.push({heading:"Who they are",body:who.join(" ")});
+  const stand=[];
+  data.openDeals.forEach(d=>{const h=calcDealHealth(d,data.notesAll,data.entity);stand.push(`${d.title} — ${d.stage}, ${fmt$(d.value)}, health ${h}/100 (${healthWord(h)})${d.closeDate?`, close ${fmtDate(d.closeDate)}`:""}.`);});
+  if(data.wonDeals.length)stand.push(`Won: ${data.wonDeals.length} deal${data.wonDeals.length===1?"":"s"} (${fmt$(data.wonDeals.reduce((s,d)=>s+(+d.value||0),0))}).`);
+  const outAmt=data.invoicesOutstanding.reduce((s,i)=>s+invTotalOf(i),0);
+  if(outAmt>0)stand.push(`${fmt$(outAmt)} outstanding across ${data.invoicesOutstanding.length} invoice${data.invoicesOutstanding.length===1?"":"s"}${data.invoicesOutstanding.some(i=>i.status==="Overdue")?" — some overdue":""}.`);
+  if(stand.length)sections.push({heading:"Where things stand",body:stand.join("\n")});
+  const acts=[...data.notes.map(n=>({when:n.createdAt,tag:n.type==="email"?"Email":"Note",text:n.content})),...data.stageNotes.map(s=>({when:s.createdAt,tag:"Stage note",text:`${s.dealTitle}: ${s.content}`})),...data.emails.map(e=>({when:e.date,tag:"Email",text:`${e.subject||"Email"}: ${(e.body||"").slice(0,140)}`}))].sort((a,b)=>new Date(b.when)-new Date(a.when)).slice(0,4);
+  if(acts.length)sections.push({heading:"Recent activity",body:acts.map(m=>`${fmtDate(m.when)} — ${m.tag}: ${(m.text||"").slice(0,160)}`).join("\n")});
+  const tps=[];
+  const overdue=data.invoicesOutstanding.find(i=>i.status==="Overdue"); if(overdue)tps.push(`Nudge the overdue invoice (#${overdue.number}, ${fmt$(invTotalOf(overdue))}) — ask if there's a blocker.`);
+  const stale=data.openDeals.map(d=>({d,h:calcDealHealth(d,data.notesAll,data.entity)})).filter(x=>x.h<50).sort((a,b)=>a.h-b.h)[0];
+  if(stale)tps.push(`Re-engage "${stale.d.title}" — health ${stale.h}/100 and slipping; confirm the next step and timeline.`);
+  const topNote=data.notes[0]; if(topNote)tps.push(`Follow up on the latest note: "${(topNote.content||"").slice(0,120)}".`);
+  const bigOpen=[...data.openDeals].sort((a,b)=>(+b.value||0)-(+a.value||0))[0];
+  if(bigOpen&&(!stale||stale.d.id!==bigOpen.id))tps.push(`Advance "${bigOpen.title}" (${fmt$(bigOpen.value)}) toward ${stageAfter(bigOpen,data.entity)}.`);
+  if(tps.length)sections.push({heading:"Suggested talking points",body:tps.slice(0,3).map(t=>`• ${t}`).join("\n")});
+  return sections;
+}
+
+const sectionsToText=(contact,sections)=>`Briefing — ${contact.name}\n\n${sections.map(s=>`${s.heading.toUpperCase()}\n${s.body}`).join("\n\n")}`;
+const rawFactsToText=(contact,facts)=>`${contact.name} — no history yet\n\n${facts.map(f=>`${f.label}: ${f.value}`).join("\n")}`;
+
+function PrepMeButton({contact,ctx,demoMode,showToast,style,label="Prep me"}){
+  const [open,setOpen]=useState(false);
+  if(!contact)return null;
+  return(<>
+    <button style={style||{...S.btnSecondary,color:"#7C3AED",borderColor:"#DDD6FE"}} onClick={()=>setOpen(true)} title="AI pre-meeting briefing"><Ic d={I.zap} size={13}/>{label}</button>
+    {open&&<PrepMeModal contact={contact} ctx={ctx} demoMode={demoMode} showToast={showToast} onClose={()=>setOpen(false)}/>}
+  </>);
+}
+
+function PrepMeModal({contact,ctx,demoMode,showToast,onClose}){
+  const [status,setStatus]=useState("loading");  // loading | done | raw | error
+  const [sections,setSections]=useState(null);
+  const [rawFacts,setRawFacts]=useState(null);
+  const [isSample,setIsSample]=useState(false);
+  const [tick,setTick]=useState(0);
+  const runRef=useRef(0);
+  useEffect(()=>{
+    let cancelled=false; const myRun=++runRef.current;
+    setStatus("loading"); setSections(null); setRawFacts(null); setIsSample(false);
+    (async()=>{
+      const data=gatherBriefingData(contact,ctx);
+      if(!briefingHasSubstance(data)){ if(!cancelled&&myRun===runRef.current){setRawFacts(briefingRawFacts(contact,data));setStatus("raw");} return; }
+      if(demoMode){
+        await new Promise(r=>setTimeout(r,600));
+        if(cancelled||myRun!==runRef.current)return;
+        setSections(localBriefing(data)); setIsSample(true); setStatus("done"); return;
+      }
+      try{
+        const secs=await requestBriefing(data);
+        if(cancelled||myRun!==runRef.current)return;
+        if(!secs.length){setStatus("error");return;}
+        setSections(secs); setStatus("done");
+      }catch(e){ if(!cancelled&&myRun===runRef.current)setStatus("error"); }
+    })();
+    return ()=>{cancelled=true;};
+  },[contact?.id,tick,demoMode]);
+  const copy=()=>{
+    const txt=status==="raw"?rawFactsToText(contact,rawFacts):sections?sectionsToText(contact,sections):"";
+    if(!txt){showToast?.("Nothing to copy","error");return;}
+    navigator.clipboard?.writeText(txt).then(()=>showToast?.("Briefing copied")).catch(()=>showToast?.("Copy failed","error"));
+  };
+  return(
+    <div className="nx-modal-overlay" style={S.overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="nx-modal" style={{...S.modal,maxWidth:560,padding:0,overflow:"hidden"}}>
+        <div style={{background:"linear-gradient(120deg,#7C3AED,#4F46E5)",color:"#fff",padding:"16px 20px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+            <div>
+              <div style={{fontSize:11,fontWeight:800,letterSpacing:".09em",textTransform:"uppercase",opacity:.9,display:"flex",alignItems:"center",gap:6}}>✨ AI briefing{isSample?" · demo sample":""}</div>
+              <div style={{fontSize:18,fontWeight:700,fontFamily:"'Sora',sans-serif",marginTop:2}}>{contact.name}</div>
+              <div style={{fontSize:12,opacity:.85}}>{[contact.title,ctx?.companies?.find(co=>co.id===contact.companyId)?.name].filter(Boolean).join(" · ")}</div>
+            </div>
+            <button style={{background:"rgba(255,255,255,.18)",border:"none",borderRadius:6,padding:6,cursor:"pointer",color:"#fff"}} onClick={onClose}><Ic d={I.x} size={16}/></button>
+          </div>
+        </div>
+        <div style={{padding:"18px 20px",maxHeight:"58vh",overflowY:"auto"}}>
+          {status==="loading"&&<div style={{textAlign:"center",padding:"28px 0",color:"#64748B"}}><div style={{fontSize:26,marginBottom:8}}>✨</div><div style={{fontSize:13,fontWeight:600}}>Reading the record and writing your briefing…</div></div>}
+          {status==="error"&&<div style={{textAlign:"center",padding:"24px 0"}}><div style={{fontSize:13,color:"#B91C1C",fontWeight:600,marginBottom:4}}>Couldn't generate a briefing just now.</div><div style={{fontSize:12,color:"#64748B",marginBottom:14}}>The AI service didn't respond. You can try again.</div><button style={S.btnSecondary} onClick={()=>setTick(t=>t+1)}>Try again</button></div>}
+          {status==="raw"&&(
+            <div>
+              <div style={{fontSize:13,color:"#0F172A",fontWeight:600,marginBottom:4}}>New contact, no history yet.</div>
+              <div style={{fontSize:12.5,color:"#64748B",marginBottom:14}}>Added {fmtDate(contact.createdAt)}. No deals, notes, or emails logged — showing the record as-is rather than inventing a summary.</div>
+              <div style={{display:"grid",gridTemplateColumns:"120px 1fr",rowGap:7,fontSize:13}}>
+                {rawFacts.map((f,i)=>[<div key={i+"l"} style={{color:"#94A3B8"}}>{f.label}</div>,<div key={i+"v"} style={{color:"#0F172A",fontWeight:500}}>{f.value}</div>])}
+              </div>
+            </div>
+          )}
+          {status==="done"&&sections&&sections.map((s,i)=>(
+            <div key={i} style={{marginBottom:16}}>
+              <div style={{fontSize:11,fontWeight:800,color:"#7C3AED",textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>{s.heading}</div>
+              <div style={{fontSize:13.5,color:"#0F172A",lineHeight:1.55,whiteSpace:"pre-wrap"}}>{s.body}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"12px 20px",borderTop:"1px solid #E9EEF6",background:"#F8FAFC"}}>
+          <span style={{fontSize:11,color:"#94A3B8"}}>Generated just now · not saved{isSample?" · demo sample, no live call":""}</span>
+          <div style={{display:"flex",gap:8}}>
+            {status!=="loading"&&status!=="error"&&<button style={S.btnSecondary} onClick={()=>setTick(t=>t+1)} title="Regenerate"><Ic d={I.repeat} size={13}/>Regenerate</button>}
+            {(status==="done"||status==="raw")&&<button style={S.btnPrimary} onClick={copy}><Ic d={I.copy} size={13}/>Copy</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],deals=[],notes=[],tasks=[],invoices=[],setSelContact,setView,showToast,briefingCtx}){
   const today=new Date();
   const [mode,setMode]=useState("week"); // day | week | month — week is primary
   const [anchor,setAnchor]=useState(new Date());
@@ -4523,7 +4724,7 @@ function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],dea
                   )}
                   <div style={{padding:"13px 18px",display:"flex",flexDirection:"column",gap:7,marginTop:"auto"}}>
                     {selContact&&<button style={{border:"1px solid #0F2044",background:"#0F2044",color:"#fff",borderRadius:6,padding:"8px 12px",fontSize:12.5,fontWeight:650,cursor:"pointer",textAlign:"left"}} onClick={openContact}>Log a note</button>}
-                    {selContact&&<button style={{border:"1px solid #E2E8F0",background:"#fff",borderRadius:6,padding:"8px 12px",fontSize:12.5,fontWeight:650,color:"#0F172A",cursor:"pointer",textAlign:"left"}} onClick={()=>showToast?.("Prep briefings arrive with the AI pass — for now this panel is the prep")}>Prep me</button>}
+                    {selContact&&<PrepMeButton contact={selContact} ctx={briefingCtx} demoMode={demoMode} showToast={showToast} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #DDD6FE",background:"#fff",borderRadius:6,padding:"8px 12px",fontSize:12.5,fontWeight:650,color:"#7C3AED",cursor:"pointer",textAlign:"left"}}/>}
                     {selContact&&<button style={{border:"1px solid #E2E8F0",background:"#fff",borderRadius:6,padding:"8px 12px",fontSize:12.5,fontWeight:650,color:"#0F172A",cursor:"pointer",textAlign:"left"}} onClick={openContact}>Open contact</button>}
                     {!selContact&&<div style={{fontSize:11.5,color:"#94A3B8"}}>Link this attendee to a CRM contact to see deals, invoices, and activity here.</div>}
                   </div>
@@ -7134,7 +7335,7 @@ function SignatureModal({doc,contact,onClose,onSign,showToast}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEAL DETAIL (H1)
 // ═══════════════════════════════════════════════════════════════════════════════
-function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId,employees=[],timeClockEntries=[],expenses=[],addExpense,updateExpense,deleteExpense,addInvoice,invoiceCounter,setInvoiceCounter,addDeal,showToast,onRecentJob,quotes=[],updateQuote,deleteQuote}){
+function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,openModal,setSelContact,setSelCompany,setView,deleteDeal,updateDeal,addNote,deleteNote,entity,activeEntityId,employees=[],timeClockEntries=[],expenses=[],addExpense,updateExpense,deleteExpense,addInvoice,invoiceCounter,setInvoiceCounter,addDeal,showToast,onRecentJob,quotes=[],updateQuote,deleteQuote,demoMode=false,briefingCtx}){
   const fs=isFieldService(entity);
   const [tab,setTab]=useState("overview");
   const [noteText,setNoteText]=useState("");
@@ -7216,7 +7417,8 @@ function DealDetail({deal,allContacts,allCompanies,allNotes,allTasks,onBack,open
               showToast?.(`Next occurrence created for ${fmtDate(nextDate)}`);
             }}><Ic d={I.repeat} size={13}/>Generate next occurrence</button>
           )}
-          <button style={{...S.btnSecondary,color:"#EF4444",borderColor:"#FECACA",marginLeft:"auto"}} onClick={()=>{if(confirm(`Delete ${fs?"job":"deal"}?`)){deleteDeal(deal.id);onBack();}}}><Ic d={I.trash} size={13}/>Delete</button>
+          {contact&&<PrepMeButton contact={contact} ctx={briefingCtx} demoMode={demoMode} showToast={showToast} style={{display:"inline-flex",alignItems:"center",gap:6,marginLeft:"auto",border:"1px solid #DDD6FE",background:"#fff",color:"#7C3AED",borderRadius:8,padding:"7px 12px",fontSize:12.5,fontWeight:650,cursor:"pointer"}}/>}
+          <button style={{...S.btnSecondary,color:"#EF4444",borderColor:"#FECACA",marginLeft:contact?0:"auto"}} onClick={()=>{if(confirm(`Delete ${fs?"job":"deal"}?`)){deleteDeal(deal.id);onBack();}}}><Ic d={I.trash} size={13}/>Delete</button>
         </div>
       </div>
 
@@ -8225,6 +8427,8 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
   const ec=contacts.filter(c=>c.entityId===activeEntityId);
   const eco=companies.filter(c=>c.entityId===activeEntityId);
   const ed=deals.filter(d=>d.entityId===activeEntityId);
+  // Bundle the stores the Prep-me briefing reads, so each surface takes one prop.
+  const briefingCtx={activeEntityId,entity,deals,notes,companies,contacts,invoices,meetings,emailThreads,customFields};
   const et=tasks.filter(t=>t.entityId===activeEntityId);
   const en=notes.filter(n=>n.entityId===activeEntityId);
   const eei=emailInts.filter(i=>i.entityId===activeEntityId);
@@ -9059,11 +9263,11 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
         <div style={{flex:1,overflowY:"auto",padding:isMobile?12:20,paddingBottom:isMobile?80:20}}>
           {view==="dashboard"&&<Dashboard ed={ed} ec={ec} et={et} notes={en} contacts={contacts} companies={companies} entity={entity} setView={setView} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} openModal={openModal}/>}
           {view==="contacts"&&!selContact&&<ContactsList ec={ec} search={search} openModal={openModal} setSelContact={setSelContact} deleteContact={deleteContact} updateContact={updateContact} deals={deals} notes={notes} tasks={tasks}/>}
-          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})} demoMode={demoMode} signatures={signatures} quotes={quotes} updateQuote={updateQuote} deleteQuote={deleteQuote}/>}
+          {view==="contacts"&&selContact&&<ContactDetail contact={contacts.find(c=>c.id===selContact)} allDeals={deals} allNotes={notes} allTasks={tasks} allDocs={docs} allExpenses={expenses} contacts={contacts} companies={companies} sequences={sequences} enrollments={enrollments} openModal={openModal} onBack={()=>setSelContact(null)} addNote={addNote} updateNote={updateNote} deleteNote={deleteNote} updateTask={updateTask} deleteTask={deleteTask} activeEntityId={activeEntityId} emailIntegrations={emailInts} updateContact={updateContact} addDoc={addDoc} deleteDoc={deleteDoc} addEnrollment={addEnrollment} updateEnrollment={updateEnrollment} deleteEnrollment={deleteEnrollment} customFields={customFields} entity={entity} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} onRequestSign={(doc,contact)=>setSigModal({doc,contact})} demoMode={demoMode} signatures={signatures} quotes={quotes} updateQuote={updateQuote} deleteQuote={deleteQuote} briefingCtx={briefingCtx} showToast={showToast}/>}
           {view==="companies"&&!selCompany&&<CompaniesList eco={eco} search={search} openModal={openModal} deleteCompany={deleteCompany} contacts={contacts} deals={ed} setSelCompany={setSelCompany}/>}
           {view==="companies"&&selCompany&&<CompanyDetail company={companies.find(c=>c.id===selCompany)} allContacts={contacts} allDeals={deals} allNotes={notes} allTasks={tasks} allExpenses={expenses} allInvoices={invoices} onBack={()=>setSelCompany(null)} openModal={openModal} setSelContact={setSelContact} setSelDeal={setSelDeal} setView={setView} deleteCompany={deleteCompany} deleteNote={deleteNote} entity={entity}/>}
           {view==="deals"&&!selDeal&&<KanbanBoard ed={ed} contacts={contacts} companies={companies} updateDeal={updateDeal} deleteDeal={deleteDeal} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setSelDeal={setSelDeal} setView={setView} products={products} entity={entity} notes={notes}/>}
-          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} expenses={expenses} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} addInvoice={addInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId} quotes={quotes} updateQuote={updateQuote} deleteQuote={deleteQuote}/>}
+          {view==="deals"&&selDeal&&<DealDetail deal={deals.find(d=>d.id===selDeal)} allContacts={contacts} allCompanies={companies} allNotes={notes} allTasks={tasks} onBack={()=>setSelDeal(null)} openModal={openModal} setSelContact={setSelContact} setSelCompany={setSelCompany} setView={setView} deleteDeal={deleteDeal} updateDeal={updateDeal} addNote={addNote} deleteNote={deleteNote} entity={entity} activeEntityId={activeEntityId} employees={employees.filter(e=>e.entityId===activeEntityId)} timeClockEntries={timeClockEntries.filter(e=>e.entityId===activeEntityId)} expenses={expenses} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} addInvoice={addInvoice} invoiceCounter={invoiceCounter} setInvoiceCounter={setInvoiceCounter} addDeal={addDeal} showToast={showToast} onRecentJob={setRecentJobId} quotes={quotes} updateQuote={updateQuote} deleteQuote={deleteQuote} demoMode={demoMode} briefingCtx={briefingCtx}/>}
           {view==="tasks"&&<TasksView et={et} contacts={contacts} updateTask={updateTask} deleteTask={deleteTask} openModal={openModal}/>}
           {view==="inbox"&&<InboxView emailThreads={emailThreads} contacts={ec} companies={eco} activeEntityId={activeEntityId} emailIntegrations={emailInts} addEmailThread={addEmailThread} addEmailMessage={addEmailMessage} setSelContact={setSelContact} setView={setView} showToast={showToast} portalTokens={portalTokens} portalMessages={portalMessages} sendOwnerPortalMessage={sendOwnerPortalMessage} markPortalMessagesRead={markPortalMessagesRead}/>}
           {view==="scheduler"&&!fs&&<SchedulerView meetings={meetings} contacts={contacts} activeEntityId={activeEntityId} availability={availability} addMeeting={addMeeting} updateMeeting={updateMeeting} deleteMeeting={deleteMeeting} updateAvailability={updateAvailability} showToast={showToast}/>}
@@ -9078,7 +9282,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
           {view==="forms"&&<FormsView forms={forms} activeEntityId={activeEntityId} addForm={addForm} updateForm={updateForm} deleteForm={deleteForm} showToast={showToast} addContact={addContact} addNote={addNote}/>}
           {view==="automation"&&<AutomationView automations={automations} activeEntityId={activeEntityId} addAutomation={addAutomation} updateAutomation={updateAutomation} deleteAutomation={deleteAutomation} showToast={showToast}/>}
           {view==="reports"&&<ReportsView ed={ed} ec={ec} et={et} notes={en} entity={entity} entities={entities} contacts={contacts} companies={companies} deals={deals} tasks={tasks} allNotes={notes} meetings={meetings} timeEntries={timeEntries} invoices={invoices} expenses={expenses} customReports={customReports} addReport={addReport} updateReport={updateReport} deleteReport={deleteReport} duplicateReport={duplicateReport} showToast={showToast}/>}
-          {view==="calendar"&&<GoogleCalendarView account={account} entities={entities} demoMode={demoMode} contacts={contacts} companies={companies} deals={deals} notes={notes} tasks={tasks} invoices={invoices} setSelContact={setSelContact} setView={setView} showToast={showToast}/>}
+          {view==="calendar"&&<GoogleCalendarView account={account} entities={entities} demoMode={demoMode} contacts={contacts} companies={companies} deals={deals} notes={notes} tasks={tasks} invoices={invoices} setSelContact={setSelContact} setView={setView} showToast={showToast} briefingCtx={briefingCtx}/>}
           {view==="settings"&&<SettingsView entities={entities} entity={entity} emailInts={eei} connectEmail={connectEmail} disconnectEmail={disconnectEmail} openModal={openModal} setEntities={setEntities} showToast={showToast} products={products} activeEntityId={activeEntityId} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct} customFields={customFields} addCustomField={addCustomField} deleteCustomField={deleteCustomField} webhooks={webhooks} addWebhook={addWebhook} updateWebhook={updateWebhook} deleteWebhook={deleteWebhook} employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} fsSettings={fsSettings} updateFsSettings={updateFsSettings} account={account} myRole={myRole} canManageTeam={canManageTeam} session={session} demoMode={demoMode} initialTab={googleReturn?"connected":null}/>}
         </div>
         )}

@@ -264,6 +264,30 @@ async function postFn(name, body) {
   return data
 }
 
+// ─── AI (Claude via the ai-claude Netlify Function; the key stays server-side) ─
+// Returns the assistant's text. Throws on auth failure, timeout, or upstream error.
+export async function callClaude({ messages, max_tokens = 1024, model, system, timeoutMs = 12000 }) {
+  const headers = await bearerHeader()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let res
+  try {
+    res = await fetch('/.netlify/functions/ai-claude', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ messages, max_tokens, model, system }),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+  const text = await res.text()
+  let data
+  try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
+  if (!res.ok) throw new Error(data?.error || `AI request failed (${res.status})`)
+  return (data.content || []).find(c => c.type === 'text')?.text || ''
+}
+
 export async function adminCreatePortal({ email, scope, scopeId, entityId, payload, settings }) {
   const accountId = requireAccountId()
   return postFn('portal-create', { email, scope, scopeId, entityId, payload, settings, accountId })
