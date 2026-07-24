@@ -1887,6 +1887,19 @@ const REPORT_FIELDS = {
     { key:"billable",     label:"Billable",     get: e => e.billable ? "Yes" : "No" },
     { key:"invoiced",     label:"Invoiced",     get: e => e.invoiced ? "Yes" : "No" },
   ],
+  activity: [
+    { key:"createdAt",    label:"Date",         type:"date", get: n => n.createdAt },
+    { key:"contactName",  label:"Contact",      get: (n,ctx) => (ctx.contacts||[]).find(c=>c.id===n.contactId)?.name },
+    { key:"companyName",  label:"Company",      get: (n,ctx) => {
+        const c=(ctx.contacts||[]).find(x=>x.id===n.contactId);
+        if(c){ const co=(ctx.companies||[]).find(x=>x.id===c.companyId); if(co) return co.name; if(c.companyName) return c.companyName; }
+        const d=(ctx.deals||[]).find(x=>x.id===n.dealId);
+        return (ctx.companies||[]).find(x=>x.id===d?.companyId)?.name;
+      } },
+    { key:"dealTitle",    label:"Linked Deal",  get: (n,ctx) => (ctx.deals||[]).find(d=>d.id===n.dealId)?.title },
+    { key:"noteType",     label:"Type",         get: n => n.noteKind || "Note" },
+    { key:"body",         label:"Note",         get: n => n.content },
+  ],
 };
 const REPORT_TYPE_LABELS = { contact:"Contact List", company:"Company List", deal:"Deal Pipeline", revenue:"Revenue Summary", activity:"Activity Log", time:"Time & Billing", invoice:"Invoice Report", expense:"Expense Report", custom:"Custom" };
 
@@ -1902,7 +1915,44 @@ const REPORT_TEMPLATES = [
   { name:"Expenses by Job", type:"expense", fields:["date","jobTitle","category","description","vendor","amount","billable"], filters:{}, sort:{field:"date",dir:"desc"}, groupBy:"jobTitle" },
   { name:"Expenses by Category", type:"expense", fields:["category","date","jobTitle","description","amount"], filters:{ dateRange:"month", dateField:"date" }, sort:{field:"amount",dir:"desc"}, groupBy:"category" },
   { name:"Unbilled Expenses", type:"expense", fields:["date","companyName","contactName","jobTitle","description","amount"], filters:{ billableOnly:true, uninvoicedOnly:true }, sort:{field:"date",dir:"desc"}, groupBy:"companyName" },
+  { name:"Notes This Week", type:"activity", fields:["createdAt","contactName","companyName","dealTitle","noteType","body"], filters:{ dateRange:"week", dateField:"createdAt" }, sort:{field:"createdAt",dir:"desc"}, groupBy:"contactName" },
 ];
+
+// Combine timeline notes (crm:notes) with per-stage deal notes into one
+// reportable activity dataset. Timeline notes carry the body in `content` and a
+// `type` of note/email/system; deal stage notes live on the deal object as the
+// current `stageNote` plus archived `stageHistory[].note` entries. Each output
+// record is normalized to { id, entityId, contactId, dealId, createdAt, content,
+// noteKind } so the `activity` fieldset getters and the entity/date filters work
+// uniformly across both kinds.
+const NOTE_KIND_LABELS = { note: "Note", email: "Email", system: "System" };
+const buildActivityRecords = (ctx) => {
+  const out = [];
+  (ctx.notes || []).forEach(n => {
+    if (n.content == null || n.content === "") return;
+    out.push({
+      id: n.id, entityId: n.entityId, contactId: n.contactId ?? null,
+      dealId: n.dealId ?? null, createdAt: n.createdAt,
+      content: n.content, noteKind: NOTE_KIND_LABELS[n.type] || "Note",
+    });
+  });
+  (ctx.deals || []).forEach(d => {
+    if (d.stageNote) out.push({
+      id: `${d.id}:stage-current`, entityId: d.entityId, contactId: d.contactId ?? null,
+      dealId: d.id, createdAt: d.lastContacted || d.createdAt,
+      content: d.stageNote, noteKind: "Stage note",
+    });
+    (d.stageHistory || []).forEach((h, i) => {
+      if (!h.note) return;
+      out.push({
+        id: `${d.id}:stage-${i}`, entityId: d.entityId, contactId: d.contactId ?? null,
+        dealId: d.id, createdAt: h.at || d.createdAt,
+        content: h.note, noteKind: "Stage note",
+      });
+    });
+  });
+  return out;
+};
 
 // Build the rendered rows for a report given its definition + the app context
 const runReportRows = (report, ctx) => {
@@ -1915,7 +1965,7 @@ const runReportRows = (report, ctx) => {
   else if (report.type === "invoice") base = ctx.invoices || [];
   else if (report.type === "expense") base = ctx.expenses || [];
   else if (report.type === "revenue") base = ctx.deals || [];
-  else if (report.type === "activity") base = ctx.notes || [];
+  else if (report.type === "activity") base = buildActivityRecords(ctx);
   // Filter by entity (default = active entity, or all if filters.entityIds unset)
   if (report.filters?.entityIds?.length) {
     base = base.filter(r => report.filters.entityIds.includes(r.entityId));
