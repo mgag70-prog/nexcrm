@@ -193,16 +193,16 @@ const CSS = `
 /* calendar echo */
 .mkt-cal{display:grid;grid-template-columns:1fr .9fr;gap:36px;align-items:center;}
 .mkt-cal-visual{background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 18px 50px rgba(15,32,68,.10);}
-.mkt-cal-head{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--border);}
+.mkt-cal-head{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border-bottom:1px solid var(--border);}
 .mkt-cal-day{padding:8px 8px 7px;border-right:1px solid var(--hairline);}
 .mkt-cal-day:last-child{border-right:0;}
 .mkt-cal-dow{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);}
 .mkt-cal-load{display:flex;height:4px;border-radius:2px;overflow:hidden;margin-top:6px;background:var(--hairline);}
 .mkt-cal-load span{display:block;height:100%;}
-.mkt-cal-body{display:grid;grid-template-columns:repeat(5,1fr);min-height:260px;}
+.mkt-cal-body{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));min-height:260px;}
 .mkt-cal-col{border-right:1px solid var(--hairline);padding:6px;position:relative;}
 .mkt-cal-col:last-child{border-right:0;}
-.mkt-cal-ev{border-radius:5px;padding:5px 7px;margin-bottom:5px;font-size:10.5px;font-weight:650;line-height:1.25;border-left:3px solid var(--c);background:color-mix(in srgb,var(--c) 9%,#fff);}
+.mkt-cal-ev{border-radius:5px;padding:5px 7px;margin-bottom:5px;font-size:10.5px;font-weight:650;line-height:1.25;border-left:3px solid var(--c);background:color-mix(in srgb,var(--c) 9%,#fff);overflow-wrap:anywhere;}
 .mkt-cal-ev small{display:block;font-weight:600;color:var(--muted);font-size:9.5px;}
 .mkt-cal-panel{background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px;box-shadow:0 8px 30px rgba(15,32,68,.08);}
 .mkt-cal-panel .who{display:flex;align-items:center;gap:11px;margin-bottom:14px;}
@@ -348,6 +348,14 @@ const CSS = `
   .mkt-hero-bar-labels span b{display:none;}
   .mkt-ftable-toggle{display:inline-flex;}
   .mkt-ftable-wrap.collapsed{display:none;}
+}
+@media (max-width:480px){
+  /* Keep the 5-day calendar echo inside a 390px viewport — tighten padding + type. */
+  .mkt-cal-day{padding:6px 4px;}
+  .mkt-cal-col{padding:4px;}
+  .mkt-cal-dow{font-size:9px;letter-spacing:.03em;}
+  .mkt-cal-ev{font-size:9px;padding:4px 5px;}
+  .mkt-cal-ev small{font-size:8.5px;}
 }
 .mkt :focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:3px;}
 @media (prefers-reduced-motion:reduce){.mkt *{transition:none!important;animation:none!important;}}

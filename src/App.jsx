@@ -109,6 +109,34 @@ const stagesForWithOrphans = (entity, deals) => {
   return [...base, ...orphans];
 };
 
+// ─── WON / OPEN / LOST classification ──────────────────────────────────────────
+// Resolves a deal's stage to won / lost / open for ANY pipeline flavor:
+//   • Standard  → "Won" wins, "Lost" is dead.
+//   • Field service → "Won / Scheduled", "In Progress", "Completed" all win; "Lost" dead.
+//   • Custom (e.g. Crestfolio: …, "Active Client", "Inactive") → last non-dead
+//     stage wins, "Inactive"/"Lost" is dead — matching the existing /lost|inactive/
+//     "live stages" convention used by the momentum engine.
+// Use these instead of hardcoded ["Won","Lost"] literals so KPIs, pipeline totals,
+// close rate and forecast reconcile across every entity's pipeline.
+const isLostStageName = s => /lost|inactive/i.test(s || "");
+const FS_WON_STAGES = ["Won / Scheduled", "In Progress", "Completed"];
+const wonStagesFor = (entity) => {
+  if (isFieldService(entity)) return FS_WON_STAGES;
+  const stages = stagesFor(entity);
+  if (stages.includes("Won")) return ["Won"];
+  // Custom pipeline with no literal "Won": the last live (non-dead) stage is the win state.
+  const live = stages.filter(s => !isLostStageName(s));
+  return live.length ? [live[live.length - 1]] : [];
+};
+const dealStageClass = (stage, entity) => {
+  if (!stage) return "open";
+  if (isLostStageName(stage)) return "lost";
+  return wonStagesFor(entity).includes(stage) ? "won" : "open";
+};
+const isWonStage  = (deal, entity) => dealStageClass(deal?.stage, entity) === "won";
+const isLostStage = (deal, entity) => dealStageClass(deal?.stage, entity) === "lost";
+const isOpenStage = (deal, entity) => dealStageClass(deal?.stage, entity) === "open";
+
 // One-time stage migration map for legacy/imported pipeline names.
 const STAGE_MIGRATION_MAP = {
   "Outreach Sent": "Contacted",
@@ -169,7 +197,25 @@ const useIsMobile = () => {
 };
 
 const fmt$ = v => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:0}).format(v||0);
-const fmtDate = d => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
+// Parse a value as a LOCAL date. Date-only strings ("YYYY-MM-DD") would otherwise
+// parse as UTC midnight and render/compare a day early in timezones behind UTC.
+const parseLocalDate = (v) => {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  const d = new Date(v); // full ISO timestamp / other → native parse (already tz-correct)
+  return isNaN(d.getTime()) ? null : d;
+};
+const startOfToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+// Overdue = strictly before today (date-only compare). "Due today" is its own state.
+const isOverdueDate = (v) => { const d = parseLocalDate(v); return !!d && d < startOfToday(); };
+const isDueToday = (v) => {
+  const d = parseLocalDate(v); if (!d) return false;
+  const s = startOfToday(); const e = new Date(s); e.setDate(e.getDate() + 1);
+  return d >= s && d < e;
+};
+const fmtDate = d => { const dt = parseLocalDate(d); return dt ? dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—"; };
 const fmtTime = d => d ? new Date(d).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "—";
 const uid = () => `id_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
 const initials = n => n?.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase()||"?";
@@ -914,11 +960,11 @@ const ScoreBadge = ({score})=>(
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 function Dashboard({ed,ec,et,notes,contacts,companies=[],entity,setView,setSelContact,setSelCompany,setSelDeal,openModal}){
-  const pipeVal=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
-  const wonVal=ed.filter(d=>d.stage==="Won").reduce((s,d)=>s+(d.value||0),0);
-  const closed=ed.filter(d=>["Won","Lost"].includes(d.stage));
-  const closeRate=closed.length?Math.round((ed.filter(d=>d.stage==="Won").length/closed.length)*100):0;
-  const weightedPipe=ed.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
+  const pipeVal=ed.filter(d=>isOpenStage(d,entity)).reduce((s,d)=>s+(d.value||0),0);
+  const wonVal=ed.filter(d=>isWonStage(d,entity)).reduce((s,d)=>s+(d.value||0),0);
+  const closed=ed.filter(d=>isWonStage(d,entity)||isLostStage(d,entity));
+  const closeRate=closed.length?Math.round((ed.filter(d=>isWonStage(d,entity)).length/closed.length)*100):0;
+  const weightedPipe=ed.filter(d=>isOpenStage(d,entity)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
   const stageChart=stagesFor(entity).map(st=>({name:st.split(" ")[0],deals:ed.filter(d=>d.stage===st).length,value:ed.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)/1000}));
   const recentNotes=[...notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,4);
   const pendingTasks=et.filter(t=>!t.completed).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate)).slice(0,5);
@@ -928,7 +974,7 @@ function Dashboard({ed,ec,et,notes,contacts,companies=[],entity,setView,setSelCo
   for(let i=0;i<3;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);months.push({month:d.toLocaleString("default",{month:"short"}),won:0,weighted:0});}
   ed.forEach(d=>{
     if(!d.closeDate)return; const cd=new Date(d.closeDate); const mi=months.findIndex((m,i)=>{const md=new Date(now.getFullYear(),now.getMonth()+i,1);return cd.getMonth()===md.getMonth()&&cd.getFullYear()===md.getFullYear();});
-    if(mi>=0){if(d.stage==="Won")months[mi].won+=(d.value||0)/1000;else if(!["Lost"].includes(d.stage))months[mi].weighted+=((d.value||0)*(d.probability||50)/100)/1000;}
+    if(mi>=0){if(isWonStage(d,entity))months[mi].won+=(d.value||0)/1000;else if(isOpenStage(d,entity))months[mi].weighted+=((d.value||0)*(d.probability||50)/100)/1000;}
   });
 
   return(
@@ -937,14 +983,14 @@ function Dashboard({ed,ec,et,notes,contacts,companies=[],entity,setView,setSelCo
         <button style={S.btnPrimary} onClick={()=>openModal("addDeal")}><Ic d={I.plus} size={14}/>New Deal</button>
       </PageHeader>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
-        <StatCard label="Active Pipeline" value={fmt$(pipeVal)} sub={`${ed.filter(d=>!["Won","Lost"].includes(d.stage)).length} open deals`} color="#1D4ED8" icon={I.dollar} onClick={()=>setView("deals")}/>
+        <StatCard label="Active Pipeline" value={fmt$(pipeVal)} sub={`${ed.filter(d=>isOpenStage(d,entity)).length} open deals`} color="#1D4ED8" icon={I.dollar} onClick={()=>setView("deals")}/>
         <StatCard label="Weighted Pipeline" value={fmt$(weightedPipe)} sub="By probability" color="#8B5CF6" icon={I.layers} onClick={()=>setView("deals")}/>
-        <StatCard label="Won Revenue" value={fmt$(wonVal)} sub={`${ed.filter(d=>d.stage==="Won").length} deals closed`} color="#10B981" icon={I.ok} onClick={()=>setView("deals")}/>
+        <StatCard label="Won Revenue" value={fmt$(wonVal)} sub={`${ed.filter(d=>isWonStage(d,entity)).length} deals closed`} color="#10B981" icon={I.ok} onClick={()=>setView("deals")}/>
         <StatCard label="Close Rate" value={`${closeRate}%`} sub={`${closed.length} deals evaluated`} color="#F59E0B" icon={I.bar} onClick={()=>setView("reports")}/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
         <StatCard label="Total Contacts" value={ec.length} sub="In this entity" color="#1D4ED8" icon={I.users} onClick={()=>setView("contacts")}/>
-        <StatCard label="Tasks Pending" value={et.filter(t=>!t.completed).length} sub={`${et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length} overdue`} color="#EF4444" icon={I.check} onClick={()=>setView("tasks")}/>
+        <StatCard label="Tasks Pending" value={et.filter(t=>!t.completed).length} sub={`${et.filter(t=>!t.completed&&isOverdueDate(t.dueDate)).length} overdue`} color="#EF4444" icon={I.check} onClick={()=>setView("tasks")}/>
         <StatCard label="Avg Deal Size" value={fmt$(ed.length?ed.reduce((s,d)=>s+(d.value||0),0)/ed.length:0)} sub="All deals" color="#F97316" icon={I.dollar} onClick={()=>setView("deals")}/>
         <StatCard label="Activity Notes" value={notes.length} sub="Total logged" color="#EC4899" icon={I.note} onClick={()=>setView("contacts")}/>
       </div>
@@ -1021,12 +1067,12 @@ function Dashboard({ed,ec,et,notes,contacts,companies=[],entity,setView,setSelCo
           </div>
           {pendingTasks.length===0?<p style={{color:"#475569",fontSize:13}}>All tasks complete! 🎉</p>:pendingTasks.map(t=>{
             const contact=contacts.find(c=>c.id===t.contactId);
-            const overdue=new Date(t.dueDate)<new Date();
+            const overdue=isOverdueDate(t.dueDate); const dueToday=isDueToday(t.dueDate);
             return(<div key={t.id} onClick={()=>{if(contact){setSelContact(contact.id);setView("contacts");}else{setView("tasks");}}} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #E9EEF6",cursor:"pointer",borderRadius:6,transition:"background .12s"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{color:{high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority]}}><Ic d={I.bell} size={14}/></div>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:"#0F172A"}}>{t.title}</div>
-                <div style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)} · {contact?.name||"No contact"}</div>
+                <div style={{fontSize:11,color:overdue?"#EF4444":dueToday?"#B45309":"#64748B"}}>{overdue?"⚠ Overdue · ":dueToday?"Today · ":""}{fmtDate(t.dueDate)} · {contact?.name||"No contact"}</div>
               </div>
               <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority])}>{t.priority}</span>
             </div>);
@@ -1109,7 +1155,7 @@ function ContactsList({ec,search,openModal,setSelContact,deleteContact,updateCon
 
   return(
     <div>
-      <PageHeader title="Contacts" sub={`${ec.length} total contacts`}>
+      <PageHeader title="Contacts" sub={activeFilter==="all"?`${counts.all} contact${counts.all===1?"":"s"}`:`${counts[activeFilter]} ${activeFilter} of ${counts.all}`}>
         <div style={{display:"flex",gap:4,background:"#E2E8F0",padding:3,borderRadius:8}}>
           {[["all","All",counts.all],["active","Active",counts.active],["inactive","Inactive",counts.inactive]].map(([v,l,n])=>(
             <button key={v} style={{...S.btnGhost,padding:"5px 12px",background:activeFilter===v?"#1D4ED8":"transparent",color:activeFilter===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>setActiveFilter(v)}>{l} <span style={{opacity:.7}}>({n})</span></button>
@@ -1408,13 +1454,13 @@ function ContactDetail({contact,allDeals,allNotes,allTasks,allDocs,allExpenses=[
                 <button style={{...S.btnPrimary,marginBottom:16}} onClick={()=>openModal("addTask",{contactId:contact.id})}><Ic d={I.plus} size={14}/>Add Task</button>
                 {cTasks.length===0?<p style={{color:"#475569",fontSize:13}}>No tasks. Add a follow-up!</p>
                 :cTasks.map(t=>{
-                  const overdue=!t.completed&&new Date(t.dueDate)<new Date();
+                  const overdue=!t.completed&&isOverdueDate(t.dueDate); const dueToday=!t.completed&&isDueToday(t.dueDate);
                   return(<div key={t.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",background:"#FFFFFF",border:"1px solid #E9EEF6",borderRadius:8,marginBottom:8,opacity:t.completed?.65:1,borderLeft:`3px solid ${{high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority]}`}}>
                     <input type="checkbox" checked={t.completed} onChange={e=>updateTask(t.id,{completed:e.target.checked})} style={{marginTop:2,cursor:"pointer",accentColor:"#1D4ED8",width:14,height:14}}/>
                     <div style={{flex:1}}>
                       <div style={{fontSize:13,color:"#0F172A",textDecoration:t.completed?"line-through":"none"}}>{t.title}</div>
                       <div style={{display:"flex",gap:8,alignItems:"center",marginTop:3}}>
-                        <span style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)}</span>
+                        <span style={{fontSize:11,color:overdue?"#EF4444":dueToday?"#B45309":"#64748B"}}>{overdue?"⚠ Overdue · ":dueToday?"Today · ":""}{fmtDate(t.dueDate)}</span>
                         <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority])}>{t.priority}</span>
                       </div>
                     </div>
@@ -1597,8 +1643,8 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,allExpens
   const cNotes=allNotes.filter(n=>contactIds.has(n.contactId));
   const cTasks=allTasks.filter(t=>contactIds.has(t.contactId));
   const dealValue=cDeals.reduce((s,d)=>s+(+d.value||0),0);
-  const wonValue=cDeals.filter(d=>d.stage==="Won").reduce((s,d)=>s+(+d.value||0),0);
-  const openDeals=cDeals.filter(d=>!["Won","Lost"].includes(d.stage));
+  const wonValue=cDeals.filter(d=>isWonStage(d,entity)).reduce((s,d)=>s+(+d.value||0),0);
+  const openDeals=cDeals.filter(d=>isOpenStage(d,entity));
   // Total expenses: anything tagged to this company OR to one of its deals
   const dealIds=new Set(cDeals.map(d=>d.id));
   const cExpenses=allExpenses.filter(e=>e.companyId===company.id||dealIds.has(e.dealId));
@@ -1753,13 +1799,13 @@ function CompanyDetail({company,allContacts,allDeals,allNotes,allTasks,allExpens
           {cTasks.length===0?<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:13}}>No tasks yet.</div>
           :cTasks.sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate)).map((t,i)=>{
             const ct=allContacts.find(c=>c.id===t.contactId);
-            const overdue=!t.completed&&new Date(t.dueDate)<new Date();
+            const overdue=!t.completed&&isOverdueDate(t.dueDate); const dueToday=!t.completed&&isDueToday(t.dueDate);
             return(
               <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderTop:i?"1px solid #E9EEF6":"none"}}>
                 <input type="checkbox" checked={!!t.completed} readOnly style={{accentColor:"#1D4ED8"}}/>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,color:"#0F172A",textDecoration:t.completed?"line-through":"none"}}>{t.title}</div>
-                  <div style={{fontSize:11,color:overdue?"#EF4444":"#64748B"}}>{overdue?"⚠ Overdue · ":""}{fmtDate(t.dueDate)}{ct?` · ${ct.name}`:""}</div>
+                  <div style={{fontSize:11,color:overdue?"#EF4444":dueToday?"#B45309":"#64748B"}}>{overdue?"⚠ Overdue · ":dueToday?"Today · ":""}{fmtDate(t.dueDate)}{ct?` · ${ct.name}`:""}</div>
                 </div>
                 <span style={S.badge({high:"#EF4444",medium:"#F59E0B",low:"#64748B"}[t.priority]||"#64748B")}>{t.priority||"medium"}</span>
               </div>
@@ -1797,7 +1843,7 @@ function KanbanBoard({ed,contacts,companies=[],updateDeal,deleteDeal,openModal,s
     selected.forEach(id=>deleteDeal(id));
     setSelected(new Set());
   };
-  const totalPipe=ed.filter(d=>!["Won","Lost","Completed"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
+  const totalPipe=ed.filter(d=>isOpenStage(d,entity)).reduce((s,d)=>s+(d.value||0),0);
   return(
     <div>
       <PageHeader title={fs?"Job Board":"Deal Pipeline"} sub={fs?`${ed.length} jobs · ${fmt$(totalPipe)} active`:`${ed.length} deals · ${fmt$(totalPipe)} active pipeline`}>
@@ -1919,7 +1965,7 @@ function TasksView({et,contacts,updateTask,deleteTask,openModal}){
   const [edit,setEdit]=useState({title:"",dueDate:"",priority:"medium",contactId:""});
   const filtered=et.filter(t=>filter==="all"?true:filter==="pending"?!t.completed:t.completed);
   const sorted=[...filtered].sort((a,b)=>a.completed===b.completed?(new Date(a.dueDate)-new Date(b.dueDate)):a.completed?1:-1);
-  const overdue=et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length;
+  const overdue=et.filter(t=>!t.completed&&isOverdueDate(t.dueDate)).length;
   const startEdit=(t)=>{setEditingId(t.id);setEdit({title:t.title||"",dueDate:t.dueDate||"",priority:t.priority||"medium",contactId:t.contactId||""});};
   const saveEdit=()=>{
     if(!edit.title.trim())return;
@@ -1940,7 +1986,7 @@ function TasksView({et,contacts,updateTask,deleteTask,openModal}){
         {sorted.length===0?<div style={{padding:48,textAlign:"center",color:"#475569"}}>No tasks found!</div>
         :sorted.map((t,i)=>{
           const contact=contacts.find(c=>c.id===t.contactId);
-          const ov=!t.completed&&new Date(t.dueDate)<new Date();
+          const ov=!t.completed&&isOverdueDate(t.dueDate); const dueToday=!t.completed&&isDueToday(t.dueDate);
           if(editingId===t.id){
             return(
               <div key={t.id} style={{display:"grid",gridTemplateColumns:"1fr 140px 110px 80px",gap:8,padding:"10px 16px",borderTop:i?"1px solid #E9EEF6":"none",alignItems:"center",background:"#F8FAFC"}}>
@@ -1961,7 +2007,7 @@ function TasksView({et,contacts,updateTask,deleteTask,openModal}){
                 <div style={{fontSize:14,color:t.completed?"#475569":"#0F172A",textDecoration:t.completed?"line-through":"none",fontWeight:500}}>{t.title}</div>
                 <div style={{display:"flex",gap:10,alignItems:"center",marginTop:3,flexWrap:"wrap"}}>
                   {contact&&<span style={{fontSize:12,color:"#64748B",display:"flex",alignItems:"center",gap:4}}><Avatar name={contact.name} size={16}/>{contact.name}</span>}
-                  <span style={{fontSize:12,color:ov?"#EF4444":"#64748B",display:"flex",alignItems:"center",gap:3}}><Ic d={I.cal} size={12}/>{fmtDate(t.dueDate)}{ov&&" ⚠"}</span>
+                  <span style={{fontSize:12,color:ov?"#EF4444":dueToday?"#B45309":"#64748B",display:"flex",alignItems:"center",gap:3}}><Ic d={I.cal} size={12}/>{fmtDate(t.dueDate)}{ov?" ⚠":dueToday?" · Today":""}</span>
                   {t.reminder&&<span style={S.badge("#8B5CF6")}><Ic d={I.bell} size={10}/>Reminder On</span>}
                 </div>
               </div>
@@ -2039,8 +2085,8 @@ const REPORT_FIELDS = {
     { key:"leadStatus",      label:"Lead Status",     get: c => c.leadStatus },
     { key:"contactCount",    label:"Contact Count",   numeric:true, get: (c,ctx) => (ctx.contacts||[]).filter(x=>x.companyId===c.id||x.companyName===c.name).length },
     { key:"dealCount",       label:"Deal Count",      numeric:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id).length },
-    { key:"pipelineValue",   label:"Total Pipeline Value", numeric:true, money:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id&&!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(+d.value||0),0) },
-    { key:"wonRevenue",      label:"Won Revenue",     numeric:true, money:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id&&d.stage==="Won").reduce((s,d)=>s+(+d.value||0),0) },
+    { key:"pipelineValue",   label:"Total Pipeline Value", numeric:true, money:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id&&isOpenStage(d,ctx.entity)).reduce((s,d)=>s+(+d.value||0),0) },
+    { key:"wonRevenue",      label:"Won Revenue",     numeric:true, money:true, get: (c,ctx) => (ctx.deals||[]).filter(d=>d.companyId===c.id&&isWonStage(d,ctx.entity)).reduce((s,d)=>s+(+d.value||0),0) },
     { key:"lastContacted",   label:"Last Contacted",  type:"date", get: c => c.lastContacted },
   ],
   deal: [
@@ -2199,7 +2245,7 @@ const runReportRows = (report, ctx) => {
   if (f.valueMin != null && f.valueMin !== "") base = base.filter(r => (+r.value || 0) >= +f.valueMin);
   if (f.valueMax != null && f.valueMax !== "") base = base.filter(r => (+r.value || 0) <= +f.valueMax);
   // Overdue (deals)
-  if (f.overdue) base = base.filter(r => r.closeDate && new Date(r.closeDate) < new Date() && !["Won","Lost"].includes(r.stage));
+  if (f.overdue) base = base.filter(r => isOverdueDate(r.closeDate) && isOpenStage(r, ctx.entity));
   // Expense-specific filters
   if (f.billableOnly) base = base.filter(r => r.billable);
   if (f.uninvoicedOnly) base = base.filter(r => !r.invoiced);
@@ -2265,7 +2311,7 @@ const exportReportPDF = (report, fields, rows, summary, entity, filtersText) => 
     <tbody>${rows.map(r=>`<tr>${fields.map(f=>{
       let v = r[f.key]; if (v==null) v="—";
       if (f.money) v = typeof v === "number" ? "$"+v.toLocaleString("en-US",{maximumFractionDigits:0}) : v;
-      else if (f.type==="date" && v && v !== "—") v = new Date(v).toLocaleDateString();
+      else if (f.type==="date" && v && v !== "—") v = (parseLocalDate(v)||new Date(v)).toLocaleDateString();
       return `<td>${String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;")}</td>`;
     }).join("")}</tr>`).join("")}</tbody>
   </table>
@@ -2296,25 +2342,25 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
   // Date-filtered deals for the Pipeline tab
   const { from:pipeFromD, to:pipeToD } = dateRangeBounds(pipeRange, pipeFrom, pipeTo);
   const edFiltered = pipeRange === "all" ? ed : ed.filter(d => inDateRange(d.createdAt, pipeFromD, pipeToD) || inDateRange(d.closeDate, pipeFromD, pipeToD));
-  const pipeTotal=edFiltered.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+(d.value||0),0);
-  const wonTotal=edFiltered.filter(d=>d.stage==="Won").reduce((s,d)=>s+(d.value||0),0);
-  const lostTotal=edFiltered.filter(d=>d.stage==="Lost").reduce((s,d)=>s+(d.value||0),0);
-  const closed=edFiltered.filter(d=>["Won","Lost"].includes(d.stage));
-  const closeRate=closed.length?Math.round((edFiltered.filter(d=>d.stage==="Won").length/closed.length)*100):0;
+  const pipeTotal=edFiltered.filter(d=>isOpenStage(d,entity)).reduce((s,d)=>s+(d.value||0),0);
+  const wonTotal=edFiltered.filter(d=>isWonStage(d,entity)).reduce((s,d)=>s+(d.value||0),0);
+  const lostTotal=edFiltered.filter(d=>isLostStage(d,entity)).reduce((s,d)=>s+(d.value||0),0);
+  const closed=edFiltered.filter(d=>isWonStage(d,entity)||isLostStage(d,entity));
+  const closeRate=closed.length?Math.round((edFiltered.filter(d=>isWonStage(d,entity)).length/closed.length)*100):0;
   const avgDeal=edFiltered.length?Math.round(edFiltered.reduce((s,d)=>s+(d.value||0),0)/edFiltered.length):0;
-  const weighted=edFiltered.filter(d=>!["Won","Lost"].includes(d.stage)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
+  const weighted=edFiltered.filter(d=>isOpenStage(d,entity)).reduce((s,d)=>s+((d.value||0)*((d.probability||50)/100)),0);
   const stageData=stagesFor(entity).map(st=>({stage:st,count:edFiltered.filter(d=>d.stage===st).length,value:edFiltered.filter(d=>d.stage===st).reduce((s,d)=>s+(d.value||0),0)}));
   // Win/loss analytics
-  const wonDeals=edFiltered.filter(d=>d.stage==="Won");
-  const lostDeals=edFiltered.filter(d=>d.stage==="Lost");
+  const wonDeals=edFiltered.filter(d=>isWonStage(d,entity));
+  const lostDeals=edFiltered.filter(d=>isLostStage(d,entity));
   const avgWon=wonDeals.length?wonDeals.reduce((s,d)=>s+(+d.value||0),0)/wonDeals.length:0;
   const avgLost=lostDeals.length?lostDeals.reduce((s,d)=>s+(+d.value||0),0)/lostDeals.length:0;
   const lostReasons=lostDeals.reduce((acc,d)=>{const r=(d.lostReason||"No reason given").trim()||"No reason given";acc[r]=(acc[r]||0)+1;return acc;},{});
   const lostReasonRows=Object.entries(lostReasons).map(([reason,count])=>({reason,count})).sort((a,b)=>b.count-a.count);
   const winRateByStage=stagesFor(entity).map(st=>{
-    const ds=edFiltered.filter(d=>d.stage==="Won"||(d.stageHistory||[]).some(h=>h.from===st)||d.stage===st);
+    const ds=edFiltered.filter(d=>isWonStage(d,entity)||(d.stageHistory||[]).some(h=>h.from===st)||d.stage===st);
     const totalThatPassedThrough=ds.length;
-    const wonAfter=ds.filter(d=>d.stage==="Won").length;
+    const wonAfter=ds.filter(d=>isWonStage(d,entity)).length;
     return { stage:st, total:totalThatPassedThrough, won:wonAfter, rate:totalThatPassedThrough?Math.round(wonAfter/totalThatPassedThrough*100):0 };
   });
   // Stage conversion (% of deals advancing from each stage to a later one)
@@ -2359,7 +2405,7 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
     const cs=ec.filter(c=>c.source===src);
     const ids=new Set(cs.map(c=>c.id));
     const ds=ed.filter(d=>ids.has(d.contactId));
-    const won=ds.filter(d=>d.stage==="Won").reduce((s,d)=>s+(+d.value||0),0);
+    const won=ds.filter(d=>isWonStage(d,entity)).reduce((s,d)=>s+(+d.value||0),0);
     return { source:src, contacts:cs.length, deals:ds.length, revenue:won };
   }).filter(d=>d.contacts>0||d.revenue>0);
   // Contact growth — last 6 months
@@ -2383,8 +2429,8 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
     const monthDate=new Date(now.getFullYear(),now.getMonth()+i,1);
     const label=monthDate.toLocaleString("default",{month:"short",year:"2-digit"});
     const inMonth=(deal)=>{ if(!deal.closeDate)return false; const cd=new Date(deal.closeDate); return cd.getMonth()===monthDate.getMonth()&&cd.getFullYear()===monthDate.getFullYear(); };
-    const won=ed.filter(deal=>deal.stage==="Won"&&inMonth(deal)).reduce((s,deal)=>s+(deal.value||0),0);
-    const baseWeighted=ed.filter(deal=>!["Won","Lost"].includes(deal.stage)&&inMonth(deal)).reduce((s,deal)=>s+((deal.value||0)*(deal.probability||50)/100),0);
+    const won=ed.filter(deal=>isWonStage(deal,entity)&&inMonth(deal)).reduce((s,deal)=>s+(deal.value||0),0);
+    const baseWeighted=ed.filter(deal=>isOpenStage(deal,entity)&&inMonth(deal)).reduce((s,deal)=>s+((deal.value||0)*(deal.probability||50)/100),0);
     const adjusted=baseWeighted * (confidence/50); // confidence=50 → 1× base, slider scales
     const best=baseWeighted * 1.5;
     const worst=baseWeighted * 0.5;
@@ -2405,7 +2451,7 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
   const horizonStart=new Date(now.getFullYear(),now.getMonth(),1);
   const horizonEnd=new Date(now.getFullYear(),now.getMonth()+6,0,23,59,59);
   const inHorizon=d=>{if(!d.closeDate)return false;const cd=new Date(d.closeDate);return cd>=horizonStart&&cd<=horizonEnd;};
-  const openHorizonDeals=ed.filter(d=>!["Won","Lost"].includes(d.stage)&&inHorizon(d));
+  const openHorizonDeals=ed.filter(d=>isOpenStage(d,entity)&&inHorizon(d));
   const fcWon=forecastMonths.reduce((s,m)=>s+m.won,0);
   const fcExpected=forecastMonths.reduce((s,m)=>s+m.expected,0);
   const fcBest=forecastMonths.reduce((s,m)=>s+m.best,0);
@@ -2417,7 +2463,7 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
   const handleShare=()=>{const url=`${window.location.href}?report=${reportType}`;navigator.clipboard?.writeText(url).catch(()=>{});showToast("Share link copied!");};
   const handleExport=()=>{
     if(reportType==="custom"&&activeReport){
-      const ctx={contacts,companies,deals,tasks,notes:allNotes,timeEntries,invoices,expenses,activeEntityId:entity?.id};
+      const ctx={contacts,companies,deals,tasks,notes:allNotes,timeEntries,invoices,expenses,activeEntityId:entity?.id,entity};
       const { rows, fields } = runReportRows(activeReport,ctx);
       exportReportCSV(activeReport,fields,rows);
       return;
@@ -2714,7 +2760,7 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
 // CUSTOM REPORTS PANEL — saved reports list, builder, viewer
 // ═══════════════════════════════════════════════════════════════════════════════
 function CustomReportsPanel({reports,activeReport,editingReport,setActiveReport,setEditingReport,addReport,updateReport,deleteReport,duplicateReport,contacts,companies,deals,tasks,notes,timeEntries,invoices,expenses=[],entity,entities,showToast}){
-  const ctx={contacts,companies,deals,tasks,notes,timeEntries,invoices,expenses,activeEntityId:entity?.id};
+  const ctx={contacts,companies,deals,tasks,notes,timeEntries,invoices,expenses,activeEntityId:entity?.id,entity};
 
   // ── Saved reports list view ──────────────────────────────────────────────
   if(!activeReport && !editingReport){
@@ -4296,8 +4342,8 @@ function GoogleCalendarView({account,entities,demoMode,contacts,companies=[],dea
 
   return(
     <div>
-      {/* THE SCHEDULED UPDATE — prose brief, always about today */}
-      {!demoMode&&(
+      {/* THE SCHEDULED UPDATE — prose brief, always about today (demo has full calendar data) */}
+      {(
         <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:12,padding:"13px 20px",display:"flex",alignItems:"flex-start",gap:14,marginBottom:12}}>
           <span style={{flexShrink:0,fontSize:9,fontWeight:800,letterSpacing:".09em",textTransform:"uppercase",color:"#059669",border:"1px solid #A7F3D0",background:"#F0FDF4",padding:"4px 7px",borderRadius:4,marginTop:1}}>Today</span>
           <div style={{fontSize:13,lineHeight:1.65,color:"#0F172A",flex:1,minWidth:0}}>
@@ -5486,7 +5532,9 @@ function InvoicesView({invoices,contacts,products,timeEntries=[],activeEntityId,
     setForm({contactId:inv.contactId||"",dueDate:inv.dueDate||"",notes:inv.notes||"",items:(inv.items||[]).length?inv.items.map(it=>({...it})):[blankItem()]});
     setComposing(true);
   };
-  const totalOutstanding=eInvoices.filter(i=>!["Paid","Cancelled"].includes(i.status)).reduce((s,i)=>s+totalsFor(i),0);
+  // Outstanding = issued-but-unpaid only. A Draft isn't issued, so it's not outstanding
+  // (matches the "Outstanding Invoices" report and the sidebar unpaid badge).
+  const totalOutstanding=eInvoices.filter(i=>["Sent","Viewed","Overdue"].includes(i.status)).reduce((s,i)=>s+totalsFor(i),0);
   const totalPaid=eInvoices.filter(i=>i.status==="Paid").reduce((s,i)=>s+totalsFor(i),0);
   return(
     <div>
@@ -8559,7 +8607,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
   const updateEntity=(id,data)=>{setEntities(p=>p.map(e=>e.id===id?{...e,...data}:e));showToast("Entity updated");};
 
   // ─── NAVIGATION ───────────────────────────────────────────────────────────
-  const overdueTasks=et.filter(t=>!t.completed&&new Date(t.dueDate)<new Date()).length;
+  const overdueTasks=et.filter(t=>!t.completed&&isOverdueDate(t.dueDate)).length;
   const unpaidInvoices=invoices.filter(i=>i.entityId===activeEntityId&&["Sent","Viewed","Overdue"].includes(i.status)).length;
   const unreadEmails=emailThreads.filter(t=>t.entityId===activeEntityId&&t.messages[t.messages.length-1]?.direction==="inbound").length+portalUnread;
 
