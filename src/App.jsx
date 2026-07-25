@@ -9171,7 +9171,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
             const active=view===item.id&&(item.id!=="contacts"||!selContact);
             return(
               <button key={item.id} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:active?600:400,color:active?"#FFFFFF":"#94A3B8",background:active?"rgba(255,255,255,0.10)":"transparent",border:"none",borderLeft:`3px solid ${active?entity?.color||"#3B82F6":"transparent"}`,transition:"all .1s",textAlign:"left"}}
-                onClick={()=>{setView(item.id);if(item.id!=="contacts")setSelContact(null);if(item.id!=="companies")setSelCompany(null);if(item.id!=="deals")setSelDeal(null);}}>
+                onClick={()=>{setView(item.id);setSelContact(null);setSelCompany(null);setSelDeal(null);}}>
                 <Ic d={item.icon} size={14}/>
                 <span style={{flex:1}}>{item.label}</span>
                 {item.badge>0&&<span style={{background:item.badgeColor||"rgba(255,255,255,0.15)",color:item.badgeColor==="rgba(255,255,255,0.15)"?"#94A3B8":"#fff",borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>{item.badge}</span>}
