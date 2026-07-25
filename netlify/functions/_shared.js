@@ -33,6 +33,40 @@ export async function requireOwner(authHeader) {
   return data.user
 }
 
+// Same check as requireOwner, but returns WHY it failed (for diagnostics) instead
+// of a bare null. Never weakens the gate — a null user still means "reject".
+export async function authenticateOwner(authHeader) {
+  const token = (authHeader || '').replace(/^Bearer /, '').trim()
+  if (!token) return { user: null, reason: 'no_token' }
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return { user: null, reason: 'server_missing_supabase_env' }
+  let data, error
+  try {
+    const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+    ;({ data, error } = await client.auth.getUser(token))
+  } catch (e) {
+    return { user: null, reason: `getuser_threw: ${e?.message || e}` }
+  }
+  if (error) return { user: null, reason: `token_rejected: ${error.message}` }
+  if (!data?.user) return { user: null, reason: 'token_rejected: no user returned' }
+  if (data.user.user_metadata?.role === 'portal_client') return { user: null, reason: 'portal_client_not_allowed' }
+  return { user: data.user, reason: 'ok' }
+}
+
+// Non-sensitive view of the Supabase env the FUNCTION resolved, so a project/key
+// mismatch vs the client is visible in logs. The project ref + anon-key are public
+// (anon-tier); the service-role key is never touched here.
+export function supabaseEnvInfo() {
+  const url = SUPABASE_URL || ''
+  return {
+    urlHost: (url.replace(/^https?:\/\//, '').split('.')[0]) || '(none)',
+    hasAnonKey: !!SUPABASE_ANON_KEY,
+    anonKeyLen: (SUPABASE_ANON_KEY || '').length,
+    urlSource: process.env.VITE_SUPABASE_URL ? 'VITE_SUPABASE_URL' : (process.env.SUPABASE_URL ? 'SUPABASE_URL' : 'none'),
+  }
+}
+
 // Verify the calling user is an owner or admin of the given account.
 // Returns their role string, or null if they aren't (or accountId is missing).
 // Uses the service-role client — account_members RLS doesn't apply here, so

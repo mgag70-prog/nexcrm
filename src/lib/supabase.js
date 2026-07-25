@@ -247,6 +247,21 @@ async function bearerHeader() {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
 }
 
+// Like bearerHeader, but refreshes first if the token is missing or within 60s of
+// expiry — so a call that spends API credits never fails on a stale access token.
+async function freshBearerHeader() {
+  let { data } = await supabase.auth.getSession()
+  let session = data?.session
+  const expMs = session?.expires_at ? session.expires_at * 1000 : 0
+  if (!session || (expMs && expMs - Date.now() < 60_000)) {
+    const r = await supabase.auth.refreshSession()
+    if (r?.data?.session) session = r.data.session
+  }
+  const token = session?.access_token
+  if (!token) throw new Error('Not authenticated')
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+}
+
 async function postFn(name, body) {
   const headers = await bearerHeader()
   const res = await fetch(`/.netlify/functions/${name}`, {
@@ -267,7 +282,7 @@ async function postFn(name, body) {
 // ─── AI (Claude via the ai-claude Netlify Function; the key stays server-side) ─
 // Returns the assistant's text. Throws on auth failure, timeout, or upstream error.
 export async function callClaude({ messages, max_tokens = 1024, model, system, timeoutMs = 12000 }) {
-  const headers = await bearerHeader()
+  const headers = await freshBearerHeader()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res

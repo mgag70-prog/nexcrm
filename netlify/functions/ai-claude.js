@@ -5,7 +5,7 @@
 //         ANTHROPIC_API_KEY so the key never reaches the browser. Used by both
 //         the AI import and the "Prep me" contact briefing (one integration).
 
-import { requireOwner, ok, bad, preflight } from './_shared.js'
+import { authenticateOwner, supabaseEnvInfo, ok, bad, preflight } from './_shared.js'
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514'
@@ -16,8 +16,19 @@ export async function handler(event) {
   if (event.httpMethod !== 'POST') return bad(405, 'Method not allowed')
 
   // Gate behind an authenticated CRM owner so the API key can't be burned by anon callers.
-  const owner = await requireOwner(event.headers.authorization || event.headers.Authorization)
-  if (!owner) return bad(401, 'Not authenticated')
+  const { user: owner, reason } = await authenticateOwner(event.headers.authorization || event.headers.Authorization)
+  if (!owner) {
+    // Log the precise cause + which Supabase project this function resolved, so a
+    // token-vs-project mismatch (or a missing header) is visible in the function logs.
+    console.error('[ai-claude] auth rejected:', reason, supabaseEnvInfo())
+    const msg =
+      reason === 'no_token' ? 'No authentication token was sent with the request.'
+      : reason === 'server_missing_supabase_env' ? 'Server auth is misconfigured (Supabase env missing).'
+      : reason?.startsWith('token_rejected') || reason?.startsWith('getuser_threw') ? 'Your session token was rejected by the auth server — sign out and back in, and check the function is validating against the same Supabase project.'
+      : reason === 'portal_client_not_allowed' ? 'Portal client sessions cannot use this endpoint.'
+      : 'Not authorized.'
+    return bad(401, msg)
+  }
 
   if (!ANTHROPIC_API_KEY) return bad(503, 'AI is not configured on the server (ANTHROPIC_API_KEY missing).')
 
