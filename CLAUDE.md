@@ -102,14 +102,19 @@ The repo does not auto-apply migrations.
 - `VITE_SUPABASE_ANON_KEY` — Supabase anon/public key
 - `SUPABASE_SERVICE_ROLE_KEY` — Supabase service role secret (used only
   by Netlify Functions; never exposed to the browser)
+- `ANTHROPIC_API_KEY` — Anthropic API key. Server-side only, **not**
+  `VITE_`-prefixed, so it never reaches the browser bundle. Read by
+  `netlify/functions/ai-claude.js`; powers both AI import and Prep me.
 
 Never commit secrets or keys to the repo.
 
 ## Key Files
 
-- `src/App.jsx` — entire CRM application (~2500 lines). All views,
+- `src/App.jsx` — entire CRM application (~9300 lines). All views,
   components, state, CRUD handlers, persistence layer, and routing live
-  here. This is the source of truth for app behavior.
+  here. This is the source of truth for app behavior. (Splitting this file
+  is a committed Phase 3 task — see the roadmap; it is past the size a
+  single context window holds comfortably.)
 - `src/main.jsx` — entry point. Auth gate, demo mode detection
   (`/demo` path), portal routing (`/portal/*`), renders `<App>` or
   `<Portal>`.
@@ -119,7 +124,15 @@ Never commit secrets or keys to the repo.
   `portal_messages`.
 - `src/lib/supabase.js` — Supabase client initialization, `window.storage`
   adapter (wraps crm_store reads/writes), portal auth helpers
-  (`portalSignIn`, `portalUpdatePassword`, `adminCreatePortal`, etc.).
+  (`portalSignIn`, `portalUpdatePassword`, `adminCreatePortal`, etc.), and
+  `callClaude()` — the single client entry point for AI (used by both AI
+  import and Prep me), which posts to the `ai-claude` function with a fresh
+  owner bearer token.
+- `netlify/functions/ai-claude.js` — server-side Anthropic proxy. Holds
+  `ANTHROPIC_API_KEY`, gates on an authenticated CRM owner
+  (`authenticateOwner` in `_shared.js`), and forwards to the Anthropic
+  Messages API. The browser never calls `api.anthropic.com` directly and
+  never sees the key.
 - `netlify/functions/portal-create.js` — creates a Supabase Auth user for
   a new portal client via admin API, inserts `portal_clients` and
   `portal_snapshots` rows.
@@ -134,6 +147,10 @@ Never commit secrets or keys to the repo.
 - `docs/HQOps_Calendar_Mockup.html` — APPROVED design spec for the
   Calendar view (week-first time grid, entity load bars, prose brief,
   right-side CRM context panel). Match this, do not redesign it.
+- `docs/HQOps_Roadmap.md` — **the committed development roadmap: the source
+  of truth for what we build next and in what order.** Read it before
+  proposing or planning new features. See the Development Roadmap section
+  below for the frame.
 - `vite.config.js` — Vite + React plugin config.
 
 ## Data Architecture
@@ -155,9 +172,18 @@ Two real entities (personal use):
 - e3 — Fairway Circuit LLC (color: #0F2044 navy, industry: Sports & Recreation, website: fairwaycircuit.com)
 - e4 — Crestfolio LLC (color: #059669 green, industry: Financial Services, website: crestfolio.io, custom pipeline stages, custom contact fields: Contact Type, AUM Range, Relationship Manager, Referral Source)
 
-Demo entities (visible only at /demo, never saved to Supabase):
-- e1 — Apex Ventures LLC
-- e2 — GreenPath Foundation
+Demo entities (visible only at /demo, never saved to Supabase). Renamed
+(commit e332763) to mirror the four industries on the marketing site:
+- Calder Advisory (advisory / professional services)
+- Ridgeline Property Co (property management)
+- Marchfield Landscaping (field service)
+- Two Rivers Studio (creative studio)
+
+Demo data lives entirely in `DEMO_FULL` and is enriched so every feature
+has data that exercises it: `DEMO_CALENDAR_EVENTS` and
+`DEMO_EMAIL_MESSAGES` (both were empty before because calendar/email read
+from Supabase, which demo never touches), all dates relative to now, and
+deal-health scores spread across every band.
 
 ## Working Conventions
 
@@ -198,7 +224,7 @@ Throwaway test accounts have twice required manual cleanup. Avoid creating
 them unless there is no alternative; if you must, report the cleanup SQL in
 the same message.
 
-## Current State (as of May 2026)
+## Current State (as of July 2026)
 
 Working:
 - Full CRM at hqops.app with email/password auth
@@ -209,30 +235,78 @@ Working:
 - Contacts, Companies, Deals with proper bidirectional relationships
 - Pipeline with 8 stages (New Lead → Contacted → Responded / Interested → Follow-up / Discovery → Demo Scheduled → Proposal Sent → Won → Lost)
 - HubSpot CSV import (Contacts, Companies, Deals) with auto-detection and column mapping
-- AI-powered import (PDF, image, text via Claude API)
+- AI-powered import (PDF, image, text) — routes through the `ai-claude`
+  server proxy; verified working live. (Before the proxy the client did a
+  keyless fetch to `api.anthropic.com`, so AI import had never actually
+  worked in production.)
+- Prep me — one-click AI pre-meeting contact briefing on the calendar
+  panel, ContactDetail, and DealDetail. Shares `callClaude()` with AI
+  import. Empty-state rule: below a data threshold it shows raw facts
+  instead of a padded summary. Nothing is persisted. Verified working live.
+- Quotes read surfaces — Quotes tabs on Deal/Contact detail and a
+  Quotes|Invoices toggle (quotes were create-only before). Signed docs
+  display the signature + attribution. Job costing shows in-progress
+  clocked-in crew separately from confirmed labor. Entity-wide expenses view.
 - Reports with custom report builder, PDF/CSV export, 7 templates
 - Client portal with Supabase Auth — clients get their own login, tabs are built but portal snapshot population not yet wired
 - Demo mode at /demo (session-only, zero Supabase writes)
 - Fairway Circuit: HubSpot data imported
 - Crestfolio: entities set up, data entry in progress
 
-Known gaps / next up:
-- Client portal tabs need real data wired into snapshots
-- Stripe payment integration (Pay Now is placeholder)
-- Gmail/Outlook two-way email sync not yet connected
-- CRM Inbox does not yet surface portal messages
-- Client file upload to CRM Docs not yet wired
+Known gaps / open items:
+- **No ESLint config exists.** Three AI bugs reached production because
+  "fails gracefully" is visually identical to "works" (keyless fetch, a
+  missing-prop crash). Scheduled in Phase 3 (engineering hygiene).
+- **`deal_won` automation/webhook trigger is still keyed to the literal
+  `"Won"`** — it silently won't fire on field-service ("Won / Scheduled")
+  or custom pipeline stages. Fix before building any won-triggered
+  automation for a client. (Roadmap Phase 2.3.)
+- Desktop nav: verify other views don't leave stale selection state (the
+  Contacts nav case was fixed in 570774d; the pattern may exist elsewhere).
+- Client portal tabs need real data wired into snapshots.
+- Stripe payments are unbuilt (Pay Now is a placeholder) — this is the
+  centerpiece of the roadmap; see Phase 2 (Connect) and Phase 4 (Checkout).
+- Gmail/Outlook two-way email sync not yet connected.
+- CRM Inbox does not yet surface portal messages.
+- Client file upload to CRM Docs not yet wired.
+- Batch 3 cosmetic audit items (C2, C3) deferred.
+- 'field' role reserved in the account_members check constraint, not
+  implemented — built when the first field-service client is real
+  (Roadmap Phase 2.4).
 
-Roadmap (not yet built):
-- Target Account Plans with Word document export
-- Relationship Maps (interactive stakeholder visualization)
-- Zapier/webhook outbound (config UI built, firing logic partial)
-- Calendly / Cal.com booking integration
-- QuickBooks / accounting sync
-- DocuSign eSignature (currently using built-in canvas signing)
-- Twilio SMS sequences
-- 'field' role for account_members (reserved in the check constraint, not implemented)
-- Invite emails (invites are copy-link only until transactional email exists)
+## Development Roadmap
+
+`docs/HQOps_Roadmap.md` is the committed roadmap and the source of truth
+for what gets built next and in what order. It is "committed decisions,
+not options." Read it before proposing or planning new features. The frame:
+
+The wedge is **multi-entity managed operations** — one operator, many
+businesses, isolated data, one bill — which competitors architecturally
+can't match. Every phase must serve that wedge or close a table-stakes gap;
+anything that only makes HQOps a broader horizontal platform is out.
+
+- **Phase 2 — Client payments + platform readiness.** Stripe **Connect**:
+  a GrayHQ managed client's customers pay *the client* through HQOps, money
+  to the client's own bank. **Not blocked by GrayHQ's LLC** — buildable
+  now. Plus platform hardening (payroll export, break tracking, PTO, portal
+  job photos), the `deal_won` fix, and the `field` role when the first
+  crew-based client is real.
+- **Phase 3 — GrayHQ scale + hardening.** Engineering hygiene (ESLint +
+  smoke checks, splitting App.jsx), a projects layer above tasks, and
+  **cross-entity roll-up reporting** across managed client accounts.
+- **Phase 4 — Self-serve.** Stripe **Checkout** (strangers pay GrayHQ for
+  HQOps), trial-end read-only enforcement, Google **CASA** verification,
+  and marketing-site depth. Only after the platform is proven on managed
+  clients.
+- **Parked (external unblock):** GrayHQ collecting its own consulting fees
+  — a Stripe account + payment links against GrayHQ's own bank. Blocked by
+  the pending IL LLC / business bank account, not a dev phase. A third,
+  separate use of Stripe — do not conflate it with Phase 2 Connect or
+  Phase 4 Checkout.
+- **Explicit non-goals (deliberately not building):** voice/calling,
+  inventory, and full accounting (HQOps prepares clean data for the
+  client's bookkeeper — a selling point, not a gap). Also: feature-parity
+  with competitors for its own sake.
 
 ## Reference Context
 
