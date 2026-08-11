@@ -108,9 +108,10 @@ Crew-restricted access. A field-service client with a crew means every crew memb
 
 The AI-debugging arc surfaced that "fails gracefully" is visually identical to "works," and three AI bugs reached production undetected. Before more surface area is added:
 
-- **ESLint config** with react/no-undef-class checking in the build. Would have caught the missing-prop crash and keyless-fetch mechanically.
+- ~~**ESLint config**~~ — **DONE (Aug 2026, commits 3724344 / 9f1b450 / 97b731b).** Flat config + `npm run lint`; `no-undef` and `react/jsx-no-undef` as errors (the class that would have caught the missing-prop crash and keyless fetch). The pass also fixed two declaration-order hazards and six silent-failure catch blocks, and found a real feature regression (Reports export). Codebase is at 0 errors.
+- **Make lint block the build.** The remaining half of the ESLint work: lint currently runs on demand only. Blocking waits on triaging the ~175 deferred warnings (unused vars, exhaustive-deps — concentrated in App.jsx, so the split below should clear most of them). Sequence: split App.jsx → re-triage warnings → make lint a build gate.
 - **Post-deploy integration smoke check** — one call to each external integration (Claude proxy, Google sync, Stripe) that asserts a real response, not a graceful failure.
-- **Component-split of App.jsx.** It is one file past 2,500 lines and is the top technical risk to sustained development — once it exceeds what Claude Code can hold in context, AI-assisted changes get made blind. Split into logical modules with App.jsx as router/state container. Do this before Phase 4 adds five self-serve surfaces to the same file.
+- **Component-split of App.jsx.** It is one file past 9,300 lines and is the top technical risk to sustained development — once it exceeds what Claude Code can hold in context, AI-assisted changes get made blind. Split into logical modules with App.jsx as router/state container. Do this before Phase 4 adds five self-serve surfaces to the same file.
 
 ### 3.2 — Projects above tasks
 
@@ -189,7 +190,7 @@ Not scheduled. Pulled forward only if a paying client asks.
 ## The one-line version
 
 **Phase 2:** Client payments — Stripe Connect (clients collect from their customers), platform hardening, deal_won fix. Field role when the first field-service client is real.
-**Phase 3:** GrayHQ scales — hygiene (ESLint, App.jsx split), projects, cross-entity reporting, onboarding templates.
+**Phase 3:** GrayHQ scales — hygiene (ESLint done; lint-as-build-gate + App.jsx split remain), projects, cross-entity reporting, onboarding templates.
 **Phase 4:** Self-serve opens — Stripe Checkout (customers pay GrayHQ for HQOps), CASA, marketing depth.
 **Parked:** GrayHQ's own consulting billing — waiting on IL LLC + bank account, then a day of Stripe setup outside the platform.
 **Never:** voice, inventory, accounting, feature-parity for its own sake.

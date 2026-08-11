@@ -254,9 +254,14 @@ Working:
 - Crestfolio: entities set up, data entry in progress
 
 Known gaps / open items:
-- **No ESLint config exists.** Three AI bugs reached production because
-  "fails gracefully" is visually identical to "works" (keyless fetch, a
-  missing-prop crash). Scheduled in Phase 3 (engineering hygiene).
+- **Lint does not block the build yet.** ESLint flat config
+  (`eslint.config.js`) and `npm run lint` now exist (Aug 2026) and do catch
+  the undefined-reference class that put three AI bugs into production —
+  `no-undef` and `react/jsx-no-undef` are errors, verified against a canary.
+  The codebase is at 0 lint errors. The REMAINING piece is wiring lint into
+  the build as a blocking step, which waits on triaging the ~175 deferred
+  warnings (mostly unused vars and exhaustive-deps in App.jsx; the App.jsx
+  split should clear most of them). Roadmap Phase 3.1.
 - **`deal_won` automation/webhook trigger is still keyed to the literal
   `"Won"`** — it silently won't fire on field-service ("Won / Scheduled")
   or custom pipeline stages. Fix before building any won-triggered
@@ -291,8 +296,9 @@ anything that only makes HQOps a broader horizontal platform is out.
   now. Plus platform hardening (payroll export, break tracking, PTO, portal
   job photos), the `deal_won` fix, and the `field` role when the first
   crew-based client is real.
-- **Phase 3 — GrayHQ scale + hardening.** Engineering hygiene (ESLint +
-  smoke checks, splitting App.jsx), a projects layer above tasks, and
+- **Phase 3 — GrayHQ scale + hardening.** Engineering hygiene (ESLint
+  shipped Aug 2026; lint-as-build-gate + smoke checks + splitting App.jsx
+  remain), a projects layer above tasks, and
   **cross-entity roll-up reporting** across managed client accounts.
 - **Phase 4 — Self-serve.** Stripe **Checkout** (strangers pay GrayHQ for
   HQOps), trial-end read-only enforcement, Google **CASA** verification,
