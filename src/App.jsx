@@ -8394,6 +8394,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
   const [search,setSearch]=useState("");
   const [modal,setModal]=useState(null);
   const [toast,setToast]=useState(null);
+  const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
   const [entityMenuOpen,setEntityMenuOpen]=useState(false);
   const [accountMenuOpen,setAccountMenuOpen]=useState(false);
   // Set when we return from the Google OAuth redirect — opens Settings on the
@@ -8409,7 +8410,6 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
     if(g==="connected")showToast(`Google account ${params.get("email")||""} connected`);
     else showToast(`Google connect failed: ${params.get("reason")||"unknown error"}`,"error");
     window.history.replaceState({},"",window.location.pathname);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[demoMode]);
   const [sigModal,setSigModal]=useState(null);
   // Auto-close sidebar when view changes or breakpoint crosses; lock body scroll while open on mobile.
@@ -8552,6 +8552,19 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
   useEffect(()=>{save("crm:activeEntityId",activeEntityId);},[activeEntityId]);
 
   // ─── OFFLINE SYNC ─────────────────────────────────────────────────────────
+  // Offline queue helpers — queue actions while offline so they survive page reload.
+  const queueOfflineAction=(action)=>{
+    if(demoMode)return;
+    try{
+      const q=JSON.parse(localStorage.getItem("crm:tcQueue")||"[]");
+      q.push({...action,queuedAt:new Date().toISOString()});
+      localStorage.setItem("crm:tcQueue",JSON.stringify(q));
+    }catch(e){console.error("[offline queue] push failed",e);}
+  };
+  const flushOfflineQueue=async()=>{
+    if(demoMode)return;
+    try{localStorage.removeItem("crm:tcQueue");}catch{}
+  };
   useEffect(()=>{
     const onUp=()=>{
       setIsOffline(false);
@@ -8566,8 +8579,6 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
     window.addEventListener("offline",onDown);
     return()=>{window.removeEventListener("online",onUp);window.removeEventListener("offline",onDown);};
   },[timeClockEntries,demoMode]);
-
-  const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
 
   // ─── WEBHOOK FIRE ─────────────────────────────────────────────────────────
   const fireWebhook=(event,data={})=>{
@@ -8984,19 +8995,6 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
   const deleteEmployee=(id)=>setEmployees(p=>p.filter(x=>x.id!==id));
 
   // ─── TIME CLOCK (Field Service) ───────────────────────────────────────────
-  // Offline queue helpers — queue actions while offline so they survive page reload.
-  const queueOfflineAction=(action)=>{
-    if(demoMode)return;
-    try{
-      const q=JSON.parse(localStorage.getItem("crm:tcQueue")||"[]");
-      q.push({...action,queuedAt:new Date().toISOString()});
-      localStorage.setItem("crm:tcQueue",JSON.stringify(q));
-    }catch(e){console.error("[offline queue] push failed",e);}
-  };
-  const flushOfflineQueue=async()=>{
-    if(demoMode)return;
-    try{localStorage.removeItem("crm:tcQueue");}catch{}
-  };
   const clockInEmployee=(employeeId,jobId,extra={})=>{
     const now=new Date().toISOString();
     setTimeClockEntries(p=>p.map(e=>(e.employeeId===employeeId&&!e.clockOut)?{...e,clockOut:now,hours:Math.max(0,(new Date(now)-new Date(e.clockIn))/3600000),status:e.status||"pending"}:e));
