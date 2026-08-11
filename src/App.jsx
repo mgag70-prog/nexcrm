@@ -2519,6 +2519,7 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
             <button key={v} style={{...S.btnGhost,padding:"5px 14px",background:reportType===v?"#1D4ED8":"transparent",color:reportType===v?"#FFFFFF":"#64748B",borderRadius:6,fontSize:12}} onClick={()=>{setReportType(v);setActiveReport(null);setEditingReport(null);}}>{l}</button>
           ))}
         </div>
+        {reportType!=="custom"&&<button style={S.btnSecondary} onClick={handleExport}><Ic d={I.dl} size={14}/>Export</button>}
         {reportType!=="custom"&&<button style={S.btnSecondary} onClick={handleShare}><Ic d={I.share} size={14}/>Share</button>}
       </PageHeader>
 
@@ -3418,7 +3419,7 @@ function ImportView({activeEntityId,entity,contacts,companies,addContact,addComp
 
   const parseAmount=(s)=>{
     if(s==null||s==="")return undefined;
-    const cleaned=String(s).replace(/[^0-9.\-]/g,"");
+    const cleaned=String(s).replace(/[^0-9.-]/g,"");
     const n=parseFloat(cleaned);
     return Number.isNaN(n)?undefined:n;
   };
@@ -8563,7 +8564,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
   };
   const flushOfflineQueue=async()=>{
     if(demoMode)return;
-    try{localStorage.removeItem("crm:tcQueue");}catch{}
+    try{localStorage.removeItem("crm:tcQueue");}catch{/* deliberate: localStorage can be unavailable (private mode/quota) and there's nothing to recover */}
   };
   useEffect(()=>{
     const onUp=()=>{
@@ -8850,7 +8851,16 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
     const parts=tag.split(":");
     const type=parts[0]; const refId=parts[1]||null;
     let extra=null;
-    if(parts[2]){try{extra=JSON.parse(decodeURIComponent(parts[2]));}catch{}}
+    if(parts[2]){
+      try{extra=JSON.parse(decodeURIComponent(parts[2]));}
+      catch(err){
+        // extra carries the data that drives follow-on updates (e.g. dealId that
+        // moves a deal to Won on quote approval) — a swallowed failure here means
+        // a quote shows Accepted while the deal silently never moves.
+        console.error("[portal action] extra payload parse failed — linked records may not have updated",{tag,raw:parts[2]},err);
+        showToast(`A portal action from a client couldn't be fully read — check the linked quote/deal, it may need a manual update`,"error");
+      }
+    }
     return {type,refId,extra,friendly};
   };
   const applyPortalAction=(msg)=>{
@@ -8937,7 +8947,7 @@ export default function App({session,onLogout,demoMode=false,account=null,accoun
     // Polling fallback — runs every 15s in case realtime publication isn't
     // enabled on portal_messages. Cheap query (limit 500, indexed token).
     const pollId=setInterval(()=>fetchMessages(true),15000);
-    return ()=>{cancelled=true;clearInterval(pollId);try{unsub();}catch{}};
+    return ()=>{cancelled=true;clearInterval(pollId);try{unsub();}catch{/* deliberate: channel may already be closed at teardown */}};
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[demoMode,portalTokens,activeEntityId]);
 

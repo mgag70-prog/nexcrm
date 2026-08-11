@@ -722,7 +722,7 @@ function MessagesTab({ token, contact, accent, onMarkRead }) {
         })
         scrollToBottom()
         if (markRead) {
-          try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch {}
+          try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch (e) { console.warn('[MessagesTab] mark-read failed — unread badge may be stale', e) }
         }
       } catch (e) {
         console.error('[MessagesTab load]', e)
@@ -739,7 +739,7 @@ function MessagesTab({ token, contact, accent, onMarkRead }) {
         setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m])
         scrollToBottom()
         if (m.sender_type === 'owner') {
-          try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch {}
+          try { await portalMarkMessagesRead(token, 'owner'); onMarkReadRef.current?.() } catch (e) { console.warn('[MessagesTab] mark-read failed — unread badge may be stale', e) }
         }
       })
     } catch (e) {
@@ -750,7 +750,7 @@ function MessagesTab({ token, contact, accent, onMarkRead }) {
     // 15s polling fallback so owner replies show up even when the realtime
     // publication isn't enabled on portal_messages.
     const pollId = setInterval(() => fetchAndApply(false), 15000)
-    return () => { cancelled = true; clearInterval(pollId); try { unsub() } catch {} }
+    return () => { cancelled = true; clearInterval(pollId); try { unsub() } catch { /* deliberate: channel may already be closed at teardown */ } }
   }, [token])
 
   const send = async () => {

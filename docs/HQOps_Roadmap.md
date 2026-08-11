@@ -68,6 +68,17 @@ The things that make HQOps safe to run as a managed service across several clien
 - Break tracking on the time clock (payroll accuracy, FLSA) — for any client with hourly staff.
 - PTO / time-off requests.
 - Job / project photos visible in the client portal.
+- **Offline time-clock queue never replays** (found in the Aug 2026 lint
+  pass). `queueOfflineAction` writes clock actions to localStorage
+  (`crm:tcQueue`) to survive reload, but `flushOfflineQueue` only DELETES
+  the queue — there is no replay path. Scenario: crew member clocks in
+  offline → page reloads or PWA restarts → reconnects → the queued
+  clock-in is deleted unread and the hours are lost. In a managed
+  field-service engagement this is lost payroll and broken job costing.
+  Fix: `flushOfflineQueue` must read the queue and replay each action
+  against Supabase before clearing it, with a real error path if replay
+  fails. Prerequisite for any field-service managed client, alongside the
+  Field role.
 
 Build the subset a given client needs when that client lands; the list above is the menu, not a mandatory block.
 
