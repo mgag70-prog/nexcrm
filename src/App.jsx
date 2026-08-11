@@ -2506,7 +2506,42 @@ function ReportsView({ed,ec,et,notes,entity,entities,contacts,companies,deals,ta
       exportReportCSV(activeReport,fields,rows);
       return;
     }
-    showToast("Use the per-tab Export buttons inside Custom Reports for full CSV/PDF support");
+    if(reportType==="pipeline"){
+      const stageMap=Object.fromEntries(stageData.map(s=>[s.stage,s]));
+      const winMap=Object.fromEntries(winRateByStage.map(s=>[s.stage,s]));
+      const rows=edFiltered.map(d=>({
+        deal:d.title||"—",
+        contact:ec.find(c=>c.id===d.contactId)?.name||"",
+        stage:d.stage,
+        value:d.value||0,
+        probability:d.probability??50,
+        weighted:Math.round((d.value||0)*((d.probability??50)/100)),
+        created:d.createdAt?.slice(0,10)||"",
+        closeDate:d.closeDate||"",
+        stageCount:stageMap[d.stage]?.count??"",
+        stageValue:stageMap[d.stage]?.value??"",
+        stageWinRate:winMap[d.stage]!=null?`${winMap[d.stage].rate}%`:"",
+      }));
+      exportReportCSV({name:`${entity?.name} pipeline report`},[
+        {key:"deal",label:"Deal"},{key:"contact",label:"Contact"},{key:"stage",label:"Stage"},
+        {key:"value",label:"Value"},{key:"probability",label:"Probability %"},{key:"weighted",label:"Weighted value"},
+        {key:"created",label:"Created"},{key:"closeDate",label:"Close date"},
+        {key:"stageCount",label:"Deals in stage"},{key:"stageValue",label:"Stage total value"},{key:"stageWinRate",label:"Stage win rate"},
+      ],rows);
+    }else if(reportType==="activity"){
+      const rows=sourceAttribution.map(s=>({source:s.source,contacts:s.contacts,deals:s.deals,revenue:s.revenue}));
+      exportReportCSV({name:`${entity?.name} activity report`},[
+        {key:"source",label:"Source"},{key:"contacts",label:"New contacts"},
+        {key:"deals",label:"Deals"},{key:"revenue",label:"Won revenue"},
+      ],rows);
+    }else{
+      const rows=forecastMonths.map(m=>({month:m.month,won:Math.round(m.won),expected:Math.round(m.expected),best:Math.round(m.best),worst:Math.round(m.worst),total:Math.round(m.total)}));
+      exportReportCSV({name:`${entity?.name} forecast report`},[
+        {key:"month",label:"Month"},{key:"won",label:"Won"},{key:"expected",label:"Expected (weighted)"},
+        {key:"best",label:"Best case"},{key:"worst",label:"Worst case"},{key:"total",label:"Total (won + expected)"},
+      ],rows);
+    }
+    showToast("Report exported!");
   };
 
   // Saved reports — entity-scoped
